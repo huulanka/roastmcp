@@ -111,9 +111,12 @@ impl LineIo for SerialLineIo {
 
     fn clear_input(&mut self) -> io::Result<()> {
         self.pending.clear();
-        self.port
-            .clear(serialport::ClearBuffer::Input)
-            .map_err(io::Error::other)
+        // Some Bluetooth serial drivers do not support flushing; stale lines
+        // are then skipped by the reply parser instead.
+        if self.port.clear(serialport::ClearBuffer::Input).is_err() {
+            drain_available(&mut *self.port);
+        }
+        Ok(())
     }
 }
 
@@ -159,5 +162,15 @@ impl LineIo for ScriptedIo {
     fn clear_input(&mut self) -> io::Result<()> {
         self.queued.clear();
         Ok(())
+    }
+}
+
+/// Reads and drops whatever is immediately available.
+fn drain_available(port: &mut dyn serialport::SerialPort) {
+    let mut buf = [0u8; 256];
+    while port.bytes_to_read().unwrap_or(0) > 0 {
+        if port.read(&mut buf).is_err() {
+            break;
+        }
     }
 }
