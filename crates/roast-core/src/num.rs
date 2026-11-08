@@ -23,7 +23,9 @@ where
 {
     let (n, sx, sy) = points
         .clone()
-        .fold((0usize, 0.0, 0.0), |(n, sx, sy), (x, y)| (n + 1, sx + x, sy + y));
+        .fold((0usize, 0.0, 0.0), |(n, sx, sy), (x, y)| {
+            (n + 1, sx + x, sy + y)
+        });
     if n < min_points.max(2) {
         return None;
     }

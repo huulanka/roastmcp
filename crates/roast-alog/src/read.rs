@@ -517,11 +517,10 @@ fn actuator_channels(alog: &PyValue, etypes: &[String]) -> Result<Vec<ActuatorCh
 /// unchanged.
 fn resolve_channel_name<'a>(name: &'a str, etypes: &'a [String]) -> Option<&'a str> {
     let trimmed = name.trim();
-    match trimmed
-        .strip_prefix('{')
-        .and_then(|s| s.strip_suffix('}'))
-    {
-        Some(index) => etypes.get(index.trim().parse::<usize>().ok()?).map(String::as_str),
+    match trimmed.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+        Some(index) => etypes
+            .get(index.trim().parse::<usize>().ok()?)
+            .map(String::as_str),
         None => Some(trimmed),
     }
 }
@@ -553,7 +552,10 @@ mod tests {
         assert_eq!(roast.batch.beans.as_deref(), Some("Catuaí"));
         assert_eq!(roast.batch.green_weight_g, Some(200.0));
         assert_eq!(roast.batch.roasted_weight_g, Some(170.0));
-        assert_eq!(roast.id.simple().to_string(), "106a6ee743c4403394f3995665d24ece");
+        assert_eq!(
+            roast.id.simple().to_string(),
+            "106a6ee743c4403394f3995665d24ece"
+        );
         assert_eq!(roast.roasted_at.to_rfc3339(), "2026-06-19T11:05:00+00:00");
         assert_eq!(roast.sampling_interval_s, 1.5);
         assert_eq!(
@@ -566,8 +568,14 @@ mod tests {
 
         assert_eq!(roast.samples.len(), 5);
         assert_eq!(roast.samples[1].bt, None, "-1 is no reading");
-        assert!(roast.samples.iter().all(|s| s.et.is_none()), "constant 0.0 ET is no probe");
-        assert_eq!(roast.samples[0].actuators.get(&Actuator::Burner), Some(&80.0));
+        assert!(
+            roast.samples.iter().all(|s| s.et.is_none()),
+            "constant 0.0 ET is no probe"
+        );
+        assert_eq!(
+            roast.samples[0].actuators.get(&Actuator::Burner),
+            Some(&80.0)
+        );
         assert_eq!(roast.samples[0].actuators.get(&Actuator::Air), Some(&20.0));
         assert_eq!(roast.samples[3].actuators.get(&Actuator::Burner), None);
 
@@ -592,12 +600,19 @@ mod tests {
         assert_eq!(burner.t, Some(0.5));
         assert_eq!(burner.at.to_rfc3339(), "2026-06-19T11:05:00.500+00:00");
         let air = &roast.control_log[1];
-        assert_eq!((air.request.actuator, air.request.value), (Actuator::Air, 0.0));
+        assert_eq!(
+            (air.request.actuator, air.request.value),
+            (Actuator::Air, 0.0)
+        );
 
         let notes: Vec<_> = roast.notes.iter().map(|n| (n.t, n.text.as_str())).collect();
         assert_eq!(
             notes,
-            [(None, "good"), (Some(2.0), "Damper 30%"), (Some(5.0), "smoke")]
+            [
+                (None, "good"),
+                (Some(2.0), "Damper 30%"),
+                (Some(5.0), "smoke")
+            ]
         );
     }
 
@@ -624,7 +639,10 @@ mod tests {
 
     #[test]
     fn rejects_what_is_not_a_profile() {
-        assert!(matches!(read_alog("[1, 2]"), Err(AlogError::NotADict("list"))));
+        assert!(matches!(
+            read_alog("[1, 2]"),
+            Err(AlogError::NotADict("list"))
+        ));
         assert!(matches!(
             read_alog("{'temp2': []}"),
             Err(AlogError::MissingKey("timex"))
@@ -633,7 +651,10 @@ mod tests {
             read_alog("{'timex': 'x', 'temp2': []}"),
             Err(AlogError::WrongType { key: "timex", .. })
         ));
-        assert!(matches!(read_alog("{'timex': [}"), Err(AlogError::Parse(_))));
+        assert!(matches!(
+            read_alog("{'timex': [}"),
+            Err(AlogError::Parse(_))
+        ));
     }
 
     #[test]

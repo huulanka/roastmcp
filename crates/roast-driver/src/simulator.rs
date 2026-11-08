@@ -58,7 +58,11 @@ impl SimulatedMachine {
     #[must_use]
     pub fn new(speed: f64) -> Self {
         SimulatedMachine {
-            speed: if speed.is_finite() && speed > 0.0 { speed } else { 1.0 },
+            speed: if speed.is_finite() && speed > 0.0 {
+                speed
+            } else {
+                1.0
+            },
             last: None,
             drum_c: AMBIENT_C,
             bean_c: AMBIENT_C,
@@ -207,7 +211,10 @@ mod tests {
         m.set(Actuator::Air, 30.0);
         m.advance(900.0);
         let charge_temp = m.probe();
-        assert!((180.0..230.0).contains(&charge_temp), "preheat {charge_temp}");
+        assert!(
+            (180.0..230.0).contains(&charge_temp),
+            "preheat {charge_temp}"
+        );
 
         m.on_event(EventKind::Charge);
         m.set(Actuator::Burner, 80.0);

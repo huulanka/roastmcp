@@ -29,10 +29,7 @@ impl Tc4Driver<SerialLineIo> {
         let cfg = match &profile.transport {
             TransportConfig::Serial(s) => s.clone(),
         };
-        Self::with_opener(
-            profile,
-            Box::new(move || SerialLineIo::open(&port, &cfg)),
-        )
+        Self::with_opener(profile, Box::new(move || SerialLineIo::open(&port, &cfg)))
     }
 }
 
@@ -248,7 +245,10 @@ mod tests {
             .reply("READ", "22.0,0.0,150.5,55,30,0");
         let mut d = driver(script);
         let warnings = d.connect().unwrap();
-        assert_eq!(warnings, vec!["no acknowledgement for \"FILT;95,95,95,95\""]);
+        assert_eq!(
+            warnings,
+            vec!["no acknowledgement for \"FILT;95,95,95,95\""]
+        );
         let r = d.read().unwrap();
         assert_eq!(r.bt, Some(150.5));
         assert_eq!(r.et, None, "the Cubean+ has no ET probe");

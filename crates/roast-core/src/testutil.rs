@@ -150,7 +150,11 @@ pub(crate) fn roast() -> Roast {
 fn synthetic_curve_is_realistic() {
     let tp = tp_roast_t();
     assert!((55.0..=90.0).contains(&tp), "TP at {tp}");
-    assert!((85.0..=95.0).contains(&roast_bt(tp)), "TP BT {}", roast_bt(tp));
+    assert!(
+        (85.0..=95.0).contains(&roast_bt(tp)),
+        "TP BT {}",
+        roast_bt(tp)
+    );
     assert!((roast_bt(DROP_ROAST_T) - 205.0).abs() < 0.5);
     // RoR declines after its peak.
     assert!(roast_ror(180.0) > roast_ror(400.0));

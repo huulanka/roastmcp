@@ -114,7 +114,9 @@ impl QtIni {
     /// The value of `key` in `section` as a list (empty if absent).
     #[must_use]
     pub fn list(&self, section: &str, key: &str) -> Vec<String> {
-        self.get(section, key).map(IniValue::to_list).unwrap_or_default()
+        self.get(section, key)
+            .map(IniValue::to_list)
+            .unwrap_or_default()
     }
 
     /// The names of all sections, sorted.
@@ -179,13 +181,18 @@ fn parse_value(raw: &str) -> IniValue {
     let raw = raw.trim();
     if let Some(rest) = raw.strip_prefix('@') {
         if !rest.starts_with('@') {
-            let type_name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+            let type_name: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric())
+                .collect();
             if !type_name.is_empty() && rest[type_name.len()..].starts_with('(') {
                 return IniValue::Opaque(type_name);
             }
         }
     }
-    let raw = raw.strip_prefix("@@").map_or_else(|| raw.to_string(), |r| format!("@{r}"));
+    let raw = raw
+        .strip_prefix("@@")
+        .map_or_else(|| raw.to_string(), |r| format!("@{r}"));
 
     let mut items: Vec<String> = Vec::new();
     let mut item = Item::default();
@@ -308,12 +315,17 @@ mod tests {
 
     #[test]
     fn sections_keys_and_general() {
-        let ini = QtIni::parse("top=1\n[Device]\nid=19\n\n; comment\n# other\n[Serial%20Port]\nbaudrate = 115200\n");
+        let ini = QtIni::parse(
+            "top=1\n[Device]\nid=19\n\n; comment\n# other\n[Serial%20Port]\nbaudrate = 115200\n",
+        );
         assert_eq!(ini.text("General", "top"), Some("1"));
         assert_eq!(ini.text("Device", "id"), Some("19"));
         assert_eq!(ini.text("Serial Port", "baudrate"), Some("115200"));
         assert!(ini.skipped_lines().is_empty());
-        assert_eq!(ini.sections().collect::<Vec<_>>(), ["Device", "General", "Serial Port"]);
+        assert_eq!(
+            ini.sections().collect::<Vec<_>>(),
+            ["Device", "General", "Serial Port"]
+        );
     }
 
     #[test]
@@ -386,7 +398,10 @@ mod tests {
     #[test]
     fn continuation_and_skipped_lines() {
         let ini = QtIni::parse("[A]\nlong=one, \\\ntwo\nnot a pair\n=novalue\n");
-        assert_eq!(ini.list("A", "long"), vec!["one".to_string(), "two".to_string()]);
+        assert_eq!(
+            ini.list("A", "long"),
+            vec!["one".to_string(), "two".to_string()]
+        );
         assert_eq!(ini.skipped_lines(), &[4, 5]);
     }
 

@@ -98,10 +98,7 @@ pub fn to_py_value(roast: &Roast, offset: FixedOffset) -> PyValue {
     set("roasttime", local.format("%H:%M:%S").to_string().into());
     set("roastepoch", roast.roasted_at.timestamp().into());
     // Seconds west of UTC, as Python's `time.timezone` counts.
-    set(
-        "roasttzoffset",
-        i64::from(-offset.local_minus_utc()).into(),
-    );
+    set("roasttzoffset", i64::from(-offset.local_minus_utc()).into());
     set("roastUUID", roast.id.simple().to_string().into());
 
     let events = special_events(roast);
@@ -136,8 +133,14 @@ pub fn to_py_value(roast: &Roast, offset: FixedOffset) -> PyValue {
 
     let ambient = roast.ambient.clone().unwrap_or_default();
     set("ambientTemp", ambient.temperature_c.unwrap_or(0.0).into());
-    set("ambient_humidity", ambient.humidity_pct.unwrap_or(0.0).into());
-    set("ambient_pressure", ambient.pressure_hpa.unwrap_or(0.0).into());
+    set(
+        "ambient_humidity",
+        ambient.humidity_pct.unwrap_or(0.0).into(),
+    );
+    set(
+        "ambient_pressure",
+        ambient.pressure_hpa.unwrap_or(0.0).into(),
+    );
 
     extra_devices(samples, &mut set);
     set("samplinginterval", roast.sampling_interval_s.into());
@@ -285,7 +288,10 @@ fn extra_devices(samples: &[Sample], set: &mut impl FnMut(&str, PyValue)) {
                         .collect(),
                 ),
             ),
-            None => ("".into(), PyValue::List(vec![PyValue::Float(-1.0); samples.len()])),
+            None => (
+                "".into(),
+                PyValue::List(vec![PyValue::Float(-1.0); samples.len()]),
+            ),
         }
     };
     let (mut names1, mut temps1, mut names2, mut temps2) = (vec![], vec![], vec![], vec![]);
@@ -380,8 +386,8 @@ mod tests {
     use crate::{parse, read_alog};
     use chrono::{DateTime, Utc};
     use roast_core::{
-        BatchInfo, CommandRequest, CommandSource, ControlLogEntry, EventOrigin, Note,
-        RoastEvent, RoastOrigin, RejectReason,
+        BatchInfo, CommandRequest, CommandSource, ControlLogEntry, EventOrigin, Note, RejectReason,
+        RoastEvent, RoastOrigin,
     };
     use uuid::Uuid;
 
@@ -429,23 +435,86 @@ mod tests {
                 sample(0.0, 200.0, Some(80.0)),
                 sample(1.0, 150.0, None),
                 sample(2.0, 120.0, Some(70.0)),
-                Sample { t: 3.0, bt: None, et: Some(250.0), actuators: Default::default() },
+                Sample {
+                    t: 3.0,
+                    bt: None,
+                    et: Some(250.0),
+                    actuators: Default::default(),
+                },
             ],
             events: vec![
-                RoastEvent { t: 0.0, kind: EventKind::Charge, origin: EventOrigin::Human, bt: Some(200.0) },
-                RoastEvent { t: 2.0, kind: EventKind::TurningPoint, origin: EventOrigin::Auto, bt: Some(120.0) },
-                RoastEvent { t: 3.0, kind: EventKind::Drop, origin: EventOrigin::Human, bt: None },
+                RoastEvent {
+                    t: 0.0,
+                    kind: EventKind::Charge,
+                    origin: EventOrigin::Human,
+                    bt: Some(200.0),
+                },
+                RoastEvent {
+                    t: 2.0,
+                    kind: EventKind::TurningPoint,
+                    origin: EventOrigin::Auto,
+                    bt: Some(120.0),
+                },
+                RoastEvent {
+                    t: 3.0,
+                    kind: EventKind::Drop,
+                    origin: EventOrigin::Human,
+                    bt: None,
+                },
             ],
             control_log: vec![
-                entry(1.0, Actuator::Burner, 70.0, CommandOutcome::Applied { value: 65.0, clamped_from: Some(70.0) }),
-                entry(0.0, Actuator::Air, 40.0, CommandOutcome::Applied { value: 40.0, clamped_from: None }),
-                entry(2.0, Actuator::Burner, 0.0, CommandOutcome::Rejected { reason: RejectReason::NoLease }),
-                entry(2.0, Actuator::Cooling, 100.0, CommandOutcome::Applied { value: 100.0, clamped_from: None }),
+                entry(
+                    1.0,
+                    Actuator::Burner,
+                    70.0,
+                    CommandOutcome::Applied {
+                        value: 65.0,
+                        clamped_from: Some(70.0),
+                    },
+                ),
+                entry(
+                    0.0,
+                    Actuator::Air,
+                    40.0,
+                    CommandOutcome::Applied {
+                        value: 40.0,
+                        clamped_from: None,
+                    },
+                ),
+                entry(
+                    2.0,
+                    Actuator::Burner,
+                    0.0,
+                    CommandOutcome::Rejected {
+                        reason: RejectReason::NoLease,
+                    },
+                ),
+                entry(
+                    2.0,
+                    Actuator::Cooling,
+                    100.0,
+                    CommandOutcome::Applied {
+                        value: 100.0,
+                        clamped_from: None,
+                    },
+                ),
             ],
             notes: vec![
-                Note { t: None, text: "whole roast".into(), origin: EventOrigin::Human },
-                Note { t: None, text: format!("{CUPPING_NOTE_PREFIX}sweet"), origin: EventOrigin::Human },
-                Note { t: Some(1.0), text: "smoke".into(), origin: EventOrigin::Ai },
+                Note {
+                    t: None,
+                    text: "whole roast".into(),
+                    origin: EventOrigin::Human,
+                },
+                Note {
+                    t: None,
+                    text: format!("{CUPPING_NOTE_PREFIX}sweet"),
+                    origin: EventOrigin::Human,
+                },
+                Note {
+                    t: Some(1.0),
+                    text: "smoke".into(),
+                    origin: EventOrigin::Ai,
+                },
             ],
         }
     }
@@ -456,7 +525,11 @@ mod tests {
         let text = write_alog_with_offset(&roast(), utc);
         assert!(text.is_ascii());
         let d = parse(&text).unwrap();
-        let get = |k: &str| d.get(k).unwrap_or_else(|| panic!("{k} missing")).to_literal();
+        let get = |k: &str| {
+            d.get(k)
+                .unwrap_or_else(|| panic!("{k} missing"))
+                .to_literal()
+        };
         assert_eq!(get("timeindex"), "[0, 0, 0, 0, 0, 0, 3, 0]");
         assert_eq!(get("title"), r#"'Gr\\xfc\\xdfe "quoted"'"#);
         assert_eq!(get("beans"), r"'Catua\\xed\\nline 2'");
@@ -470,7 +543,10 @@ mod tests {
         assert_eq!(get("specialevents"), "[0, 1, 1, 2]");
         assert_eq!(get("specialeventstype"), "[0, 3, 4, 4]");
         assert_eq!(get("specialeventsvalue"), "[5.0, 7.5, 0.0, 0.0]");
-        assert_eq!(get("specialeventsStrings"), "['40%', '65%', 'smoke', 'Cooling 100%']");
+        assert_eq!(
+            get("specialeventsStrings"),
+            "['40%', '65%', 'smoke', 'Cooling 100%']"
+        );
         assert_eq!(get("roastingnotes"), "'whole roast'");
         assert_eq!(get("cuppingnotes"), "'sweet'");
         assert_eq!(get("temp1"), "[-1.0, -1.0, -1.0, 250.0]");
@@ -479,9 +555,12 @@ mod tests {
         assert_eq!(get("extraname1"), "['{3}']");
         assert_eq!(get("extraname2"), "['']");
         assert_eq!(get("extratemp1"), "[[80.0, -1.0, 70.0, -1.0]]");
-        assert_eq!(get("computed"), "{'CHARGE_time': 0.0, 'CHARGE_BT': 200.0, 'DROP_time': 3.0, \
+        assert_eq!(
+            get("computed"),
+            "{'CHARGE_time': 0.0, 'CHARGE_BT': 200.0, 'DROP_time': 3.0, \
             'TP_idx': 2, 'TP_time': 2.0, 'TP_BT': 120.0, 'totaltime': 3.0, 'weightin': 200.0, \
-            'weightout': 170.0, 'weight_loss': 15.0}");
+            'weightout': 170.0, 'weight_loss': 15.0}"
+        );
     }
 
     #[test]
@@ -510,7 +589,10 @@ mod tests {
             .collect();
         assert_eq!(
             log,
-            [(Some(0.0), Actuator::Air, 40.0), (Some(1.0), Actuator::Burner, 65.0)]
+            [
+                (Some(0.0), Actuator::Air, 40.0),
+                (Some(1.0), Actuator::Burner, 65.0)
+            ]
         );
         let notes: Vec<_> = back.notes.iter().map(|n| (n.t, n.text.as_str())).collect();
         assert_eq!(

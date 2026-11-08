@@ -25,7 +25,7 @@ use roast_core::Actuator;
 use crate::error::ImportError;
 use crate::ini::QtIni;
 use crate::profile::{
-    ActuatorConfig, FieldRole, InitStep, LinkLossBehaviour, Limits, MachineCapabilities,
+    ActuatorConfig, FieldRole, InitStep, Limits, LinkLossBehaviour, MachineCapabilities,
     MachineProfile, Parity, ProtocolConfig, ReadConfig, SafeValue, SerialConfig, SwitchConfig,
     Tc4Protocol, TransportConfig,
 };
@@ -55,7 +55,10 @@ pub struct ImportedProfile {
 /// [`ImportError::UnsupportedDevice`] if the device is not a TC4.
 pub fn import_aset(text: &str) -> Result<ImportedProfile, ImportError> {
     let ini = QtIni::parse(text);
-    let device = ini.text("Device", "id").ok_or(ImportError::NoDevice)?.trim();
+    let device = ini
+        .text("Device", "id")
+        .ok_or(ImportError::NoDevice)?
+        .trim();
     if device.parse::<u32>().ok() != Some(TC4_DEVICE_ID) {
         return Err(ImportError::UnsupportedDevice(device.to_string()));
     }
@@ -91,13 +94,17 @@ impl Importer<'_> {
     fn build(&mut self) -> MachineProfile {
         if !self.ini.skipped_lines().is_empty() {
             let lines = self.ini.skipped_lines().len();
-            self.warn(format!("{lines} unreadable line(s) in the settings file were skipped"));
+            self.warn(format!(
+                "{lines} unreadable line(s) in the settings file were skipped"
+            ));
         }
 
-        let name = self.text("General", "roastertype_setup").unwrap_or_else(|| {
-            self.warn("no machine name ([General] roastertype_setup); using a placeholder");
-            "Imported TC4 roaster".to_string()
-        });
+        let name = self
+            .text("General", "roastertype_setup")
+            .unwrap_or_else(|| {
+                self.warn("no machine name ([General] roastertype_setup); using a placeholder");
+                "Imported TC4 roaster".to_string()
+            });
         self.warn("vendor is not stored in .aset files; fill it in");
 
         let transport = self.transport();
@@ -241,7 +248,10 @@ impl Importer<'_> {
     fn event_type_actuators(&mut self) -> Vec<Option<Actuator>> {
         let mut names = self.ini.list("events", "etypes");
         if names.len() < 4 {
-            names = DEFAULT_EVENT_TYPES.iter().map(|s| (*s).to_string()).collect();
+            names = DEFAULT_EVENT_TYPES
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect();
         }
         names
             .iter()
@@ -250,7 +260,11 @@ impl Importer<'_> {
             .collect()
     }
 
-    fn slider_actuators(&mut self, event_types: &[Option<Actuator>], out: &mut Vec<ActuatorConfig>) {
+    fn slider_actuators(
+        &mut self,
+        event_types: &[Option<Actuator>],
+        out: &mut Vec<ActuatorConfig>,
+    ) {
         let commands = self.ini.list("Sliders", "slidercommands");
         let actions = self.ini.list("Sliders", "slideractions");
         let mins = self.ini.list("Sliders", "slidermin");
@@ -494,7 +508,9 @@ impl Importer<'_> {
             Some(raw) => match raw.parse::<u32>() {
                 Ok(n @ 1..=4) => n,
                 _ => {
-                    self.warn(format!("[Device] {key} = `{raw}` is not a channel 1..4; ignored"));
+                    self.warn(format!(
+                        "[Device] {key} = `{raw}` is not a channel 1..4; ignored"
+                    ));
                     0
                 }
             },
@@ -527,8 +543,8 @@ impl Importer<'_> {
             found = true;
             for (channel, names) in [(5, &names1), (6, &names2)] {
                 let name = names.get(i).map(|s| s.trim()).unwrap_or("");
-                let actuator = event_type_reference(name)
-                    .and_then(|n| event_types.get(n).copied().flatten());
+                let actuator =
+                    event_type_reference(name).and_then(|n| event_types.get(n).copied().flatten());
                 match actuator {
                     Some(a) if actuators.iter().any(|c| c.actuator == a) => {
                         fields.push(FieldRole::Actuator(a));
@@ -604,7 +620,11 @@ fn split_switch_command(command: &str) -> Option<(String, SwitchState)> {
 
 /// Parses `{3}` into 3.
 fn event_type_reference(name: &str) -> Option<usize> {
-    name.strip_prefix('{')?.strip_suffix('}')?.trim().parse().ok()
+    name.strip_prefix('{')?
+        .strip_suffix('}')?
+        .trim()
+        .parse()
+        .ok()
 }
 
 /// Guesses an actuator from an event type name or button label.
@@ -615,7 +635,10 @@ pub fn actuator_from_name(name: &str) -> Option<Actuator> {
         Some(Actuator::Filter)
     } else if n.contains("cool") {
         Some(Actuator::Cooling)
-    } else if ["burner", "heat", "power", "gas"].iter().any(|k| n.contains(k)) {
+    } else if ["burner", "heat", "power", "gas"]
+        .iter()
+        .any(|k| n.contains(k))
+    {
         Some(Actuator::Burner)
     } else if n.contains("drum") {
         Some(Actuator::Drum)
@@ -656,7 +679,10 @@ mod tests {
 
     #[test]
     fn slugs() {
-        assert_eq!(slugify("Skywalker Series - Cubean +"), "skywalker-series-cubean-plus");
+        assert_eq!(
+            slugify("Skywalker Series - Cubean +"),
+            "skywalker-series-cubean-plus"
+        );
         assert_eq!(slugify("  "), "imported-tc4-roaster");
         assert_eq!(slugify("Kaleido M2"), "kaleido-m2");
     }
@@ -667,15 +693,26 @@ mod tests {
         assert_eq!(actuator_from_name("Heater"), Some(Actuator::Burner));
         assert_eq!(actuator_from_name("Air"), Some(Actuator::Air));
         assert_eq!(actuator_from_name("Filter fan"), Some(Actuator::Filter));
-        assert_eq!(actuator_from_name("\\1 Beans Cooling"), Some(Actuator::Cooling));
+        assert_eq!(
+            actuator_from_name("\\1 Beans Cooling"),
+            Some(Actuator::Cooling)
+        );
         assert_eq!(actuator_from_name("Damper"), None);
     }
 
     #[test]
     fn switch_commands() {
-        assert!(matches!(split_switch_command("CLDN,ON"), Some((p, SwitchState::On)) if p == "CLDN"));
-        assert!(matches!(split_switch_command("CLDN,OF"), Some((_, SwitchState::Off))));
-        assert!(matches!(split_switch_command("CLDN,OFF"), Some((_, SwitchState::Off))));
+        assert!(
+            matches!(split_switch_command("CLDN,ON"), Some((p, SwitchState::On)) if p == "CLDN")
+        );
+        assert!(matches!(
+            split_switch_command("CLDN,OF"),
+            Some((_, SwitchState::Off))
+        ));
+        assert!(matches!(
+            split_switch_command("CLDN,OFF"),
+            Some((_, SwitchState::Off))
+        ));
         assert!(split_switch_command("PID;ON").is_none());
     }
 

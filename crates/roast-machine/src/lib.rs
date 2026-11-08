@@ -30,7 +30,7 @@ pub use aset::{ImportedProfile, import_aset};
 pub use error::{ImportError, ProfileError, ValidationErrors, ValidationIssue};
 pub use ini::{IniValue, QtIni};
 pub use profile::{
-    ActuatorConfig, FieldRole, InitStep, LinkLossBehaviour, Limits, MachineCapabilities,
+    ActuatorConfig, FieldRole, InitStep, Limits, LinkLossBehaviour, MachineCapabilities,
     MachineProfile, Parity, ProtocolConfig, ReadConfig, SafeValue, SerialConfig, SwitchConfig,
     Tc4Protocol, TransportConfig, parse_actuator,
 };

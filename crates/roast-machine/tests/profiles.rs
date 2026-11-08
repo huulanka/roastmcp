@@ -39,13 +39,20 @@ fn cubean_plus_profile_matches_the_research() {
     let serial = p.serial().unwrap();
     assert_eq!(serial.port_hint, "/dev/cu.AKROASTER");
     assert_eq!(serial.baud_rate, 115_200);
-    assert_eq!((serial.data_bits, serial.parity, serial.stop_bits), (8, Parity::None, 1));
+    assert_eq!(
+        (serial.data_bits, serial.parity, serial.stop_bits),
+        (8, Parity::None, 1)
+    );
 
     let tc4 = p.tc4().unwrap();
     assert_eq!(tc4.line_ending, "\n");
     let init: Vec<_> = tc4.init.iter().map(|s| s.send.as_str()).collect();
     assert_eq!(init, ["CHAN;2100", "UNITS;C", "FILT;95,95,95,95"]);
-    assert!(tc4.init.iter().all(|s| s.expect_prefix.as_deref() == Some("#")));
+    assert!(
+        tc4.init
+            .iter()
+            .all(|s| s.expect_prefix.as_deref() == Some("#"))
+    );
     assert_eq!(tc4.read.command, "READ");
     assert_eq!(
         tc4.read.fields,
@@ -61,14 +68,23 @@ fn cubean_plus_profile_matches_the_research() {
     assert!(!tc4.et_present);
 
     let burner = p.actuator(Actuator::Burner).unwrap();
-    assert_eq!((burner.command.as_str(), burner.min, burner.max), ("OT1,{}", 0.0, 100.0));
+    assert_eq!(
+        (burner.command.as_str(), burner.min, burner.max),
+        ("OT1,{}", 0.0, 100.0)
+    );
     assert!(burner.reported);
     let drum = p.actuator(Actuator::Drum).unwrap();
-    assert_eq!((drum.command.as_str(), drum.min, drum.max), ("OT3,{}", 80.0, 100.0));
+    assert_eq!(
+        (drum.command.as_str(), drum.min, drum.max),
+        ("OT3,{}", 80.0, 100.0)
+    );
     assert!(!drum.reported);
     assert_eq!(p.actuator(Actuator::Filter).unwrap().command, "OT4,{}");
     let cooling = p.switch(Actuator::Cooling).unwrap();
-    assert_eq!((cooling.on.as_str(), cooling.off.as_str()), ("CLDN,ON", "CLDN,OF"));
+    assert_eq!(
+        (cooling.on.as_str(), cooling.off.as_str()),
+        ("CLDN,ON", "CLDN,OF")
+    );
 
     assert_eq!(p.safe_state[&Actuator::Burner], SafeValue::Value(0.0));
     assert_eq!(p.safe_state[&Actuator::Air], SafeValue::Value(100.0));
@@ -84,7 +100,10 @@ fn cubean_plus_profile_matches_the_research() {
 fn toml_round_trip() {
     let p = cubean();
     let text = p.to_toml_string().unwrap();
-    assert!(text.contains("min = 80"), "whole numbers stay integers:\n{text}");
+    assert!(
+        text.contains("min = 80"),
+        "whole numbers stay integers:\n{text}"
+    );
     let back = MachineProfile::from_toml_str(&text).unwrap();
     assert_eq!(p, back);
 }
@@ -92,7 +111,8 @@ fn toml_round_trip() {
 #[test]
 fn burner_safe_value_must_be_its_minimum() {
     let mut p = cubean();
-    p.safe_state.insert(Actuator::Burner, SafeValue::Value(10.0));
+    p.safe_state
+        .insert(Actuator::Burner, SafeValue::Value(10.0));
     assert_eq!(issues(&p), ["safe_state.burner"]);
     p.safe_state.insert(Actuator::Burner, SafeValue::Keep);
     assert_eq!(issues(&p), ["safe_state.burner"]);
@@ -119,7 +139,11 @@ fn drum_is_never_turned_off() {
     assert!(issues(&p).is_empty());
 
     // A drum that can be stopped needs an explicit running speed.
-    let drum = p.actuators.iter_mut().find(|a| a.actuator == Actuator::Drum).unwrap();
+    let drum = p
+        .actuators
+        .iter_mut()
+        .find(|a| a.actuator == Actuator::Drum)
+        .unwrap();
     drum.min = 0.0;
     assert_eq!(issues(&p), ["safe_state.drum"]);
     p.safe_state.insert(Actuator::Drum, SafeValue::Value(0.0));
@@ -136,7 +160,8 @@ fn safe_state_actuators_must_exist_and_fit() {
     assert_eq!(issues(&p), ["safe_state.cooling"]);
 
     let mut p = cubean();
-    p.safe_state.insert(Actuator::Cooling, SafeValue::Value(100.0));
+    p.safe_state
+        .insert(Actuator::Cooling, SafeValue::Value(100.0));
     assert_eq!(issues(&p), ["safe_state.cooling"]);
     p.safe_state.insert(Actuator::Cooling, SafeValue::On);
     assert!(issues(&p).is_empty());
@@ -144,7 +169,8 @@ fn safe_state_actuators_must_exist_and_fit() {
     let mut p = cubean();
     p.safe_state.insert(Actuator::Filter, SafeValue::On);
     assert_eq!(issues(&p), ["safe_state.filter"]);
-    p.safe_state.insert(Actuator::Filter, SafeValue::Value(150.0));
+    p.safe_state
+        .insert(Actuator::Filter, SafeValue::Value(150.0));
     assert_eq!(issues(&p), ["safe_state.filter"]);
 }
 
@@ -186,7 +212,11 @@ fn reported_actuators_must_be_read() {
 #[test]
 fn actuator_definitions_are_checked() {
     let mut p = cubean();
-    let filter = p.actuators.iter_mut().find(|a| a.actuator == Actuator::Filter).unwrap();
+    let filter = p
+        .actuators
+        .iter_mut()
+        .find(|a| a.actuator == Actuator::Filter)
+        .unwrap();
     filter.command = "OT4".into();
     filter.min = 100.0;
     assert_eq!(issues(&p), ["actuators.filter.command", "actuators.filter"]);
@@ -255,7 +285,10 @@ fn schema_errors_are_parse_errors() {
         let text = cubean_text().replace(from, to);
         assert_ne!(text, cubean_text(), "replacement {from} did not apply");
         let err = MachineProfile::from_toml_str(&text).unwrap_err();
-        assert!(matches!(err, ProfileError::Toml { .. }), "{from} → {to}: {err}");
+        assert!(
+            matches!(err, ProfileError::Toml { .. }),
+            "{from} → {to}: {err}"
+        );
     }
 }
 

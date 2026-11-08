@@ -78,9 +78,8 @@ impl EventDetector {
         if !t.is_finite() || !bt.is_finite() {
             return out;
         }
-        let has = |k: EventKind, out: &[RoastEvent]| {
-            known.iter().chain(out.iter()).any(|e| e.kind == k)
-        };
+        let has =
+            |k: EventKind, out: &[RoastEvent]| known.iter().chain(out.iter()).any(|e| e.kind == k);
         let find = |k: EventKind, out: &[RoastEvent]| {
             known
                 .iter()
@@ -222,7 +221,10 @@ mod tests {
         let events = detect_all(&testutil::curve());
         let t = |k| events.iter().find(|e| e.kind == k).map(|e| e.t);
         let charge = t(EventKind::Charge).unwrap();
-        assert!((charge - testutil::CHARGE_T).abs() <= 1.0, "charge at {charge}");
+        assert!(
+            (charge - testutil::CHARGE_T).abs() <= 1.0,
+            "charge at {charge}"
+        );
         let tp = t(EventKind::TurningPoint).unwrap() - charge;
         assert!((50.0..80.0).contains(&tp), "tp {tp}");
         let dry = t(EventKind::DryEnd).unwrap() - charge;
@@ -245,7 +247,10 @@ mod tests {
             let new = d.push(s.t, s.bt.unwrap_or(0.0), &events);
             events.extend(new);
         }
-        let charges: Vec<_> = events.iter().filter(|e| e.kind == EventKind::Charge).collect();
+        let charges: Vec<_> = events
+            .iter()
+            .filter(|e| e.kind == EventKind::Charge)
+            .collect();
         assert_eq!(charges.len(), 1);
         assert_eq!(charges[0].origin, EventOrigin::Human);
     }

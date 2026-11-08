@@ -217,7 +217,11 @@ mod tests {
             // the window's centre.
             let expected = testutil::roast_ror(tau - cfg.window_s / 2.0);
             let got = r.expect("RoR after the turning point");
-            assert!((got - expected).abs() < 0.3, "t {} got {got} want {expected}", s.t);
+            assert!(
+                (got - expected).abs() < 0.3,
+                "t {} got {got} want {expected}",
+                s.t
+            );
         }
     }
 

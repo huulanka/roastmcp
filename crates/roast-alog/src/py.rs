@@ -380,10 +380,9 @@ impl Parser<'_> {
             self.skip_ws();
             match self.peek() {
                 None => {
-                    return Err(self.error_at(
-                        open_at,
-                        format!("unclosed '{}'", char::from(kind.open())),
-                    ));
+                    return Err(
+                        self.error_at(open_at, format!("unclosed '{}'", char::from(kind.open())))
+                    );
                 }
                 Some(b) if b == close => {
                     self.pos += 1;
@@ -528,11 +527,7 @@ impl Parser<'_> {
             if text.len() > 1 && text.starts_with('0') && text.bytes().any(|b| b != b'0') {
                 return Err(self.error_at(start, "leading zeros are not allowed in integers"));
             }
-            let signed = if negative {
-                format!("-{text}")
-            } else {
-                text
-            };
+            let signed = if negative { format!("-{text}") } else { text };
             signed
                 .parse::<i64>()
                 .map(PyValue::Int)
@@ -705,7 +700,9 @@ impl Parser<'_> {
                 let value = self.hex_digits(if c == 'u' { 4 } else { 8 }, at)?;
                 self.push_code_point(out, value, at)?;
             }
-            'N' => return Err(self.error_at(at, "named unicode escapes (\\N{...}) are not supported")),
+            'N' => {
+                return Err(self.error_at(at, "named unicode escapes (\\N{...}) are not supported"));
+            }
             other => {
                 // Python keeps unknown escapes as they are.
                 out.push('\\');
@@ -722,8 +719,8 @@ impl Parser<'_> {
             .get(self.pos..end)
             .filter(|d| d.bytes().all(|b| b.is_ascii_hexdigit()))
             .ok_or_else(|| self.error_at(at, format!("expected {count} hex digits in escape")))?;
-        let value = u32::from_str_radix(digits, 16)
-            .map_err(|_| self.error_at(at, "invalid hex escape"))?;
+        let value =
+            u32::from_str_radix(digits, 16).map_err(|_| self.error_at(at, "invalid hex escape"))?;
         self.pos = end;
         Ok(value)
     }
@@ -731,7 +728,12 @@ impl Parser<'_> {
     /// Pushes a code point from a `\u`/`\U` escape. A UTF-16 surrogate pair
     /// written as two escapes is combined; a lone surrogate, which a Rust
     /// string cannot hold, becomes U+FFFD.
-    fn push_code_point(&mut self, out: &mut String, value: u32, at: usize) -> Result<(), ParseError> {
+    fn push_code_point(
+        &mut self,
+        out: &mut String,
+        value: u32,
+        at: usize,
+    ) -> Result<(), ParseError> {
         if (0xD800..0xDC00).contains(&value)
             && self.peek() == Some(b'\\')
             && self.peek_at(1) == Some(b'u')
@@ -839,7 +841,11 @@ fn write_float<W: fmt::Write>(out: &mut W, f: f64) -> fmt::Result {
     let (mantissa, exponent) = sci.split_once('e').unwrap_or((sci.as_str(), "0"));
     let exponent: i32 = exponent.parse().unwrap_or(0);
     let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
-    let digits = if digits.is_empty() { "0".to_owned() } else { digits };
+    let digits = if digits.is_empty() {
+        "0".to_owned()
+    } else {
+        digits
+    };
 
     if (-4..16).contains(&exponent) {
         if exponent < 0 {
@@ -977,7 +983,10 @@ mod tests {
             PyValue::Tuple(vec![PyValue::Int(1), PyValue::str("a")])
         );
         let d = p("{'a': [1, -1.0], 'b': {'c': None}, 3: (True,)} # comment\n");
-        assert_eq!(d.get("a"), Some(&PyValue::List(vec![PyValue::Int(1), PyValue::Float(-1.0)])));
+        assert_eq!(
+            d.get("a"),
+            Some(&PyValue::List(vec![PyValue::Int(1), PyValue::Float(-1.0)]))
+        );
         assert_eq!(d.get("b").and_then(|b| b.get("c")), Some(&PyValue::None));
         assert_eq!(d.as_dict().map(<[_]>::len), Some(3));
         assert_eq!(d.get("missing"), None);
@@ -997,12 +1006,22 @@ mod tests {
         assert_eq!(parse("1 2").unwrap_err().offset, 2);
         assert_eq!(parse("").unwrap_err().offset, 0);
         assert!(parse("{1, 2}").unwrap_err().message.contains("set"));
-        assert!(parse("99999999999999999999").unwrap_err().message.contains("range"));
+        assert!(
+            parse("99999999999999999999")
+                .unwrap_err()
+                .message
+                .contains("range")
+        );
         assert!(parse("1j").is_err());
         assert!(parse("b'x'").is_err());
         assert!(parse("012").is_err());
         assert!(parse("1abc").is_err());
-        assert!(parse(&"[".repeat(MAX_DEPTH + 1)).unwrap_err().message.contains("nesting"));
+        assert!(
+            parse(&"[".repeat(MAX_DEPTH + 1))
+                .unwrap_err()
+                .message
+                .contains("nesting")
+        );
     }
 
     #[test]
@@ -1061,10 +1080,22 @@ mod tests {
     #[test]
     fn write_then_parse_round_trips() {
         let v = PyValue::Dict(vec![
-            (PyValue::str("s"), PyValue::str("it's \"quoted\" \\ \n\t ü € 😀 \x7f")),
-            (PyValue::str("f"), PyValue::from(vec![0.1, -3.25e-7, 1e22, 5e-324, f64::MAX])),
-            (PyValue::str("i"), PyValue::from(vec![i64::MIN + 1, -1, 0, i64::MAX])),
-            (PyValue::str("t"), PyValue::Tuple(vec![PyValue::None, PyValue::Bool(false)])),
+            (
+                PyValue::str("s"),
+                PyValue::str("it's \"quoted\" \\ \n\t ü € 😀 \x7f"),
+            ),
+            (
+                PyValue::str("f"),
+                PyValue::from(vec![0.1, -3.25e-7, 1e22, 5e-324, f64::MAX]),
+            ),
+            (
+                PyValue::str("i"),
+                PyValue::from(vec![i64::MIN + 1, -1, 0, i64::MAX]),
+            ),
+            (
+                PyValue::str("t"),
+                PyValue::Tuple(vec![PyValue::None, PyValue::Bool(false)]),
+            ),
         ]);
         assert_eq!(parse(&v.to_literal()).unwrap(), v);
     }

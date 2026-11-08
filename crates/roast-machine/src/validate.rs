@@ -84,10 +84,7 @@ impl MachineProfile {
         if !in_range(self.sampling_interval_s, lo, hi) {
             c.push(
                 "sampling_interval_s",
-                format!(
-                    "{} s is outside {lo}..={hi} s",
-                    self.sampling_interval_s
-                ),
+                format!("{} s is outside {lo}..={hi} s", self.sampling_interval_s),
             );
         }
         if self.link_loss.link_lost.trim().is_empty() {
@@ -135,7 +132,9 @@ impl MachineProfile {
         }
         let mut seen = BTreeSet::new();
         for role in fields {
-            if *role != FieldRole::Ignore && *role != FieldRole::Bt && !seen.insert(role.to_string())
+            if *role != FieldRole::Ignore
+                && *role != FieldRole::Bt
+                && !seen.insert(role.to_string())
             {
                 c.push(
                     "protocol.read.fields",
@@ -277,10 +276,7 @@ impl MachineProfile {
                     );
                 }
             } else {
-                c.push(
-                    &field,
-                    format!("the machine has no {actuator} actuator"),
-                );
+                c.push(&field, format!("the machine has no {actuator} actuator"));
             }
         }
 
@@ -374,7 +370,10 @@ impl MachineProfile {
             );
         }
         for (field, v) in [
-            ("limits.ai_burner_min_interval_s", l.ai_burner_min_interval_s),
+            (
+                "limits.ai_burner_min_interval_s",
+                l.ai_burner_min_interval_s,
+            ),
             ("limits.ai_air_min_interval_s", l.ai_air_min_interval_s),
         ] {
             if !in_range(v, 1.0, 600.0) {

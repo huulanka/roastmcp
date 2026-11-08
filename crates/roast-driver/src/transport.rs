@@ -69,7 +69,11 @@ impl SerialLineIo {
     fn take_line(&mut self) -> Option<String> {
         let pos = self.pending.iter().position(|&b| b == b'\n')?;
         let line: Vec<u8> = self.pending.drain(..=pos).collect();
-        Some(String::from_utf8_lossy(&line).trim_end_matches(['\r', '\n']).to_owned())
+        Some(
+            String::from_utf8_lossy(&line)
+                .trim_end_matches(['\r', '\n'])
+                .to_owned(),
+        )
     }
 }
 
@@ -138,7 +142,11 @@ impl ScriptedIo {
 impl LineIo for ScriptedIo {
     fn write_line(&mut self, line: &str, _ending: &str) -> io::Result<()> {
         self.written.push(line.to_owned());
-        if let Some((_, r)) = self.replies.iter().find(|(c, _)| line.starts_with(c.as_str())) {
+        if let Some((_, r)) = self
+            .replies
+            .iter()
+            .find(|(c, _)| line.starts_with(c.as_str()))
+        {
             self.queued.push_back(r.clone());
         }
         Ok(())
