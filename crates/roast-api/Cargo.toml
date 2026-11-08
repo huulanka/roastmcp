@@ -1,0 +1,16 @@
+[package]
+name = "roast-api"
+description = "API and live-event types shared by the daemon, the app and MCP"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+roast-core.workspace = true
+
+[lints]
+workspace = true

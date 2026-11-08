@@ -1,0 +1,41 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+repository = "https://github.com/huulanka/roastmcp"
+authors = ["Andreas Bauer"]
+publish = false
+
+[workspace.dependencies]
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+roast-core = { path = "crates/roast-core" }
+roast-alog = { path = "crates/roast-alog" }
+roast-machine = { path = "crates/roast-machine" }
+roast-driver = { path = "crates/roast-driver" }
+roast-twin = { path = "crates/roast-twin" }
+roast-safety = { path = "crates/roast-safety" }
+roast-control = { path = "crates/roast-control" }
+roast-audio = { path = "crates/roast-audio" }
+roast-store = { path = "crates/roast-store" }
+roast-api = { path = "crates/roast-api" }
+roastd = { path = "crates/roastd" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"

@@ -1,0 +1,16 @@
+[package]
+name = "roast-audio"
+description = "Microphone capture and first-crack detection"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+roast-core.workspace = true
+
+[lints]
+workspace = true

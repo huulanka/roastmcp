@@ -1,0 +1,16 @@
+[package]
+name = "roast-alog"
+description = "Artisan .alog reader and writer, and the fixture sanitizer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+roast-core.workspace = true
+
+[lints]
+workspace = true
