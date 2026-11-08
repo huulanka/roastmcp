@@ -34,8 +34,8 @@ pub fn simulator_profile(base: &MachineProfile) -> MachineProfile {
     p.vendor = "RoastMCP".into();
     p.model = "Simulator".into();
     p.link_loss.tested = true;
-    p.link_loss.link_lost = "simulated".into();
-    p.link_loss.software_killed = "simulated".into();
+    p.link_loss.link_lost = "Simulator: no real machine is affected.".into();
+    p.link_loss.software_killed = "Simulator: no real machine is affected.".into();
     p
 }
 

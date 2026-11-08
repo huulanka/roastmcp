@@ -120,6 +120,9 @@ pub enum ReactionKind {
     LeaseExpired,
     /// The roaster link was lost: AI control suspended.
     LinkLost,
+    /// The roaster (re)connected: the safe state is set, because a machine may
+    /// start at its own defaults (the Cubean+ heats at 100 % on connect).
+    Connected,
 }
 
 /// Something the safety layer did on its own, to be shown as an alarm and
@@ -226,10 +229,18 @@ impl Safety {
     }
 
     /// Marks the roaster connected or disconnected. A lost link ends AI
-    /// control.
+    /// control; a new connection gets the safe state, whatever the machine
+    /// started with.
     pub fn set_connected(&mut self, connected: bool) -> Option<SafetyReaction> {
         let was = self.connected;
         self.connected = connected;
+        if !was && connected {
+            return Some(SafetyReaction {
+                kind: ReactionKind::Connected,
+                message: "Burner off, air high, drum running until you change them.".into(),
+                commands: self.safe_state_commands(),
+            });
+        }
         if was && !connected {
             let had_ai = self.lease.take().is_some();
             self.ai_suspended |= had_ai;
@@ -792,6 +803,31 @@ mod tests {
         assert_eq!(r.kind, ReactionKind::LinkLost);
         s.set_connected(true);
         assert!(!s.ai_in_control(1.0));
+    }
+
+    #[test]
+    fn connecting_sets_the_safe_state() {
+        let mut s = Safety::new(cfg());
+        // The machine reports its own start values (Cubean+: burner 100 %).
+        s.observe(&BTreeMap::from([
+            (Actuator::Burner, 100.0),
+            (Actuator::Air, 20.0),
+        ]));
+        let r = s.set_connected(true).unwrap();
+        assert_eq!(r.kind, ReactionKind::Connected);
+        assert!(
+            r.commands
+                .iter()
+                .any(|c| c.actuator == Actuator::Burner && c.value == 0.0)
+        );
+        assert_eq!(s.status(0.0).actuators[&Actuator::Burner], 0.0);
+        // Only the transition acts; staying connected does not.
+        assert!(s.set_connected(true).is_none());
+        s.set_connected(false);
+        assert_eq!(
+            s.set_connected(true).map(|r| r.kind),
+            Some(ReactionKind::Connected)
+        );
     }
 
     #[test]

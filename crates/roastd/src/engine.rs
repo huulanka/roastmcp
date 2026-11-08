@@ -139,6 +139,8 @@ pub struct MachineInfo {
     sampling_interval_s: f64,
     max_bt_c: f64,
     link_loss_tested: bool,
+    /// What the machine does when the link breaks, for people; only once tested.
+    link_lost: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -879,7 +881,6 @@ impl Engine {
         if self.conn != Conn::Connected {
             self.conn = Conn::Connected;
             self.conn_error = None;
-            self.safety.set_connected(true);
             if self.roast.is_none() {
                 self.state = RoastState::Connected;
             }
@@ -888,7 +889,15 @@ impl Engine {
                 .as_ref()
                 .map(|m| m.name.clone())
                 .unwrap_or_default();
-            self.alarm("info", "connected", format!("Connected to {name}."));
+            // A machine may start at its own defaults on connect (the Cubean+
+            // heats at 100 %), so the safety layer sets the safe state at once.
+            match self.safety.set_connected(true) {
+                Some(mut r) => {
+                    r.message = format!("Connected to {name}. {}", r.message);
+                    self.apply_reaction(&r);
+                }
+                None => self.alarm("info", "connected", format!("Connected to {name}.")),
+            }
         }
         let t = self.t();
         let ror = r.bt.and_then(|bt| self.ror.push(t, bt));
@@ -964,6 +973,9 @@ impl Engine {
     fn apply_reaction(&mut self, r: &SafetyReaction) {
         let severity = match r.kind {
             roast_safety::ReactionKind::LeaseExpired => "warning",
+            // Routine on a first connect; worth a sound when a roast lost its heat.
+            roast_safety::ReactionKind::Connected if self.roast.is_some() => "warning",
+            roast_safety::ReactionKind::Connected => "info",
             _ => "critical",
         };
         let kind = serde_json::to_value(r.kind)
@@ -1350,6 +1362,7 @@ fn machine_info(p: &MachineProfile, simulated: bool, port: Option<String>) -> Ma
         sampling_interval_s: p.sampling_interval_s,
         max_bt_c: p.limits.max_bt_c,
         link_loss_tested: p.link_loss.tested,
+        link_lost: p.link_loss.tested.then(|| p.link_loss.link_lost.clone()),
     }
 }
 

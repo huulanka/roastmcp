@@ -52,7 +52,8 @@ interface Alarm { id: number; at: string /* RFC 3339 */; severity: "info" | "war
 interface ActuatorSpec { actuator: Actuator; min: number; max: number; step: number }
 interface MachineInfo { id: string; name: string; simulated: boolean; port: string | null;
   actuators: ActuatorSpec[]; switches: Actuator[]; has_et: boolean;
-  sampling_interval_s: number; max_bt_c: number; link_loss_tested: boolean }
+  sampling_interval_s: number; max_bt_c: number; link_loss_tested: boolean;
+  link_lost: string | null }  // the profile's advice, once tested
 
 interface Snapshot {
   version: string;

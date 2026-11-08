@@ -85,6 +85,8 @@ export interface MachineInfo {
   sampling_interval_s: number;
   max_bt_c: number;
   link_loss_tested: boolean;
+  /** What the machine does when the link breaks, as advice; null until tested. */
+  link_lost: string | null;
 }
 export interface Recording {
   id: string;
