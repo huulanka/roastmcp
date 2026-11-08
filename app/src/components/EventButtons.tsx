@@ -46,17 +46,17 @@ export function EventButtons({ snapshot }: { snapshot: Snapshot }) {
   const label = BUTTONS.find((b) => b.kind === asking)?.label ?? "";
 
   return (
-    <Panel title={t("Events")}>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+    <Panel className="p-2.5">
+      <div className="grid grid-cols-4 gap-2 xl:grid-cols-7">
         {BUTTONS.map(({ kind, label }) => {
           const ev = snapshot.events.find((e) => e.kind === kind);
           return (
             <button
               key={kind}
-              disabled={!active}
+              disabled={!(active || (kind === "charge" && snapshot.state === "connected"))}
               onClick={() => (ev ? setAsking(kind) : void mark(kind))}
               className={cn(
-                "flex h-14 flex-col items-center justify-center rounded-xl border text-xs font-semibold tracking-wide transition-colors duration-150 outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40",
+                "flex h-12 flex-col items-center justify-center rounded-xl border text-xs font-semibold tracking-wide transition-colors duration-150 outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40",
                 ev
                   ? "border-brand/40 bg-brand-soft text-brand"
                   : "border-border bg-secondary text-secondary-foreground hover:bg-accent",

@@ -126,6 +126,17 @@ export function RoastChart({
           size: 40,
           splits: () => [0, 10, 20, 30, 40],
         },
+        {
+          scale: "pct",
+          side: 1,
+          stroke: axisColor,
+          font,
+          grid: { show: false },
+          ticks: { stroke: grid.stroke },
+          size: 44,
+          splits: () => [0, 50, 100],
+          values: (_u, splits) => splits.map((v) => `${v}%`),
+        },
       ],
       series: [
         {},
@@ -205,7 +216,9 @@ export function RoastChart({
             ctx.save();
             ctx.font = `${11 * dpr}px ${getComputedStyle(document.body).fontFamily}`;
             ctx.textBaseline = "top";
-            for (const m of markerRef.current) {
+            const rowEnd = [-1e9, -1e9, -1e9];
+            const sorted = [...markerRef.current].sort((p, q) => p.x - q.x);
+            for (const m of sorted) {
               const x = Math.round(u.valToPos(m.x, "x", true));
               if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) continue;
               ctx.strokeStyle = css("--chart-event");
@@ -217,8 +230,20 @@ export function RoastChart({
               ctx.lineTo(x, top + height);
               ctx.stroke();
               ctx.setLineDash([]);
-              ctx.fillText(m.label, x + 3 * dpr, top + 2 * dpr);
+              const w = ctx.measureText(m.label).width;
+              const row = rowEnd.findIndex((e) => x + 3 * dpr >= e);
+              if (row < 0) continue;
+              rowEnd[row] = x + 3 * dpr + w + 6 * dpr;
+              ctx.fillText(m.label, x + 3 * dpr, top + (2 + row * 14) * dpr);
             }
+            // top of the 0-100 % band
+            const y100 = Math.round(u.valToPos(100, "pct", true));
+            ctx.strokeStyle = css("--chart-grid");
+            ctx.lineWidth = dpr;
+            ctx.beginPath();
+            ctx.moveTo(u.bbox.left, y100);
+            ctx.lineTo(u.bbox.left + u.bbox.width, y100);
+            ctx.stroke();
             ctx.restore();
           },
         ],

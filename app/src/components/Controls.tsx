@@ -50,7 +50,7 @@ function ActuatorRow({
           />
           {t(NAMES[spec.actuator])}
         </span>
-        <span className="readout text-2xl font-semibold">
+        <span className="readout text-xl font-semibold">
           {Math.round(shown)}
           <span className="ml-0.5 text-sm font-normal text-muted-foreground">%</span>
         </span>
@@ -58,7 +58,7 @@ function ActuatorRow({
       <div className="flex items-center gap-3">
         <Button
           variant="outline"
-          size="icon-lg"
+          size="icon"
           disabled={disabled}
           aria-label={`${t(NAMES[spec.actuator])} −`}
           onClick={(e) => nudge(spec, current, -(e.shiftKey ? 5 : 1) * step)}
@@ -77,11 +77,11 @@ function ActuatorRow({
             setDraft(null);
             if (v[0] !== current) void setActuator(spec.actuator, v[0]);
           }}
-          className="h-8"
+          className="h-6"
         />
         <Button
           variant="outline"
-          size="icon-lg"
+          size="icon"
           disabled={disabled}
           aria-label={`${t(NAMES[spec.actuator])} +`}
           onClick={(e) => nudge(spec, current, (e.shiftKey ? 5 : 1) * step)}
@@ -109,7 +109,7 @@ export function Controls({
       {!machine ? (
         <p className="text-sm text-muted-foreground">{t("Connect a machine to control it.")}</p>
       ) : (
-        <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-3.5">
           {machine.actuators.map((spec) => (
             <ActuatorRow
               key={spec.actuator}

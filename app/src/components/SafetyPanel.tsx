@@ -26,7 +26,7 @@ export function SafetyPanel({ safety }: { safety: SafetyStatus }) {
 
   return (
     <Panel title={t("Safety and AI")}>
-      <div className="flex flex-col gap-3 text-sm">
+      <div className="flex flex-col gap-2.5 text-sm">
         <div className="flex items-center justify-between">
           <span className="text-muted-foreground">{t("AI control")}</span>
           <span className="font-medium">
@@ -56,7 +56,7 @@ export function SafetyPanel({ safety }: { safety: SafetyStatus }) {
         <button
           onClick={() => void call(() => api.presence())}
           className={cn(
-            "flex h-12 items-center justify-center gap-2 rounded-xl text-sm font-semibold transition-colors duration-150 outline-none focus-visible:ring-3 focus-visible:ring-ring/60",
+            "flex h-10 items-center justify-center gap-2 rounded-xl text-sm font-semibold transition-colors duration-150 outline-none focus-visible:ring-3 focus-visible:ring-ring/60",
             urgent
               ? "bg-primary text-primary-foreground shadow-[0_0_0_4px_var(--brand-soft)] motion-safe:animate-pulse"
               : "bg-secondary text-secondary-foreground hover:bg-accent",

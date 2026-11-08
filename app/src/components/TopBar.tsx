@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Flame, Moon, Octagon, Sun } from "lucide-react";
+import { Flame, Moon, Octagon, Settings, Sun } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { api, ApiError } from "@/api/client.ts";
@@ -15,6 +15,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog.tsx";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover.tsx";
 import { StartDialog } from "@/components/Dialogs.tsx";
 import { setLang } from "@/i18n/index.ts";
 import { cn } from "@/lib/utils.ts";
@@ -69,12 +70,12 @@ export function TopBar({
   };
 
   return (
-    <header className="sticky top-0 z-30 flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-border bg-background/70 px-4 py-2.5 backdrop-blur-xl">
+    <header className="sticky top-0 z-30 flex flex-nowrap items-center gap-4 border-b border-border bg-background/70 px-4 py-2 backdrop-blur-xl">
       <div className="flex items-center gap-2 font-semibold tracking-tight">
         <span className="grid size-8 place-items-center rounded-xl bg-brand-soft text-brand">
           <Flame className="size-4.5" />
         </span>
-        <span className="hidden sm:inline">RoastMCP</span>
+        <span className="hidden 2xl:inline">RoastMCP</span>
       </div>
       <nav className="flex gap-1 rounded-xl bg-muted/60 p-1" aria-label="Screens">
         {(["roast", "archive"] as const).map((s) => (
@@ -94,8 +95,8 @@ export function TopBar({
         ))}
       </nav>
 
-      <div className="flex items-center gap-2.5">
-        <span className="flex items-center gap-2 text-sm">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <span className="flex min-w-0 items-center gap-2 text-sm">
           <span
             className={cn(
               "size-2 rounded-full",
@@ -106,7 +107,7 @@ export function TopBar({
                   : "bg-subtle-foreground",
             )}
           />
-          <span className="text-foreground">
+          <span className="max-w-48 truncate text-foreground">
             {connected && machine
               ? machine.name
               : snapshot?.connection === "connecting"
@@ -138,8 +139,8 @@ export function TopBar({
         </span>
       </div>
 
-      <div className="mx-auto flex items-baseline gap-2" aria-live="off">
-        <span className="text-xs text-muted-foreground">
+      <div className="ml-auto flex flex-col items-end leading-none" aria-live="off">
+        <span className="mb-1 text-[10px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
           {hasCharge ? t("Roast time") : t("Recording time")}
         </span>
         <span className="readout text-4xl font-semibold">
@@ -159,25 +160,40 @@ export function TopBar({
             {t("Start recording")}
           </Button>
         )}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setLang(i18n.language.startsWith("de") ? "en" : "de")}
-          aria-label="Language"
-        >
-          {i18n.language.startsWith("de") ? "DE" : "EN"}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={t("Toggle theme")}
-          onClick={() => {
-            toggleTheme();
-            setRerender((n) => n + 1);
-          }}
-        >
-          {currentTheme() === "dark" ? <Sun /> : <Moon />}
-        </Button>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="ghost" size="icon" aria-label={t("Settings")}>
+              <Settings />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="flex w-56 flex-col gap-3">
+            <div className="flex items-center justify-between text-sm">
+              {t("Language")}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setLang(i18n.language.startsWith("de") ? "en" : "de")}
+              >
+                {i18n.language.startsWith("de") ? "Deutsch" : "English"}
+              </Button>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              {t("Theme")}
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label={t("Toggle theme")}
+                onClick={() => {
+                  toggleTheme();
+                  setRerender((n) => n + 1);
+                }}
+              >
+                {currentTheme() === "dark" ? <Moon /> : <Sun />}
+                {currentTheme() === "dark" ? t("Dark") : t("Light")}
+              </Button>
+            </div>
+          </PopoverContent>
+        </Popover>
         <button
           onClick={() => void emergencyStop()}
           className="flex h-11 items-center gap-2 rounded-xl bg-estop px-4 text-sm font-bold tracking-wide text-estop-foreground uppercase shadow-[0_0_0_4px_var(--estop-ring),0_8px_24px_-6px_var(--estop)] transition-transform duration-150 outline-none hover:brightness-110 focus-visible:ring-4 focus-visible:ring-white/70 active:scale-[0.97]"
@@ -185,7 +201,7 @@ export function TopBar({
         >
           <Octagon className="size-5" />
           {t("Emergency stop")}
-          <kbd className="rounded bg-black/25 px-1.5 py-0.5 font-sans text-[10px] font-medium normal-case">
+          <kbd className="hidden rounded bg-black/25 px-1.5 py-0.5 font-sans text-[10px] font-medium normal-case xl:inline">
             Esc
           </kbd>
         </button>

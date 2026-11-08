@@ -56,9 +56,9 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
   const connected = snapshot?.connection === "connected";
 
   return (
-    <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
-      <div className="flex min-w-0 flex-col gap-4">
-        <Panel className="relative h-[min(52vh,560px)] min-h-72 p-2 pt-3">
+    <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[minmax(0,1fr)_21rem] lg:overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-col gap-3">
+        <Panel className="relative h-96 min-h-64 flex-1 p-2 pt-3">
           <RoastChart data={data} markers={markers} bands={bands} minSpanS={600} />
           {!connected && points.length === 0 && (
             <div className="absolute inset-0 grid place-items-center rounded-2xl bg-surface/80 backdrop-blur-sm">
@@ -76,10 +76,10 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
             </div>
           )}
         </Panel>
-        {snapshot && <Readouts snapshot={snapshot} />}
         {snapshot && <EventButtons snapshot={snapshot} />}
+        {snapshot && <Readouts snapshot={snapshot} />}
       </div>
-      <div className="flex min-w-0 flex-col gap-4">
+      <div className="flex min-h-0 min-w-0 flex-col gap-3 lg:overflow-y-auto">
         {snapshot && <Controls machine={snapshot.machine} safety={snapshot.safety} />}
         {snapshot && <SafetyPanel safety={snapshot.safety} />}
       </div>

@@ -87,6 +87,11 @@ export const de: Record<string, string> = {
   "The roast will be saved to the archive. Make sure the beans have been dropped and cooled.":
     "Die Röstung wird im Archiv gespeichert. Stelle sicher, dass die Bohnen abgeworfen und gekühlt sind.",
   Title: "Titel",
+  Settings: "Einstellungen",
+  Language: "Sprache",
+  Theme: "Design",
+  Dark: "Dunkel",
+  Light: "Hell",
   "Toggle theme": "Design wechseln",
   "Undo mark": "Markierung entfernen",
   "Use simulator": "Simulator verwenden",
