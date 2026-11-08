@@ -38,6 +38,25 @@ look:
 - Who holds the port: `lsof /dev/cu.AKROASTER` (Artisan, a second daemon).
 - Switch the roaster off and on, wait for a steady Bluetooth light, connect again.
 
+What the first hardware test (2026-11-08, operator at the machine) showed:
+
+- **After a fresh Bluetooth connect, only the first open of the port is answered.**
+  A second open (another program, a restart of the daemon) sees the port but gets
+  no reply until Bluetooth is disconnected and connected again in the system
+  settings. In the wire trace this looks like `TX` lines without any `RX`.
+  Start RoastMCP right after connecting, and reconnect Bluetooth before every
+  restart of the daemon.
+- **The heater runs at 100 % as soon as the machine is switched on** (Artisan
+  shows the same). Set the burner to 0 before anything else; the app shows a
+  banner with a one-click "Burner to 0" while the burner runs with no roast or
+  preheat.
+- The machine never acknowledges `CHAN`, `UNITS` or `FILT`. That is normal; the
+  profile no longer waits for a reply. Readings (`READ`) and all actuator
+  commands worked: burner, air, drum, cooling, emergency stop and its latch.
+- The only temperature probe is BT; ET reads a constant and there is no probe in
+  the cooling tray. After the drop BT therefore says nothing about the beans, so
+  the drop ends and saves the recording and no "cooling end" is measured.
+
 Check, still with an empty, cold drum:
 
 | Step | Expected |
