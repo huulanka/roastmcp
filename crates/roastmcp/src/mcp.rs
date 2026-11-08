@@ -39,35 +39,51 @@ impl Daemon {
         Ok(Daemon {
             base: format!("http://127.0.0.1:{}/api", info.port),
             token: info.token,
-            agent: ureq::AgentBuilder::new()
-                .timeout(Duration::from_secs(40))
-                .build(),
+            // Error statuses are read like any answer: their body says what went wrong.
+            agent: ureq::Agent::config_builder()
+                .timeout_global(Some(Duration::from_secs(40)))
+                .http_status_as_error(false)
+                .build()
+                .into(),
             holder: "mcp".into(),
             holding: false,
         })
     }
 
     fn call(&self, method: &str, path: &str, body: Option<Value>) -> anyhow::Result<Value> {
-        let req = self
-            .agent
-            .request(method, &format!("{}{path}", self.base))
-            .set("Authorization", &format!("Bearer {}", self.token));
-        let res = match body {
-            Some(b) => req.send_json(b),
-            None => req.call(),
+        let url = format!("{}{path}", self.base);
+        let auth = format!("Bearer {}", self.token);
+        let res = match (method, body) {
+            ("GET", _) => self.agent.get(&url).header("Authorization", &auth).call(),
+            ("DELETE", _) => self
+                .agent
+                .delete(&url)
+                .header("Authorization", &auth)
+                .call(),
+            ("POST", Some(b)) => self
+                .agent
+                .post(&url)
+                .header("Authorization", &auth)
+                .send_json(b),
+            ("POST", None) => self
+                .agent
+                .post(&url)
+                .header("Authorization", &auth)
+                .send_empty(),
+            (m, _) => anyhow::bail!("unsupported request method {m}"),
         };
-        match res {
-            Ok(r) => Ok(r.into_json()?),
-            Err(ureq::Error::Status(_, r)) => {
-                let v: Value = r.into_json().unwrap_or(Value::Null);
-                anyhow::bail!(
-                    "{}",
-                    v.get("error")
-                        .and_then(Value::as_str)
-                        .unwrap_or("request failed")
-                )
-            }
-            Err(e) => Err(e).context("the RoastMCP daemon is not reachable"),
+        let mut r = res.context("the RoastMCP daemon is not reachable")?;
+        let ok = r.status().is_success();
+        let v: Value = r.body_mut().read_json().unwrap_or(Value::Null);
+        if ok {
+            Ok(v)
+        } else {
+            anyhow::bail!(
+                "{}",
+                v.get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("request failed")
+            )
         }
     }
 

@@ -54,9 +54,10 @@ fn read_info() -> Option<DaemonInfo> {
 }
 
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(3))
+    ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(3)))
         .build()
+        .into()
 }
 
 impl DaemonInfo {
@@ -67,18 +68,19 @@ impl DaemonInfo {
     fn get(&self, path: &str) -> Result<serde_json::Value, String> {
         agent()
             .get(&self.url(path))
-            .set("Authorization", &format!("Bearer {}", self.token))
+            .header("Authorization", format!("Bearer {}", self.token))
             .call()
             .map_err(|e| e.to_string())?
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| e.to_string())
     }
 
     fn post(&self, path: &str, body: &serde_json::Value) -> Result<(), String> {
         agent()
             .post(&self.url(path))
-            .set("Authorization", &format!("Bearer {}", self.token))
-            .send_json(body.clone())
+            .header("Authorization", format!("Bearer {}", self.token))
+            .send_json(body)
             .map(|_| ())
             .map_err(|e| e.to_string())
     }
