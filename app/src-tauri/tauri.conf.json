@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "RoastMCP",
+  "mainBinaryName": "roastmcp-app",
+  "version": "../package.json",
+  "identifier": "com.andreasbauer.roastmcp",
+  "build": {
+    "frontendDist": "splash",
+    "beforeDevCommand": {
+      "script": "npm run build && bash ../scripts/build-sidecar.sh debug",
+      "wait": true
+    },
+    "beforeBuildCommand": "npm run build && bash ../scripts/build-sidecar.sh release"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "RoastMCP",
+        "url": "index.html",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 1024,
+        "minHeight": 680,
+        "center": true,
+        "backgroundColor": "#141110"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "category": "Utility",
+    "shortDescription": "Coffee roasting with an AI interface (MCP)",
+    "copyright": "Apache-2.0",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": ["binaries/roastmcp"],
+    "resources": {
+      "../dist/": "ui/"
+    },
+    "macOS": {
+      "minimumSystemVersion": "14.0"
+    }
+  }
+}

@@ -231,3 +231,21 @@ live curves; React Three Fiber for 3D; i18next for English and German; TanStack
 Query for API state. The app talks to the daemon directly over HTTP and
 WebSocket; its Rust side starts the daemon sidecar and hands the token to the
 web view.
+
+How the shell works (`app/src-tauri`):
+
+- On start it reuses a daemon that answers on the address in `daemon.json`, or
+  starts the bundled `roastmcp daemon` (port 7878, the UI from the bundle's
+  resources, output to `logs/daemon.log`). A daemon it started and that dies is
+  started again.
+- The window first shows a local splash page, then loads the UI the daemon
+  serves (`http://127.0.0.1:<port>/#token=…`), so the app and a browser tab run
+  the same code. The web view needs no Tauri IPC.
+- A global shortcut (⌘⇧⎋ on macOS, Ctrl+Alt+Esc elsewhere) sends the
+  emergency stop from Rust straight to the daemon, independent of the web view
+  and of which app has focus.
+- Quitting (⌘Q, closing the window) asks first when a roast is recorded or the
+  burner is on. Quitting stops a daemon the app started through
+  `POST /api/shutdown`, which puts the roaster into the safe state and saves
+  the recording; ways macOS quits without asking (Dock, logout) do the same.
+  A daemon started by hand keeps running.

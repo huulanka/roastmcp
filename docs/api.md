@@ -98,6 +98,7 @@ interface Snapshot {
 | `GET /api/roasts/{id}` | | the roast (`.roast.json` content) |
 | `PATCH /api/roasts/{id}` | `{ title?, roasted_weight_g?, notes? }` | the roast |
 | `GET /api/roasts/{id}/alog` | | Artisan `.alog` text (download) |
+| `POST /api/shutdown` | | 202; the daemon exits as on Ctrl-C (safe state if the burner is on, recording saved) |
 
 ## WebSocket `GET /api/ws?token=…`
 

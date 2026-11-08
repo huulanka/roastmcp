@@ -4,3 +4,4 @@ package-lock.json
 src-tauri/target
 src-tauri/gen
 src-tauri/icons
+src-tauri/binaries

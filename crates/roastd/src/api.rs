@@ -26,6 +26,8 @@ pub struct AppState {
     pub token: Arc<str>,
     /// Where roasts are saved.
     pub roasts_dir: PathBuf,
+    /// Signalled by `POST /api/shutdown`.
+    pub shutdown: Arc<tokio::sync::Notify>,
 }
 
 impl IntoResponse for Fail {
@@ -65,6 +67,7 @@ pub fn router(state: AppState, ui_dir: Option<PathBuf>) -> Router {
         .route("/roasts/{id}", get(roast).patch(roast_patch))
         .route("/roasts/{id}/alog", get(roast_alog))
         .route("/ws", get(ws))
+        .route("/shutdown", post(shutdown))
         .layer(middleware::from_fn_with_state(state.clone(), auth));
 
     let mut app = Router::new().nest("/api", api);
@@ -102,6 +105,13 @@ async fn auth(
         }
         .into_response()
     }
+}
+
+/// Asks the daemon to exit gracefully (safe state if the burner is on, the
+/// recording saved), as Ctrl-C does. Used by the desktop app on quit.
+async fn shutdown(State(st): State<AppState>) -> StatusCode {
+    st.shutdown.notify_one();
+    StatusCode::ACCEPTED
 }
 
 async fn status(State(st): State<AppState>) -> impl IntoResponse {

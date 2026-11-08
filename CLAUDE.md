@@ -34,7 +34,8 @@ in your own words with sources in `docs/research/`.
 ## Layout
 
 Cargo workspace in `crates/` (see `docs/architecture.md` for each crate), the
-desktop app in `app/` (`app/src-tauri` is a workspace member), machine profiles
+desktop app in `app/` (`app/src-tauri` is its own Cargo package, excluded from
+the workspace: it needs the built UI and the sidecar binary to compile), machine profiles
 in `machines/`, sanitized fixtures in `fixtures/`. Never commit unsanitized
 personal roast logs.
 
@@ -45,7 +46,8 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cd app && npm ci && npm run build      # frontend
-cd app && npm run tauri dev             # desktop app in development
+cd app && npm run tauri dev             # desktop app in development (builds UI + sidecar)
+cargo clippy --manifest-path app/src-tauri/Cargo.toml -- -D warnings   # desktop shell
 cargo run -p roastmcp -- daemon --simulator   # daemon with the simulator
 ```
 

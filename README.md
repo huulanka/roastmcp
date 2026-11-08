@@ -40,7 +40,15 @@ cargo build --release -p roastmcp
 ```
 
 The daemon prints a link (`http://127.0.0.1:7878/#token=…`); open it in a
-browser. Roasts are saved as `.roast.json` and Artisan `.alog` in the data
+browser. Or build the desktop app, which starts the daemon itself, adds a
+system-wide emergency stop (⌘⇧⎋ on macOS, Ctrl+Alt+Esc elsewhere) and asks
+before quitting during a roast:
+
+```sh
+cd app && npx tauri build --bundles app    # app/src-tauri/target/release/bundle/macos/RoastMCP.app
+```
+
+Connect the roaster or the simulator from the app. Roasts are saved as `.roast.json` and Artisan `.alog` in the data
 directory (`~/Library/Application Support/com.andreasbauer.roastmcp/roasts`
 on macOS).
 
@@ -52,7 +60,8 @@ claude mcp add roastmcp -- "$PWD/target/release/roastmcp" mcp
 ```
 
 For Claude Desktop, add `{"command": "/path/to/roastmcp", "args": ["mcp"]}`
-under `mcpServers`. Before the AI may control anything, confirm in the app
+under `mcpServers`. The desktop app carries the same binary at
+`RoastMCP.app/Contents/MacOS/roastmcp`. Before the AI may control anything, confirm in the app
 that you are at the roaster.
 
 ## What 1.0 will do

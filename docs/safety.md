@@ -37,7 +37,7 @@ or drum movement the beans can ignite.
 | Critical step requested by AI/autopilot (start, DROP, step larger than the normal limit) | Waits for human confirmation |
 | Bean temperature above the machine's limit, or implausible rise | Burner cut by the safety layer, alarm |
 | Roaster link lost / stale data | Alarm; reconnect attempts; AI control suspended |
-| Emergency stop (button, global shortcut, MCP tool) | Safe state, latched: AI and autopilot locked out until a human resets |
+| Emergency stop (button, Escape in the app, global shortcut ⌘⇧⎋ / Ctrl+Alt+Esc, MCP tool) | Safe state, latched: AI and autopilot locked out until a human resets |
 | App crashes | Daemon keeps running with all rules; app reconnects |
 | Daemon stopped (Ctrl-C, SIGTERM) | Safe state is sent first if the burner is on; the running recording is saved |
 | Daemon crashes | App raises an alarm; machine behaves as tested below; the recording is recovered from its autosave (every 20 s) on the next start |

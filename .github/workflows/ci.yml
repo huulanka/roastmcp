@@ -24,7 +24,6 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
       - name: App shell formatting
-        if: hashFiles('app/src-tauri/Cargo.toml') != ''
         run: cargo fmt --manifest-path app/src-tauri/Cargo.toml --all -- --check
 
   # The core crates on all three platforms (ADR 0010): macOS is supported,
@@ -48,8 +47,30 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
-  # The Tauri desktop shell (app/src-tauri) gets its own job once it exists;
-  # until then the web UI is served by the daemon.
+  # The Tauri desktop shell: its own package, built against the UI and the
+  # sidecar binary it bundles.
+  app-shell:
+    name: Desktop shell
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            app/src-tauri -> target
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci && npm run build
+        working-directory: app
+      - run: bash scripts/build-sidecar.sh debug
+      - run: cargo clippy --manifest-path app/src-tauri/Cargo.toml --all-targets -- -D warnings
 
   frontend:
     name: Frontend
@@ -71,7 +92,7 @@ jobs:
 
   release:
     name: Release
-    needs: [fmt, rust, frontend]
+    needs: [fmt, rust, frontend, app-shell]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: macos-latest
     # Queue releases instead of racing two pushes to main.

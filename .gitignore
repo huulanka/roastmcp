@@ -1,6 +1,7 @@
 /target
 app/src-tauri/target/
 app/src-tauri/gen/
+app/src-tauri/binaries/
 
 # Node / frontend
 node_modules/

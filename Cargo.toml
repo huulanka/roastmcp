@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+# The desktop shell needs the sidecar binary and the built UI to compile, so it
+# is its own package (see app/src-tauri/Cargo.toml).
+exclude = ["app/src-tauri"]
 
 [workspace.package]
 version = "0.0.0"

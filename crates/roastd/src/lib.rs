@@ -144,10 +144,12 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     )?;
 
     let ui_dir = find_ui_dir(opts.ui_dir.clone());
+    let shutdown = Arc::new(tokio::sync::Notify::new());
     let state = api::AppState {
         engine: engine.clone(),
         token: Arc::from(token.as_str()),
         roasts_dir,
+        shutdown: shutdown.clone(),
     };
     let app = api::router(state, ui_dir.clone());
 
@@ -175,15 +177,28 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     println!("Data: {}", opts.data_dir.display());
 
     let shutdown_engine = engine.clone();
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            println!("Shutting down: roaster to a safe state if the burner is on.");
-            let _ = shutdown_engine.call(|e| e.shutdown()).await;
-            // Give the driver thread a moment to send the last commands.
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        })
-        .await?;
+    let stopped = Arc::new(tokio::sync::Notify::new());
+    let stopped_tx = stopped.clone();
+    let server = axum::serve(listener, app).with_graceful_shutdown(async move {
+        tokio::select! {
+            () = shutdown_signal() => {},
+            () = shutdown.notified() => {},
+        }
+        println!("Shutting down: roaster to a safe state if the burner is on.");
+        let _ = shutdown_engine.call(|e| e.shutdown()).await;
+        // Give the driver thread a moment to send the last commands.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        stopped_tx.notify_one();
+    });
+    // Open WebSockets would keep a graceful shutdown waiting; the roaster is
+    // already safe and the roast saved by then, so stop waiting after 3 s.
+    tokio::select! {
+        r = server => r?,
+        () = async {
+            stopped.notified().await;
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        } => {},
+    }
     let _ = std::fs::remove_file(daemon_json(&opts.data_dir));
     Ok(())
 }
