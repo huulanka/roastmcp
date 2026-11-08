@@ -68,6 +68,7 @@ pub fn router(state: AppState, ui_dir: Option<PathBuf>) -> Router {
         .route("/roasts/{id}/alog", get(roast_alog))
         .route("/ws", get(ws))
         .route("/shutdown", post(shutdown))
+        .route("/reference", get(reference).put(set_reference))
         .layer(middleware::from_fn_with_state(state.clone(), auth));
 
     let mut app = Router::new().nest("/api", api);
@@ -104,6 +105,29 @@ async fn auth(
             reason: None,
         }
         .into_response()
+    }
+}
+
+#[derive(Deserialize)]
+struct ReferenceBody {
+    id: Option<uuid::Uuid>,
+}
+
+async fn reference(State(st): State<AppState>) -> impl IntoResponse {
+    match st.engine.call(|e| e.reference()).await {
+        Ok(r) => Json(r).into_response(),
+        Err(e) => engine_gone(&e).into_response(),
+    }
+}
+
+async fn set_reference(
+    State(st): State<AppState>,
+    Json(b): Json<ReferenceBody>,
+) -> impl IntoResponse {
+    match st.engine.call(move |e| e.set_reference(b.id)).await {
+        Ok(Ok(s)) => Json(s).into_response(),
+        Ok(Err(f)) => f.into_response(),
+        Err(e) => engine_gone(&e).into_response(),
     }
 }
 

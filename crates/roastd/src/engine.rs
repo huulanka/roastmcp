@@ -13,8 +13,9 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use roast_core::{
     Actuator, ActuatorValues, BatchInfo, CommandOutcome, CommandRequest, CommandSource,
-    ControlLogEntry, EventDetector, EventKind, EventOrigin, Note, Phases, RejectReason, Roast,
-    RoastEvent, RoastOrigin, RoastState, RorTracker, Sample, phases,
+    ControlLogEntry, EventDetector, EventKind, EventOrigin, Note, Phases, Projection,
+    ReferenceCurve, RejectReason, Roast, RoastEvent, RoastOrigin, RoastState, RorConfig,
+    RorTracker, Sample, phases, project,
 };
 use roast_driver::{RoasterDriver, SimulatedMachine, Tc4Driver, simulator_profile};
 use roast_machine::MachineProfile;
@@ -195,6 +196,22 @@ pub struct Snapshot {
     phases: Option<Phases>,
     safety: SafetyStatus,
     alarms: Vec<Alarm>,
+    reference: Option<ReferenceStatus>,
+    projection: Option<Projection>,
+}
+
+/// The reference curve at the current moment of the roast.
+#[derive(Debug, Clone, Serialize)]
+struct ReferenceStatus {
+    id: uuid::Uuid,
+    title: String,
+    /// Reference bean temperature at the same time since CHARGE.
+    bt_now: Option<f64>,
+    /// Live bean temperature minus `bt_now`.
+    delta_bt: Option<f64>,
+    ror_now: Option<f64>,
+    /// Reference events, `t` relative to its CHARGE.
+    events: Vec<RoastEvent>,
 }
 
 /// The curve so far.
@@ -278,6 +295,7 @@ pub struct Engine {
     alarms: VecDeque<Alarm>,
     next_alarm: u64,
     audit: Option<File>,
+    reference: Option<ReferenceCurve>,
 }
 
 /// Starts the engine task and its safety ticker.
@@ -313,6 +331,7 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
         alarms: VecDeque::new(),
         next_alarm: 1,
         audit,
+        reference: None,
     };
     engine.recover_autosave();
 
@@ -398,10 +417,71 @@ impl Engine {
                 .roast
                 .as_ref()
                 .and_then(|r| phases(r, t.unwrap_or(0.0))),
+            reference: self.reference_status(t, charge_t),
+            projection: self.projection(&events, charge_t),
             events,
             safety: self.safety.status(now),
             alarms: self.alarms.iter().cloned().collect(),
         }
+    }
+
+    fn reference_status(&self, t: Option<f64>, charge_t: Option<f64>) -> Option<ReferenceStatus> {
+        let r = self.reference.as_ref()?;
+        let (bt_now, ror_now) = match (t, charge_t) {
+            (Some(t), Some(c)) => r.at(t - c),
+            _ => (None, None),
+        };
+        Some(ReferenceStatus {
+            id: r.id,
+            title: r.title.clone(),
+            bt_now,
+            delta_bt: self.last_bt.zip(bt_now).map(|(live, rf)| live - rf),
+            ror_now,
+            events: r.events.clone(),
+        })
+    }
+
+    /// Projection from the last minute of the curve, between CHARGE and DROP.
+    fn projection(&self, events: &[RoastEvent], charge_t: Option<f64>) -> Option<Projection> {
+        let charge_t = charge_t?;
+        if events.iter().any(|e| e.kind == EventKind::Drop) {
+            return None;
+        }
+        let end = self.points.last()?.t;
+        let recent: Vec<(f64, f64, f64)> = self
+            .points
+            .iter()
+            .rev()
+            .take_while(|p| p.t >= end - 60.0 && p.t >= charge_t)
+            .filter_map(|p| Some((p.t, p.bt?, p.ror?)))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        project(&recent, events, self.reference.as_ref())
+    }
+
+    // -------------------------------------------------------------- reference
+
+    /// Shows a saved roast as the reference curve, or none.
+    pub fn set_reference(&mut self, id: Option<uuid::Uuid>) -> Result<Snapshot, Fail> {
+        self.reference = match id {
+            None => None,
+            Some(id) => {
+                let (_, roast) = files::find(&self.opts.roasts_dir, id)
+                    .ok_or_else(|| Fail::not_found(format!("no saved roast {id}")))?;
+                Some(ReferenceCurve::from_roast(&roast, &RorConfig::default()))
+            }
+        };
+        self.audit(serde_json::json!({"type": "reference", "id": id}));
+        self.publish(None);
+        Ok(self.snapshot())
+    }
+
+    /// The reference curve, if one is set.
+    #[must_use]
+    pub fn reference(&self) -> Option<ReferenceCurve> {
+        self.reference.clone()
     }
 
     /// The curve of the recording, or the preview.

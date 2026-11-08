@@ -69,6 +69,17 @@ interface Snapshot {
   phases: Phases | null;
   safety: SafetyStatus;
   alarms: Alarm[];                       // the last 20, newest last
+  reference: null | {                    // see PUT /api/reference
+    id: string; title: string;
+    bt_now: number | null;               // reference BT at the same time since CHARGE
+    delta_bt: number | null;             // bt - bt_now
+    ror_now: number | null;
+    events: RoastEvent[];                // t relative to the reference's CHARGE
+  };
+  projection: null | {                   // between CHARGE and DROP, once the RoR is positive
+    bt_60s: number | null;
+    next: null | { kind: "first_crack_start" | "drop"; bt: number; eta_s: number | null };
+  };                                     // next: from the reference's event temperatures
 }
 ```
 
@@ -98,6 +109,8 @@ interface Snapshot {
 | `GET /api/roasts/{id}` | | the roast (`.roast.json` content) |
 | `PATCH /api/roasts/{id}` | `{ title?, roasted_weight_g?, notes? }` | the roast |
 | `GET /api/roasts/{id}/alog` | | Artisan `.alog` text (download) |
+| `GET /api/reference` | | `null` or `{ id, title, points: {t, bt, ror}[], events }` — `t` in seconds since the reference's CHARGE |
+| `PUT /api/reference` | `{ id: string \| null }` | `Snapshot` (sets or clears the reference curve; 404 for an unknown id) |
 | `POST /api/shutdown` | | 202; the daemon exits as on Ctrl-C (safe state if the burner is on, recording saved) |
 
 ## WebSocket `GET /api/ws?token=…`

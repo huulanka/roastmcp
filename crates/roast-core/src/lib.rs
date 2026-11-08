@@ -19,6 +19,7 @@ pub mod inventory;
 pub mod maintenance;
 mod num;
 pub mod profile;
+pub mod reference;
 pub mod roast;
 pub mod ror;
 pub mod sample;
@@ -45,6 +46,7 @@ pub use profile::{
     ActionTrigger, DropRule, EventTarget, EventTargets, PlannedAction, Profile, ProfileTarget,
     ProfileVersion, TargetPoint, ToleranceBand,
 };
+pub use reference::{Milestone, Projection, RefPoint, ReferenceCurve, project};
 pub use roast::{
     Ambient, BatchInfo, ColorScale, ROAST_FILE_SCHEMA_VERSION, Roast, RoastDegree, RoastOrigin,
 };

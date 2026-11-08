@@ -13,7 +13,10 @@ const PROTOCOL_VERSION: &str = "2025-06-18";
 
 const INSTRUCTIONS: &str = "RoastMCP connects you to a coffee roaster. Temperatures are °C, \
 times seconds, actuator values percent. Read with get_status and get_curve; use wait to follow \
-a roast. To control the roaster, a person must first confirm presence in the RoastMCP app, then \
+a roast. get_status also shows the reference curve (an earlier roast: its BT at the same time \
+since CHARGE and the difference to now) and a projection (BT in 60 s, the next milestone from the \
+reference and when it is reached); set_reference picks the reference from list_roasts. \
+To control the roaster, a person must first confirm presence in the RoastMCP app, then \
 call request_control. Your commands pass a safety layer: cutting the burner or adding air is \
 never limited; raising the burner is limited to 10 points per command and one raise per 10 s, \
 lowering the air to 20 points per 5 s. Act like an experienced roaster: anticipate the thermal \
@@ -123,7 +126,9 @@ fn tools() -> Value {
          "inputSchema": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"]}},
         {"name": "list_roasts", "description": "Saved roasts, newest first.", "inputSchema": {"type": "object", "properties": {}}},
         {"name": "get_roast", "description": "A saved roast with its curve downsampled to every 10 s.",
-         "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}}
+         "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
+        {"name": "set_reference", "description": "Shows a saved roast (id from list_roasts) as the reference curve behind the live roast, or clears it (id omitted). The person sees it in the app.",
+         "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}}}
     ])
 }
 
@@ -216,6 +221,11 @@ fn call_tool(d: &mut Daemon, name: &str, args: &Value) -> anyhow::Result<Value> 
             )
         }
         "list_roasts" => d.call("GET", "/roasts", None),
+        "set_reference" => d.call(
+            "PUT",
+            "/reference",
+            Some(serde_json::json!({ "id": arg_s("id") })),
+        ),
         "get_roast" => {
             let id = arg_s("id").context("id is required")?;
             let mut r = d.call("GET", &format!("/roasts/{id}"), None)?;
