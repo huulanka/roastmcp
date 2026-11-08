@@ -239,16 +239,11 @@ mod tests {
 
     #[test]
     fn connect_sends_init_and_reads() {
-        let script = ScriptedIo::default()
-            .reply("CHAN", "#OK")
-            .reply("UNITS", "#OK")
-            .reply("READ", "22.0,0.0,150.5,55,30,0");
+        // The Cubean+ never acknowledges setup commands, so none is waited for.
+        let script = ScriptedIo::default().reply("READ", "22.0,0.0,150.5,55,30,0");
         let mut d = driver(script);
         let warnings = d.connect().unwrap();
-        assert_eq!(
-            warnings,
-            vec!["no acknowledgement for \"FILT;95,95,95,95\""]
-        );
+        assert!(warnings.is_empty(), "{warnings:?}");
         let r = d.read().unwrap();
         assert_eq!(r.bt, Some(150.5));
         assert_eq!(r.et, None, "the Cubean+ has no ET probe");
@@ -287,5 +282,27 @@ mod tests {
         let mut d = driver(ScriptedIo::default());
         d.connect().unwrap();
         assert!(matches!(d.read(), Err(DriverError::Timeout(600))));
+    }
+
+    #[test]
+    fn warns_when_an_expected_acknowledgement_is_missing() {
+        let mut profile = cubean();
+        let ProtocolConfig::Tc4(proto) = &mut profile.protocol;
+        for step in &mut proto.init {
+            step.expect_prefix = Some("#".into());
+        }
+        let script = ScriptedIo::default()
+            .reply("CHAN", "#OK")
+            .reply("UNITS", "#OK");
+        let mut script = Some(script);
+        let mut d = Tc4Driver::with_opener(
+            profile,
+            Box::new(move || Ok(script.take().unwrap_or_default())),
+        )
+        .unwrap();
+        assert_eq!(
+            d.connect().unwrap(),
+            vec!["no acknowledgement for \"FILT;95,95,95,95\""]
+        );
     }
 }
