@@ -11,7 +11,12 @@
 
 pub mod actuator;
 pub mod command;
+pub mod cupping;
 pub mod event;
+pub mod experiment;
+pub mod inventory;
+pub mod maintenance;
+pub mod profile;
 pub mod roast;
 pub mod sample;
 pub mod state;
@@ -20,7 +25,20 @@ pub use actuator::{Actuator, ActuatorValues};
 pub use command::{
     ActuatorCommand, CommandOutcome, CommandRequest, CommandSource, ControlLogEntry, RejectReason,
 };
+pub use cupping::{
+    Cupping, CuppingError, CuppingScores, RestWindow, RestWindows, RoastLevel, rest_days_between,
+    rest_window,
+};
 pub use event::{EventKind, EventOrigin, Note, RoastEvent};
+pub use experiment::{ChangedVariable, Experiment, ExperimentStatus, VariableChange};
+pub use inventory::{
+    Altitude, GreenLot, Price, Process, StockMovement, StockMovementKind, stock_g,
+};
+pub use maintenance::{DueReason, MaintenanceLogEntry, MaintenanceTask};
+pub use profile::{
+    ActionTrigger, DropRule, EventTarget, EventTargets, PlannedAction, Profile, ProfileTarget,
+    ProfileVersion, TargetPoint, ToleranceBand,
+};
 pub use roast::{
     Ambient, BatchInfo, ColorScale, ROAST_FILE_SCHEMA_VERSION, Roast, RoastDegree, RoastOrigin,
 };
