@@ -137,7 +137,7 @@ fn tools() -> Value {
          "inputSchema": {"type": "object", "properties": {}}},
         {"name": "set_burner", "description": "Sets the burner (heater). Cuts are unlimited; raises at most 10 points per command, one raise per 10 s.", "inputSchema": set("Burner", "0-100")},
         {"name": "set_air", "description": "Sets the airflow (fan). More air is unlimited; less air at most 20 points per 5 s.", "inputSchema": set("Air", "0-100")},
-        {"name": "set_drum", "description": "Sets the drum speed.", "inputSchema": set("Drum", "machine range")},
+        {"name": "set_drum", "description": "Sets the drum speed, in percent of the machine's range. People think in rpm: get_status lists machine.actuators[].display where the machine knows it (rpm = percent × scale + offset; Cubean+: 80 % ≈ 55 rpm, 100 % ≈ 68 rpm), so convert before calling and speak rpm to the person.", "inputSchema": set("Drum", "machine range")},
         {"name": "emergency_stop", "description": "Emergency stop: burner off, air high, drum running; latched until a person resets it in the app.",
          "inputSchema": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"]}},
         {"name": "list_roasts", "description": "Saved roasts, newest first.", "inputSchema": {"type": "object", "properties": {}}},

@@ -443,6 +443,7 @@ impl Importer<'_> {
             max,
             step: 1.0,
             reported: false,
+            display: None,
         });
     }
 

@@ -155,6 +155,8 @@ export const de: Record<string, string> = {
   "Medium-dark": "Mitteldunkel",
   "Next event": "Nächstes Ereignis",
   "No AI connected.": "Keine KI verbunden.",
+  // Actuator display units from machine profiles.
+  rpm: "U/min",
   "{{holder}} asks for control.": "{{holder}} möchte übernehmen.",
   "No notes yet.": "Noch keine Hinweise.",
   "No roaster": "Kein Röster",

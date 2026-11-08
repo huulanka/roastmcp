@@ -3,6 +3,7 @@ import i18n from "i18next";
 
 import { api, ApiError } from "@/api/client.ts";
 import type { Actuator, ActuatorSpec } from "@/api/types.ts";
+import { stepPercent } from "@/lib/units.ts";
 import { toast } from "./toasts.ts";
 
 /** Values the user asked for that the daemon has not confirmed yet. */
@@ -54,7 +55,8 @@ export async function setActuator(a: Actuator, value: number): Promise<void> {
     const res = await api.command(a, value);
     if (res.outcome === "rejected") {
       toast("warning", `${a}: ${rejectText(res.reason)}`);
-    } else if (res.outcome === "applied" && res.clamped_from !== null) {
+    } else if (res.outcome === "applied" && typeof res.clamped_from === "number") {
+      // The daemon leaves `clamped_from` out when nothing was limited.
       toast("info", i18n.t("{{a}} limited to {{v}}", { a, v: res.value }));
     }
   } catch (e) {
@@ -64,8 +66,13 @@ export async function setActuator(a: Actuator, value: number): Promise<void> {
   }
 }
 
-export function nudge(spec: ActuatorSpec, current: number, delta: number): void {
+/**
+ * Moves an actuator by `steps`: display units where the machine has them (drum
+ * rpm), otherwise `spec.step` percent points each.
+ */
+export function nudge(spec: ActuatorSpec, current: number, steps: number): void {
   const base = desired[spec.actuator] ?? current;
-  const v = Math.min(spec.max, Math.max(spec.min, Math.round(base + delta)));
+  const raw = stepPercent(spec.display, base, steps, spec.step || 1);
+  const v = Math.min(spec.max, Math.max(spec.min, raw));
   if (v !== base) void setActuator(spec.actuator, v);
 }

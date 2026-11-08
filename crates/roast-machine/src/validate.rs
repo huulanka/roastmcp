@@ -225,6 +225,21 @@ impl MachineProfile {
                     ),
                 );
             }
+            if let Some(d) = &cfg.display {
+                let unit = d.unit.trim();
+                if unit.is_empty() || unit.len() > 8 || unit == "%" {
+                    c.push(
+                        format!("{field}.display.unit"),
+                        "must be a short unit other than %, for example \"rpm\"",
+                    );
+                }
+                if !(d.scale.is_finite() && d.scale > 0.0 && d.offset.is_finite()) {
+                    c.push(
+                        format!("{field}.display"),
+                        "scale must be positive and offset a finite number",
+                    );
+                }
+            }
         }
     }
 

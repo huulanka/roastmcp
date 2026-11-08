@@ -26,7 +26,7 @@ export type RejectReason =
   | "overheat";
 
 export type CommandOutcome =
-  | { outcome: "applied"; value: number; clamped_from: number | null }
+  | { outcome: "applied"; value: number; clamped_from?: number | null }
   | { outcome: "rejected"; reason: RejectReason }
   | { outcome: "awaiting_confirmation"; confirmation_id: string };
 
@@ -73,6 +73,14 @@ export interface ActuatorSpec {
   min: number;
   max: number;
   step: number;
+  /** How people read the value when not in percent (the drum in rpm). */
+  display?: DisplayScale;
+}
+/** `shown = percent * scale + offset`, in `unit`. */
+export interface DisplayScale {
+  unit: string;
+  scale: number;
+  offset: number;
 }
 export interface MachineInfo {
   id: string;

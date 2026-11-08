@@ -6,6 +6,7 @@ import type { Actuator, ActuatorSpec, MachineInfo, SafetyStatus } from "@/api/ty
 import { Button } from "@/components/ui/button.tsx";
 import { Slider } from "@/components/ui/slider.tsx";
 import { Switch } from "@/components/ui/switch.tsx";
+import { actuatorShown } from "@/lib/units.ts";
 import { cn } from "@/lib/utils.ts";
 import { nudge, setActuator, useDesired } from "@/state/controls.ts";
 
@@ -69,7 +70,7 @@ function Stepper({
       size="icon"
       disabled={disabled}
       aria-label={sign > 0 ? t("Increase {{name}}", { name }) : t("Decrease {{name}}", { name })}
-      onClick={(e) => nudge(spec, current, sign * (e.shiftKey ? 5 : 1) * (spec.step || 1))}
+      onClick={(e) => nudge(spec, current, sign * (e.shiftKey ? 5 : 1))}
     >
       {sign > 0 ? <Plus /> : <Minus />}
     </Button>
@@ -107,7 +108,11 @@ function MainControl({
   );
 }
 
-/** Drum, filter and other ranged actuators: one compact row. */
+/**
+ * Drum, filter and other ranged actuators: one compact row with steppers only.
+ * They are set once or twice per roast; the value reads in the machine's unit
+ * (drum rpm) where the profile has one.
+ */
 function CompactControl({
   spec,
   current,
@@ -118,18 +123,18 @@ function CompactControl({
   disabled: boolean;
 }) {
   const { t } = useTranslation();
-  const { shown, slider } = useShown(spec, current);
+  const shown = useDesired()[spec.actuator] ?? current;
   const name = t(ACTUATOR_NAME[spec.actuator]);
+  const unit = spec.display ? t(spec.display.unit) : "%";
   return (
     <div className="flex items-center gap-2">
       <span className="w-18 shrink-0 text-sm">{name}</span>
       <Stepper spec={spec} current={current} disabled={disabled} sign={-1} />
-      <Slider {...slider} disabled={disabled} aria-label={name} className="min-w-12" />
-      <Stepper spec={spec} current={current} disabled={disabled} sign={1} />
-      <span className="w-12 shrink-0 text-right tabular text-[15px] font-medium">
-        {Math.round(shown)}
-        <span className="text-[13px] font-normal text-muted-foreground"> %</span>
+      <span className="min-w-0 flex-1 text-center tabular text-[15px] font-medium whitespace-nowrap">
+        {Math.round(actuatorShown(spec.display, shown))}
+        <span className="text-[13px] font-normal text-muted-foreground"> {unit}</span>
       </span>
+      <Stepper spec={spec} current={current} disabled={disabled} sign={1} />
     </div>
   );
 }

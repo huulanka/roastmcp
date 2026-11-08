@@ -381,6 +381,10 @@ pub struct ActuatorConfig {
     /// a matching `actuator:<name>` field must exist).
     #[serde(default)]
     pub reported: bool,
+    /// How people read the value, when not in percent (the drum in rpm).
+    /// Commands and recordings stay in percent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<DisplayScale>,
 }
 
 impl ActuatorConfig {
@@ -388,6 +392,34 @@ impl ActuatorConfig {
     #[must_use]
     pub fn render(&self, value: i64) -> String {
         self.command.replacen("{}", &value.to_string(), 1)
+    }
+}
+
+/// A linear mapping from the percent value to the unit people use:
+/// `shown = percent * scale + offset`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DisplayScale {
+    /// Unit shown to people, for example `"rpm"`.
+    pub unit: String,
+    /// Display units per percent point; positive.
+    pub scale: f64,
+    /// Display value at 0 %.
+    #[serde(default)]
+    pub offset: f64,
+}
+
+impl DisplayScale {
+    /// The display value for a percent value.
+    #[must_use]
+    pub fn to_display(&self, percent: f64) -> f64 {
+        percent * self.scale + self.offset
+    }
+
+    /// The percent value for a display value.
+    #[must_use]
+    pub fn to_percent(&self, shown: f64) -> f64 {
+        (shown - self.offset) / self.scale
     }
 }
 
