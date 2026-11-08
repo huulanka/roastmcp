@@ -108,6 +108,9 @@ fields = ["ambient", "et", "bt", "actuator:burner", "actuator:air", "setpoint"]
 # is discarded before the next READ. `step` is the granularity offered to
 # people and controllers. `reported = true` means the READ reply contains the
 # actual value (see protocol.read.fields).
+# An optional [actuators.display] table shows the value to people in another
+# unit: shown = percent × scale + offset (the drum below, in rpm). Commands,
+# limits and recordings stay in percent.
 # ---------------------------------------------------------------------------
 
 # Heater power.
@@ -128,8 +131,8 @@ max = 100
 step = 1
 reported = true
 
-# Drum speed. 100 % is about 68 rpm, 80 % about 55 rpm; the machine does not
-# accept less than 80 %, so the drum cannot be stopped from software.
+# Drum speed. The machine does not accept less than 80 %, so the drum cannot
+# be stopped from software.
 [[actuators]]
 actuator = "drum"
 command = "OT3,{}"
@@ -138,13 +141,23 @@ max = 100
 step = 1
 reported = false
 
-# Smoke filter fan.
+# Shown in revolutions per minute. The vendor's Artisan buttons are labelled
+# 100 % ≈ 68, 95 % ≈ 65, 90 % ≈ 62, 85 % ≈ 58 and 80 % ≈ 55 rpm, which is
+# rpm = 0.65 × percent + 3 for every label. Imported Artisan roasts all ran at
+# 80 % (≈ 55 rpm).
+[actuators.display]
+unit = "rpm"
+scale = 0.65
+offset = 3
+
+# Smoke filter fan. Stepped by 20 %, like the vendor's Artisan buttons
+# (100, 80, 60, 40, 20 %).
 [[actuators]]
 actuator = "filter"
 command = "OT4,{}"
 min = 0
 max = 100
-step = 1
+step = 20
 reported = false
 
 # ---------------------------------------------------------------------------

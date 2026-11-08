@@ -1,8 +1,8 @@
 import { useTranslation } from "react-i18next";
 
-import type { CommandSource, ControlLogEntry } from "@/api/types.ts";
+import type { CommandSource, ControlLogEntry, DisplayScale, MachineInfo } from "@/api/types.ts";
 import { rejectText } from "@/state/controls.ts";
-import { formatClock } from "@/lib/units.ts";
+import { actuatorShown, formatClock } from "@/lib/units.ts";
 import { cn } from "@/lib/utils.ts";
 
 import { entryStatus, type Status } from "@/lib/actions.ts";
@@ -14,18 +14,21 @@ const STATUS_STYLE: Record<Status, string> = {
   awaiting: "text-muted-foreground",
 };
 
-function pct(v: number | null | undefined): string {
-  return v === null || v === undefined ? "–" : `${Math.round(v)}`;
+function shownValue(display: DisplayScale | undefined, v: number | null | undefined): string {
+  return v === null || v === undefined ? "–" : `${Math.round(actuatorShown(display, v))}`;
 }
 
 /** Newest first list of every control action of the running roast. */
 export function ActionLog({
   entries,
   base,
+  machine,
 }: {
   entries: readonly ControlLogEntry[];
   /** CHARGE time; times are shown relative to it once the roast has started. */
   base: number | null;
+  /** For actuators read in their own unit (drum rpm). */
+  machine?: MachineInfo | null;
 }) {
   const { t } = useTranslation();
   const source: Record<CommandSource, string> = {
@@ -53,6 +56,10 @@ export function ActionLog({
         <ol className="flex max-h-[60vh] flex-col gap-2 overflow-y-auto">
           {rows.map((e, i) => {
             const st = entryStatus(e);
+            const display = machine?.actuators.find(
+              (s) => s.actuator === e.request.actuator,
+            )?.display;
+            const pct = (v: number | null | undefined) => shownValue(display, v);
             const requested = e.request.value;
             const applied = e.outcome.outcome === "applied" ? e.outcome.value : null;
             const time = e.t === null || e.t === undefined ? null : e.t - (base ?? 0);
@@ -68,6 +75,7 @@ export function ActionLog({
                       ? `${pct(e.previous)} ↛ ${pct(requested)}`
                       : `${pct(e.previous)} → ${pct(applied ?? requested)}`}
                     {st === "clamped" && ` (${t("asked")} ${pct(requested)})`}
+                    {display && ` ${t(display.unit)}`}
                   </span>
                   <span className="ml-auto text-[13px] text-muted-foreground">
                     {source[e.request.source]}

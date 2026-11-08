@@ -1,3 +1,5 @@
+import type { DisplayScale } from "@/api/types.ts";
+
 /**
  * Units and number formatting. Everything internal is °C (roast-core
  * convention); conversion happens only here, at the display edge.
@@ -35,6 +37,35 @@ export function formatClock(seconds: number | null | undefined): string {
   const m = Math.floor(whole / 60);
   const s = whole % 60;
   return `${sign}${m}:${s.toString().padStart(2, "0")}`;
+}
+
+/**
+ * An actuator value as people read it: percent, or the machine's own unit
+ * (drum rpm) where the profile has a display scale. Commands stay in percent.
+ */
+export function actuatorShown(display: DisplayScale | undefined, percent: number): number {
+  return display ? percent * display.scale + display.offset : percent;
+}
+
+/** The percent value for a value in the actuator's display unit. */
+export function actuatorPercent(display: DisplayScale | undefined, shown: number): number {
+  return display ? (shown - display.offset) / display.scale : shown;
+}
+
+/**
+ * The percent value one display step away from `percent`: one whole display
+ * unit (1 rpm) or `step` percent points, always moving at least one point.
+ */
+export function stepPercent(
+  display: DisplayScale | undefined,
+  percent: number,
+  steps: number,
+  step: number,
+): number {
+  if (!display) return Math.round(percent + steps * step);
+  const target = Math.round(actuatorShown(display, percent)) + steps;
+  const v = Math.round(actuatorPercent(display, target));
+  return v === Math.round(percent) ? v + Math.sign(steps) : v;
 }
 
 /** A number with fixed decimals, or a dash when unknown. */

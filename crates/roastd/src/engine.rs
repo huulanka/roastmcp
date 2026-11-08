@@ -149,6 +149,9 @@ struct ActuatorSpec {
     min: f64,
     max: f64,
     step: f64,
+    /// How people read the value when not in percent (the drum in rpm).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display: Option<roast_machine::DisplayScale>,
 }
 
 /// Lease holder name of the preheat controller.
@@ -1396,6 +1399,7 @@ fn machine_info(p: &MachineProfile, simulated: bool, port: Option<String>) -> Ma
                 min: a.min,
                 max: a.max,
                 step: a.step,
+                display: a.display.clone(),
             })
             .collect(),
         switches: p.switches.iter().map(|s| s.actuator).collect(),

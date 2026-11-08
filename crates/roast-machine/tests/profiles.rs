@@ -76,6 +76,20 @@ fn cubean_plus_profile_matches_the_research() {
         ("OT3,{}", 80.0, 100.0)
     );
     assert!(!drum.reported);
+    let rpm = drum.display.as_ref().unwrap();
+    assert_eq!(rpm.unit, "rpm");
+    // The vendor's labels: 80 % ≈ 55 rpm, 90 % ≈ 62 rpm, 100 % ≈ 68 rpm.
+    for (pct, shown) in [
+        (80.0, 55.0),
+        (85.0, 58.0),
+        (90.0, 62.0),
+        (95.0, 65.0),
+        (100.0, 68.0),
+    ] {
+        assert_eq!(rpm.to_display(pct).round(), shown, "{pct} %");
+        assert!((rpm.to_percent(rpm.to_display(pct)) - pct).abs() < 1e-9);
+    }
+    assert!(burner.display.is_none());
     assert_eq!(p.actuator(Actuator::Filter).unwrap().command, "OT4,{}");
     let cooling = p.switch(Actuator::Cooling).unwrap();
     assert_eq!(
@@ -227,6 +241,23 @@ fn actuator_definitions_are_checked() {
     let mut p = cubean();
     p.switches[0].actuator = Actuator::Burner;
     assert!(issues(&p).contains(&"switches.burner".to_string()));
+}
+
+#[test]
+fn display_scales_are_checked() {
+    let mut p = cubean();
+    let drum = p
+        .actuators
+        .iter_mut()
+        .find(|a| a.actuator == Actuator::Drum)
+        .unwrap();
+    let d = drum.display.as_mut().unwrap();
+    d.unit = "%".into();
+    d.scale = 0.0;
+    assert_eq!(
+        issues(&p),
+        ["actuators.drum.display.unit", "actuators.drum.display"]
+    );
 }
 
 #[test]

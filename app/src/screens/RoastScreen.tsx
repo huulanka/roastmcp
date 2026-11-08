@@ -207,6 +207,7 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT"))
         return;
       const map: Record<string, ["burner" | "air", number]> = {
+        // Five steps of 1 % each, as Artisan's ±5 % buttons.
         q: ["burner", 5],
         a: ["burner", -5],
         w: ["air", 5],
@@ -299,7 +300,7 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
               {t("Every change to burner, air and drum: who asked, and what the machine did.")}
             </DialogDescription>
           </DialogHeader>
-          <ActionLog entries={controlLog} base={base} />
+          <ActionLog entries={controlLog} base={base} machine={snapshot.machine} />
         </DialogContent>
       </Dialog>
       <SavedDialog key={savedId ?? "none"} roastId={savedId} onClose={clearJustSaved} />
