@@ -23,7 +23,9 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
-      - run: cargo fmt --manifest-path app/src-tauri/Cargo.toml --all -- --check
+      - name: App shell formatting
+        if: hashFiles('app/src-tauri/Cargo.toml') != ''
+        run: cargo fmt --manifest-path app/src-tauri/Cargo.toml --all -- --check
 
   # The core crates on all three platforms (ADR 0010): macOS is supported,
   # Windows and Linux are previews, but all of them must build and pass.
@@ -46,35 +48,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
-  # The Tauri shell is its own Cargo workspace (app/src-tauri).
-  app-rust:
-    name: App shell (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: app/src-tauri
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: app/src-tauri
-      - name: System libraries (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libudev-dev libasound2-dev pkg-config
-      - name: Frontend build (Tauri embeds it)
-        working-directory: app
-        run: npm ci && npm run build
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+  # The Tauri desktop shell (app/src-tauri) gets its own job once it exists;
+  # until then the web UI is served by the daemon.
 
   frontend:
     name: Frontend
@@ -96,7 +71,7 @@ jobs:
 
   release:
     name: Release
-    needs: [fmt, rust, app-rust, frontend]
+    needs: [fmt, rust, frontend]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: macos-latest
     # Queue releases instead of racing two pushes to main.

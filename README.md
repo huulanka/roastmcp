@@ -8,9 +8,11 @@ assistant such as Claude analyse your roasts, coach you through the next one,
 and, under strict guardrails and with you standing next to the roaster,
 drive a roast.
 
-> **Status: pre-alpha.** The design is settled (see [docs](docs/README.md));
-> the implementation is being built milestone by milestone
-> ([roadmap](docs/roadmap.md)). Do not use it to roast yet.
+> **Status: pre-alpha.** Live roasting with the simulator and the Skywalker
+> Cubean+ works in the browser, with the safety layer, the archive and MCP.
+> Everything else is being built milestone by milestone
+> ([roadmap](docs/roadmap.md)). Hardware use is experimental: stay at the
+> roaster and read [docs/first-roast.md](docs/first-roast.md) first.
 
 ## Safety first
 
@@ -26,6 +28,32 @@ around one rule: **a person supervises every roast and can always take over.**
 
 RoastMCP is provided under the Apache License 2.0, **without warranty of any
 kind**. You use it at your own risk.
+
+## Try it
+
+You need Rust (stable) and Node.js 22 or newer.
+
+```sh
+cd app && npm ci && npm run build && cd ..        # the web UI
+cargo build --release -p roastmcp
+./target/release/roastmcp daemon --simulator       # or: --serial /dev/cu.AKROASTER
+```
+
+The daemon prints a link (`http://127.0.0.1:7878/#token=…`); open it in a
+browser. Roasts are saved as `.roast.json` and Artisan `.alog` in the data
+directory (`~/Library/Application Support/com.andreasbauer.roastmcp/roasts`
+on macOS).
+
+To let Claude read and, under guardrails, control the roast, register the MCP
+server (it talks to the running daemon):
+
+```sh
+claude mcp add roastmcp -- "$PWD/target/release/roastmcp" mcp
+```
+
+For Claude Desktop, add `{"command": "/path/to/roastmcp", "args": ["mcp"]}`
+under `mcpServers`. Before the AI may control anything, confirm in the app
+that you are at the roaster.
 
 ## What 1.0 will do
 

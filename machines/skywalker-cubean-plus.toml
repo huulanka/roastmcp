@@ -26,10 +26,10 @@ sometimes differs from the set value (e.g. 21.7 or 28.3 %), so the firmware
 ramps or quantises - to be characterised. Beans are dropped by hand.
 """
 
-# Seconds between two samples. The vendor's Artisan settings use 1.5 s; RoastMCP
-# samples TC4 machines every 1.0 s for a smoother rate of rise. Lower only after
-# checking that the machine answers READ reliably at that rate.
-sampling_interval_s = 1.0
+# Seconds between two samples. The vendor's Artisan settings use 1.5 s, which is
+# known to work over Bluetooth; 1.0 s would give a smoother rate of rise. Lower
+# only after checking that the machine answers READ reliably at that rate.
+sampling_interval_s = 1.5
 
 # ---------------------------------------------------------------------------
 # How the computer reaches the machine.

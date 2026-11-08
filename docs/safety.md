@@ -39,7 +39,8 @@ or drum movement the beans can ignite.
 | Roaster link lost / stale data | Alarm; reconnect attempts; AI control suspended |
 | Emergency stop (button, global shortcut, MCP tool) | Safe state, latched: AI and autopilot locked out until a human resets |
 | App crashes | Daemon keeps running with all rules; app reconnects |
-| Daemon crashes | App raises an alarm; machine behaves as tested below |
+| Daemon stopped (Ctrl-C, SIGTERM) | Safe state is sent first if the burner is on; the running recording is saved |
+| Daemon crashes | App raises an alarm; machine behaves as tested below; the recording is recovered from its autosave (every 20 s) on the next start |
 
 The emergency stop path does not depend on the AI, the MCP connection or the web
 view: the app's native side calls the daemon directly, and the daemon's safe
