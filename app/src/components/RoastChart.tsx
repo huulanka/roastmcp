@@ -3,7 +3,7 @@ import i18n from "i18next";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 
-import type { ChartBand, ChartData, ChartMarker } from "@/lib/chartData.ts";
+import type { ChartBand, ChartData, ChartMarker, Series } from "@/lib/chartData.ts";
 import { formatClock } from "@/lib/units.ts";
 import { useResolvedTheme } from "@/state/theme.ts";
 
@@ -246,6 +246,37 @@ export function RoastChart({
               labelEnd = lx + w + 12 * dpr;
             }
             ctx.setLineDash([]);
+
+            // Direct labels at the end of the burner and air lines.
+            if (actuators) {
+              const d = dataRef.current;
+              ctx.font = uiFont(12 * dpr);
+              ctx.textBaseline = "middle";
+              ctx.textAlign = "left";
+              ctx.fillStyle = css("--chart-axis");
+              const ends: [string, Series][] = [
+                [i18n.t("Burner"), d.burner],
+                [i18n.t("Air"), d.air],
+              ];
+              const placed: number[] = [];
+              for (const [name, s] of ends) {
+                let i = s.length - 1;
+                while (i >= 0 && (s[i] === null || s[i] === undefined)) i--;
+                const v = s[i];
+                if (i < 0 || typeof v !== "number") continue;
+                const x = u.valToPos(d.x[i], "x", true);
+                let y = u.valToPos(v, "pct", true);
+                // Keep two labels apart when the lines are close.
+                for (const p of placed) if (Math.abs(y - p) < 14 * dpr) y = p + 14 * dpr;
+                placed.push(y);
+                if (x < left || x > left + width) continue;
+                ctx.fillText(
+                  `${name} ${Math.round(v)} %`,
+                  Math.min(x + 6 * dpr, left + width - 70 * dpr),
+                  y,
+                );
+              }
+            }
 
             // Projection: a short dashed segment from now, then the next milestone.
             const o = overlayRef.current;

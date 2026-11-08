@@ -13,8 +13,9 @@ export type PrimaryAction =
   { type: "start" } | { type: "mark"; kind: EventKind } | { type: "stop" };
 
 /**
- * The next step of a roast: start a recording, then CHARGE, first crack, DROP
- * and end of cooling; once all are marked, save the roast.
+ * The next step of a roast: start a recording, then CHARGE, first crack and
+ * DROP. The daemon saves the roast at DROP; "stop" only remains for a roast
+ * that was dropped before this behaviour existed.
  */
 export function nextAction(
   state: RoastState,
@@ -26,7 +27,6 @@ export function nextAction(
   if (!has("charge")) return { type: "mark", kind: "charge" };
   if (!has("first_crack_start") && !has("drop")) return { type: "mark", kind: "first_crack_start" };
   if (!has("drop")) return { type: "mark", kind: "drop" };
-  if (!has("cool_end")) return { type: "mark", kind: "cool_end" };
   return { type: "stop" };
 }
 
@@ -34,7 +34,6 @@ const MARK_LABEL: Partial<Record<EventKind, string>> = {
   charge: "Mark charge",
   first_crack_start: "Mark first crack",
   drop: "Mark drop",
-  cool_end: "Mark cooling end",
 };
 
 /** Label of the primary button (English key; `t` translates). */

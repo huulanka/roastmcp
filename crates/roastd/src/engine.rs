@@ -1264,6 +1264,12 @@ impl Engine {
         }
         self.audit(serde_json::json!({"type": "event", "event": event}));
         self.publish(None);
+        if kind == EventKind::Drop {
+            // Nothing after the drop is measured usefully (the only probe sits
+            // in the drum), so the roast is saved right away. Cooling stays a
+            // switch under the controls; the safety layer keeps running.
+            self.stop_recording()?;
+        }
         Ok(event)
     }
 
