@@ -571,7 +571,13 @@ impl Engine {
             self.end_preheat("CHARGE - preheat ended, you have control.");
             return;
         }
-        if self.safety.status(now).lease_holder.as_deref() != Some(PREHEAT_HOLDER) {
+        let status = self.safety.status(now);
+        if status.lease_holder.as_deref() != Some(PREHEAT_HOLDER) {
+            // A manual command ended preheat; that suspends automation, but
+            // no AI was in control, so do not report the AI as paused.
+            if status.lease_holder.is_none() && status.ai_suspended {
+                self.safety.resume_ai();
+            }
             self.end_preheat("Preheat ended - you have control.");
             return;
         }

@@ -155,21 +155,16 @@ pub fn project(
         let h = h.min(h_zero);
         bt + (ror * h + 0.5 * trend * h * h) / 60.0
     };
+    // A milestone whose temperature is already passed is not shown.
     let next = reference
         .and_then(|r| next_milestone(events, r))
-        .map(|(kind, target)| {
-            let eta_s = if bt >= target {
-                Some(0.0)
-            } else {
-                (1..=HORIZON_S as u32)
-                    .map(f64::from)
-                    .find(|&h| bt_at(h) >= target)
-            };
-            Milestone {
-                kind,
-                bt: target,
-                eta_s,
-            }
+        .filter(|&(_, target)| bt < target)
+        .map(|(kind, target)| Milestone {
+            kind,
+            bt: target,
+            eta_s: (1..=HORIZON_S as u32)
+                .map(f64::from)
+                .find(|&h| bt_at(h) >= target),
         });
     Some(Projection {
         bt_60s: Some(bt_at(60.0)),
