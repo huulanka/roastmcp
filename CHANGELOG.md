@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/huulanka/roastmcp/compare/v1.0.0...v1.0.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* set the safe state on connect and keep reconnecting after a lost link ([#16](https://github.com/huulanka/roastmcp/issues/16)) ([495a26a](https://github.com/huulanka/roastmcp/commit/495a26af8497f9481eef32ea4fabbf8e8f317306))
+
 # 1.0.0 (2026-11-08)
 
 
