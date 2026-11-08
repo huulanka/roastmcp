@@ -1,12 +1,10 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "@fontsource-variable/geist";
+@import "./styles/tokens.css";
 
 /*
- * Design tokens. Every colour in the app is a CSS variable defined here, in a
- * light set (:root) and a dark set (.dark). Components use the Tailwind names
- * mapped in @theme below (bg-background, text-muted-foreground, bg-estop …);
- * the chart reads the --chart-* and --series-* variables at runtime.
+ * Tailwind names for the design tokens in styles/tokens.css. Nothing here
+ * defines a colour, font or size of its own: change tokens.css instead.
  */
 
 @custom-variant dark (&:is(.dark *));
@@ -65,179 +63,71 @@
 }
 
 @theme inline {
-  --font-sans: "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-heading: var(--font-sans);
-  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --font-sans: var(--face-ui);
+  --font-heading: var(--face-ui);
+  --font-display: var(--face-display);
+  --font-mono: var(--face-code);
+
+  --text-hero: var(--type-hero);
+  --text-readout: var(--type-readout);
+  --text-value: var(--type-value);
+
+  --spacing-gutter: var(--space-gutter);
+  --spacing-section: var(--space-section);
+  --spacing-card: var(--space-card);
+  --spacing-touch: var(--space-touch);
+
+  --radius-xs: var(--corner-xs);
+  --radius-sm: var(--corner-sm);
+  --radius-md: var(--corner-md);
+  --radius-lg: var(--corner-lg);
+  --radius-xl: var(--corner-xl);
+  --radius-2xl: var(--corner-card);
+  --radius-card: var(--corner-card);
+  --radius-pill: var(--corner-pill);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
   --color-surface-raised: var(--surface-raised);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
+  --color-surface-selected: var(--surface-selected);
+  --color-segment-track: var(--segment-track);
+  --color-card-border: var(--card-border);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--foreground);
   --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
+  --color-popover-foreground: var(--foreground);
+  --color-primary: var(--brand);
+  --color-primary-foreground: var(--brand-foreground);
+  --color-secondary: var(--surface-raised);
+  --color-secondary-foreground: var(--foreground);
+  --color-muted: var(--surface-raised);
   --color-muted-foreground: var(--muted-foreground);
-  --color-subtle-foreground: var(--subtle-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
+  --color-subtle-foreground: var(--muted-foreground);
+  --color-accent: var(--surface-selected);
+  --color-accent-foreground: var(--foreground);
+  --color-destructive: var(--danger-text);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
-  --color-input: var(--input);
+  --color-input: var(--border-strong);
   --color-ring: var(--ring);
+  --color-scrim: var(--scrim);
 
   --color-brand: var(--brand);
-  --color-brand-soft: var(--brand-soft);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-text: var(--brand-text);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-ror: var(--ror);
+  --color-ror-text: var(--ror-text);
+  --color-reference: var(--chart-reference);
   --color-estop: var(--estop);
+  --color-estop-hover: var(--estop-hover);
   --color-estop-foreground: var(--estop-foreground);
-  --color-estop-ring: var(--estop-ring);
+  --color-danger-text: var(--danger-text);
+  --color-ok: var(--ok);
+  --color-warning-text: var(--warning-text);
 
-  --color-status-good: var(--status-good);
-  --color-status-warning: var(--status-warning);
-  --color-status-critical: var(--status-critical);
-  --color-status-info: var(--status-info);
-
-  --color-series-bt: var(--series-bt);
-  --color-series-et: var(--series-et);
-  --color-series-ror: var(--series-ror);
-  --color-series-burner: var(--series-burner);
-  --color-series-air: var(--series-air);
-  --color-series-drum: var(--series-drum);
-
-  --color-phase-drying: var(--phase-drying);
-  --color-phase-maillard: var(--phase-maillard);
-  --color-phase-development: var(--phase-development);
-
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
-}
-
-:root {
-  color-scheme: light;
-  --radius: 0.5rem;
-
-  /* Warm, paper-like neutrals. */
-  --background: oklch(0.975 0.003 75);
-  --surface: oklch(0.993 0.002 75);
-  --surface-raised: oklch(1 0 0);
-  --foreground: oklch(0.2 0.008 60);
-  --card: var(--surface);
-  --card-foreground: var(--foreground);
-  --popover: oklch(1 0 0);
-  --popover-foreground: var(--foreground);
-  --secondary: oklch(0.945 0.004 75);
-  --secondary-foreground: oklch(0.25 0.008 60);
-  --muted: oklch(0.945 0.004 75);
-  --muted-foreground: oklch(0.47 0.008 65);
-  --subtle-foreground: oklch(0.6 0.006 65);
-  --accent: oklch(0.94 0.006 70);
-  --accent-foreground: oklch(0.22 0.008 60);
-  --border: oklch(0.905 0.004 75);
-  --border-strong: oklch(0.84 0.006 75);
-  --input: oklch(0.89 0.005 75);
-  --ring: oklch(0.6 0.12 52);
-
-  /* Coffee accent: roasted copper. */
-  --brand: oklch(0.56 0.135 50);
-  --brand-soft: oklch(0.56 0.135 50 / 12%);
-  --primary: var(--brand);
-  --primary-foreground: oklch(0.99 0.004 75);
-
-  --destructive: oklch(0.55 0.2 27);
-  --estop: oklch(0.55 0.215 27);
-  --estop-foreground: oklch(0.99 0 0);
-  --estop-ring: oklch(0.55 0.215 27 / 35%);
-
-  --status-good: oklch(0.6 0.15 150);
-  --status-warning: oklch(0.72 0.15 75);
-  --status-critical: oklch(0.55 0.2 27);
-  --status-info: oklch(0.56 0.13 250);
-
-  /* Chart series — validated categorical slots (light surface). */
-  --series-ror: #2a78d6;
-  --series-bt: #eb6834;
-  --series-et: #1baf7a;
-  --series-burner: #eda100;
-  --series-air: #6250d6;
-  --series-drum: #008300;
-
-  --phase-drying: oklch(0.8 0.1 95);
-  --phase-maillard: oklch(0.66 0.12 60);
-  --phase-development: oklch(0.46 0.09 45);
-
-  --chart-grid: oklch(0.2 0.008 60 / 7%);
-  --chart-axis: oklch(0.47 0.008 65);
-  --chart-reference: oklch(0.45 0.01 60 / 55%);
-  --chart-event: oklch(0.35 0.01 60 / 45%);
-  --chart-cursor: oklch(0.35 0.01 60 / 50%);
-}
-
-.dark {
-  color-scheme: dark;
-
-  --background: oklch(0.155 0.004 60);
-  --surface: oklch(0.185 0.004 60);
-  --surface-raised: oklch(0.215 0.005 60);
-  --foreground: oklch(0.95 0.004 75);
-  --card: var(--surface);
-  --card-foreground: var(--foreground);
-  --popover: oklch(0.22 0.005 60);
-  --popover-foreground: var(--foreground);
-  --secondary: oklch(0.25 0.005 60);
-  --secondary-foreground: oklch(0.93 0.004 75);
-  --muted: oklch(0.245 0.005 60);
-  --muted-foreground: oklch(0.72 0.006 70);
-  --subtle-foreground: oklch(0.58 0.006 70);
-  --accent: oklch(0.26 0.006 60);
-  --accent-foreground: oklch(0.95 0.004 75);
-  --border: oklch(1 0 0 / 8%);
-  --border-strong: oklch(1 0 0 / 14%);
-  --input: oklch(1 0 0 / 12%);
-  --ring: oklch(0.72 0.12 60);
-
-  --brand: oklch(0.72 0.125 60);
-  --brand-soft: oklch(0.72 0.125 60 / 14%);
-  --primary: var(--brand);
-  --primary-foreground: oklch(0.18 0.01 60);
-
-  --destructive: oklch(0.68 0.19 25);
-  --estop: oklch(0.6 0.215 27);
-  --estop-foreground: oklch(0.99 0 0);
-  --estop-ring: oklch(0.6 0.215 27 / 40%);
-
-  --status-good: oklch(0.7 0.15 150);
-  --status-warning: oklch(0.8 0.14 80);
-  --status-critical: oklch(0.66 0.2 25);
-  --status-info: oklch(0.7 0.12 250);
-
-  /* Chart series — the same hues stepped for the dark surface. */
-  --series-ror: #3987e5;
-  --series-bt: #d95926;
-  --series-et: #199e70;
-  --series-burner: #c98500;
-  --series-air: #9085e9;
-  --series-drum: #008300;
-
-  --phase-drying: oklch(0.72 0.1 95);
-  --phase-maillard: oklch(0.62 0.12 60);
-  --phase-development: oklch(0.5 0.1 45);
-
-  --chart-grid: oklch(1 0 0 / 6%);
-  --chart-axis: oklch(0.68 0.006 70);
-  --chart-reference: oklch(0.85 0.01 70 / 45%);
-  --chart-event: oklch(0.9 0.01 70 / 35%);
-  --chart-cursor: oklch(0.9 0.01 70 / 45%);
+  --shadow-pop: var(--elevation-pop);
 }
 
 @layer base {
@@ -251,7 +141,6 @@
   }
   html {
     @apply font-sans antialiased;
-    font-feature-settings: "cv11", "ss01";
     -webkit-font-smoothing: antialiased;
   }
   body {
@@ -274,22 +163,24 @@
   font-feature-settings: "tnum";
 }
 
-/* Readable at a glance: big live values. */
+/* Big live values in the display face. */
 @utility readout {
+  font-family: var(--face-display);
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
-  letter-spacing: -0.02em;
-  line-height: 1;
+  font-feature-settings: "tnum", "lnum";
+  letter-spacing: -0.01em;
+  line-height: 0.95;
 }
 
-/* uPlot: its own stylesheet is imported in main.tsx; these adapt it to the tokens. */
+/* uPlot: its own stylesheet is imported by the chart; these adapt it to the tokens. */
 .uplot {
   font-family: inherit;
   line-height: 1;
   width: auto;
 }
 .u-hz .u-cursor-x {
-  border-right: 1px dashed var(--chart-cursor);
+  border-right: 1px dashed var(--chart-axis);
 }
 .u-hz .u-cursor-y {
   display: none;

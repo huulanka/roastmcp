@@ -1,11 +1,13 @@
 import { useSyncExternalStore } from "react";
 
 import { api, ApiError, getToken, wsUrl } from "@/api/client.ts";
-import type { Point, Snapshot, WsMessage } from "@/api/types.ts";
+import type { Note, Point, Snapshot, WsMessage } from "@/api/types.ts";
 
 export interface LiveState {
   snapshot: Snapshot | null;
   points: Point[];
+  /** Notes of the running recording (AI coaching among them); refreshed every few seconds. */
+  notes: Note[];
   /** WebSocket is open. */
   online: boolean;
   /** At least one successful exchange happened since the last failure. */
@@ -17,6 +19,7 @@ const MAX_POINTS = 8000;
 let state: LiveState = {
   snapshot: null,
   points: [],
+  notes: [],
   online: false,
   reachable: true,
   authError: false,
@@ -61,7 +64,13 @@ async function sync(): Promise<void> {
     const [snapshot, live] = await Promise.all([api.status(), api.live()]);
     let points = live.points;
     for (const p of pending) points = appendPoint(points, p);
-    set({ snapshot, points, reachable: true, authError: false });
+    set({
+      snapshot,
+      points,
+      notes: live.notes ?? [],
+      reachable: true,
+      authError: false,
+    });
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) set({ authError: true });
     else if (e instanceof ApiError && e.status === 0) set({ reachable: false });
@@ -71,10 +80,30 @@ async function sync(): Promise<void> {
   }
 }
 
+const EXTRAS_POLL_MS = 5000;
+
+function sameTail<T>(a: readonly T[], b: readonly T[], key: (x: T) => unknown): boolean {
+  return a.length === b.length && key(a[a.length - 1]) === key(b[b.length - 1]);
+}
+
+/** Notes are not pushed over the WebSocket; poll them while a recording runs. */
+async function refreshExtras(): Promise<void> {
+  const st = state.snapshot?.state;
+  if (syncing || !state.online || !st || st === "disconnected" || st === "connected") return;
+  try {
+    const live = await api.live();
+    const notes = live.notes ?? [];
+    if (!sameTail(notes, state.notes, (n) => n?.t)) set({ notes });
+  } catch {
+    /* the WebSocket reports reachability */
+  }
+}
+
 export function startLive(): () => void {
   let ws: WebSocket | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
+  const extrasTimer = setInterval(() => void refreshExtras(), EXTRAS_POLL_MS);
 
   const open = () => {
     if (stopped) return;
@@ -111,6 +140,7 @@ export function startLive(): () => void {
   return () => {
     stopped = true;
     clearTimeout(timer);
+    clearInterval(extrasTimer);
     ws?.close();
   };
 }

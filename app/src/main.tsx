@@ -6,10 +6,10 @@ import "./i18n/index.ts";
 import { initToken, setToken } from "./api/client.ts";
 import { App } from "./App.tsx";
 import { installAudioUnlock } from "./state/audio.ts";
-import { applyStoredTheme } from "./state/theme.ts";
+import { initTheme } from "./state/theme.ts";
 
 setToken(initToken());
-applyStoredTheme();
+initTheme();
 installAudioUnlock();
 
 createRoot(document.getElementById("root")!).render(

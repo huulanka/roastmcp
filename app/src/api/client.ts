@@ -3,6 +3,7 @@ import type {
   CommandOutcome,
   EventKind,
   Live,
+  ReferenceCurve,
   Roast,
   RoastEvent,
   RoastSummary,
@@ -117,6 +118,10 @@ export const api = {
   markEvent: (kind: EventKind) =>
     request<RoastEvent>("POST", "/api/events", { kind, origin: "human" }),
   deleteEvent: (kind: EventKind) => request<Snapshot>("DELETE", `/api/events/${kind}`),
+  preheat: (target_c: number) => request<Snapshot>("POST", "/api/preheat", { target_c }),
+  stopPreheat: () => request<Snapshot>("DELETE", "/api/preheat"),
+  reference: () => request<ReferenceCurve | null>("GET", "/api/reference"),
+  setReference: (id: string | null) => request<Snapshot>("PUT", "/api/reference", { id }),
   roasts: () => request<RoastSummary[]>("GET", "/api/roasts"),
   roast: (id: string) => request<Roast>("GET", `/api/roasts/${encodeURIComponent(id)}`),
   patchRoast: (id: string, body: { title?: string; roasted_weight_g?: number }) =>

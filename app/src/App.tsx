@@ -16,7 +16,7 @@ export function App() {
   useEffect(() => startLive(), []);
 
   return (
-    <div className="flex h-full flex-col bg-[radial-gradient(60rem_30rem_at_50%_-10%,var(--brand-soft),transparent)]">
+    <div className="flex h-full flex-col bg-background text-foreground">
       <TopBar
         snapshot={snapshot}
         screen={screen}

@@ -1,0 +1,145 @@
+/*
+ * Design tokens: design language "Röstfarbe".
+ *
+ * This file is the only place that names colours, fonts, radii and layout
+ * spacing. Components use the Tailwind names mapped in index.css (bg-surface,
+ * text-muted-foreground, rounded-card, p-card …); the chart and the roast scale
+ * read the --chart-* and --bean-* variables at runtime.
+ *
+ * Switching to another direction means replacing the font imports and the two
+ * colour blocks below (light :root and .dark); no component changes.
+ */
+
+@import "@fontsource/instrument-sans/400.css";
+@import "@fontsource/instrument-sans/500.css";
+@import "@fontsource/instrument-sans/600.css";
+@import "@fontsource/instrument-serif/400.css";
+
+:root {
+  /* Type */
+  --face-ui: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --face-display: "Instrument Serif", ui-serif, Georgia, "Times New Roman", serif;
+  --face-code: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --type-hero: clamp(4.5rem, 10.5vh, 6.5rem);
+  --type-readout: 2.125rem;
+  --type-value: 1.625rem;
+
+  /* Corners */
+  --corner-xs: 4px;
+  --corner-sm: 6px;
+  --corner-md: 9px;
+  --corner-lg: 12px;
+  --corner-xl: 14px;
+  --corner-card: 18px;
+  --corner-pill: 999px;
+
+  /* Layout spacing */
+  --space-gutter: 28px;
+  --space-section: 24px;
+  --space-card: 20px;
+  --space-touch: 44px;
+
+  /* ---------- Colours: light (warm paper, espresso ink) ---------- */
+  color-scheme: light;
+  --background: #fbf7f1;
+  --surface: #ffffff;
+  --surface-raised: #f2eae1;
+  --surface-selected: #ffffff;
+  --segment-track: #f2eae1;
+  --card-border: #e4d9ce;
+  --popover: #ffffff;
+  --foreground: #1a110c;
+  --muted-foreground: #6b5a4e;
+  --border: #e4d9ce;
+  --border-strong: #d3c4b6;
+  --ring: #c44500;
+  --scrim: #1a110c59;
+  --elevation-pop: 0 18px 40px -18px #1a110c59;
+
+  /* Orange = heat (BT) and the primary action; sky blue = rate of rise. */
+  --brand: #c44500;
+  --brand-hover: #ad3d00;
+  --brand-text: #b53f00;
+  --brand-foreground: #ffffff;
+  --ror: #0072b8;
+  --ror-text: #0072b8;
+  --estop: #c8211b;
+  --estop-hover: #b01d18;
+  --estop-foreground: #ffffff;
+  --danger-text: #c8211b;
+  --ok: #16803c;
+  --warning-text: #8a5a00;
+
+  --chart-bt: #c44500;
+  --chart-ror: #0072b8;
+  --chart-axis: #6b5a4e;
+  --chart-ror-axis: #0072b8;
+  --chart-grid: #efe6dc;
+  --chart-event: #d3c4b6;
+  --chart-reference: #8f8072;
+  --chart-reference-ror: #0072b866;
+  --chart-projection: #c44500;
+  --chart-now-halo: #c4450033;
+  --chart-development: #c4450010;
+  --chart-burner: #c445008c;
+  --chart-air: #6b5a4e8c;
+
+  /* Bean colour spectrum: used only where colour means roast colour. */
+  --bean-green: #9aa06a;
+  --bean-yellow: #d3b45c;
+  --bean-cinnamon: #b98048;
+  --bean-brown: #8e5a33;
+  --bean-dark: #6a4026;
+}
+
+.dark {
+  /* ---------- Colours: dark (espresso ground, crema ink) ---------- */
+  color-scheme: dark;
+  --background: #100b08;
+  --surface: #1a1310;
+  --surface-raised: #241a15;
+  --surface-selected: #2e221b;
+  --segment-track: #1a1310;
+  --card-border: transparent;
+  --popover: #241a15;
+  --foreground: #fff8f0;
+  --muted-foreground: #bfac9c;
+  --border: #3a2c23;
+  --border-strong: #4a392d;
+  --ring: #ff9a4d;
+  --scrim: #050302b3;
+  --elevation-pop: 0 18px 40px -18px #000000b3;
+
+  --brand: #ff7a1a;
+  --brand-hover: #ff8c38;
+  --brand-text: #ff9a4d;
+  --brand-foreground: #100b08;
+  --ror: #38c8ff;
+  --ror-text: #38c8ff;
+  --estop: #d92d20;
+  --estop-hover: #e53a2d;
+  --estop-foreground: #ffffff;
+  --danger-text: #ff5a4e;
+  --ok: #4cd982;
+  --warning-text: #ffc861;
+
+  --chart-bt: #ff7a1a;
+  --chart-ror: #38c8ff;
+  --chart-axis: #bfac9c;
+  --chart-ror-axis: #38c8ff;
+  --chart-grid: #241a15;
+  --chart-event: #4a392d;
+  --chart-reference: #8c7a6c;
+  --chart-reference-ror: #38c8ff59;
+  --chart-projection: #ff7a1a;
+  --chart-now-halo: #ff7a1a38;
+  --chart-development: #ff7a1a10;
+  --chart-burner: #ff7a1a8c;
+  --chart-air: #bfac9c8c;
+
+  --bean-green: #9aa06a;
+  --bean-yellow: #d3b45c;
+  --bean-cinnamon: #b98048;
+  --bean-brown: #8e5a33;
+  --bean-dark: #6a4026;
+}

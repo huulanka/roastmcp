@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, CircleAlert, Flame, WifiOff, X } from "lucide-react";
+import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 
 import { api, ApiError } from "@/api/client.ts";
@@ -34,10 +35,10 @@ function Bar({
     <div
       role="alert"
       className={cn(
-        "flex items-center gap-3 border-b px-4 py-2.5 text-sm font-medium",
+        "flex min-h-13 items-center gap-3 border-b px-gutter py-2 text-[15px]",
         tone === "critical"
-          ? "border-estop/40 bg-estop/15 text-status-critical"
-          : "border-status-warning/30 bg-status-warning/10 text-status-warning",
+          ? "border-estop/40 bg-estop/12 text-danger-text"
+          : "border-border bg-surface text-warning-text",
       )}
     >
       {icon}
@@ -70,14 +71,12 @@ export function Banners() {
           tone="critical"
           icon={<CircleAlert className="size-5" />}
           action={
-            <Button variant="outline" size="sm" onClick={() => setConfirm(true)}>
+            <Button variant="secondary" size="sm" onClick={() => setConfirm(true)}>
               {t("Reset")}
             </Button>
           }
         >
-          <span className="text-base font-bold tracking-wide uppercase">
-            {t("Emergency stop active")}
-          </span>
+          <span className="text-base font-semibold">{t("Emergency stop active")}</span>
         </Bar>
       )}
       {machine && !safety?.connected && (
@@ -150,27 +149,28 @@ export function AlarmWatcher() {
 export function Toasts() {
   const toasts = useToasts();
   const tone = {
-    info: "border-status-info/40",
-    success: "border-status-good/40",
-    warning: "border-status-warning/50",
-    critical: "border-estop/60",
+    info: "bg-muted-foreground",
+    success: "bg-ok",
+    warning: "bg-warning-text",
+    critical: "bg-estop",
   } as const;
   return (
-    <div className="pointer-events-none fixed right-4 bottom-4 z-50 flex w-96 max-w-[calc(100vw-2rem)] flex-col gap-2">
+    <div className="pointer-events-none fixed right-gutter bottom-gutter z-50 flex w-96 max-w-[calc(100vw-2rem)] flex-col gap-2">
       {toasts.map((x) => (
         <div
           key={x.id}
           role={x.kind === "critical" || x.kind === "warning" ? "alert" : "status"}
-          className={cn(
-            "pointer-events-auto flex animate-in items-start gap-3 rounded-xl border bg-popover/95 px-4 py-3 text-sm shadow-xl backdrop-blur duration-200 fade-in slide-in-from-bottom-2",
-            tone[x.kind],
-          )}
+          className="pointer-events-auto flex animate-in items-start gap-3 rounded-xl border border-border-strong bg-popover py-1 pr-1 pl-4 text-[15px] shadow-pop duration-200 fade-in slide-in-from-bottom-2"
         >
-          <span className="flex-1">{x.text}</span>
+          <span
+            aria-hidden="true"
+            className={cn("mt-4 size-2 shrink-0 rounded-pill", tone[x.kind])}
+          />
+          <span className="flex-1 py-2.5 leading-snug">{x.text}</span>
           <button
             onClick={() => dismissToast(x.id)}
-            aria-label="Dismiss"
-            className="text-muted-foreground hover:text-foreground"
+            aria-label={i18n.t("Dismiss")}
+            className="grid size-touch shrink-0 cursor-pointer place-items-center rounded-lg text-muted-foreground hover:text-foreground"
           >
             <X className="size-4" />
           </button>

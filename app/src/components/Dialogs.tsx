@@ -2,6 +2,16 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { api, ApiError } from "@/api/client.ts";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import {
   Dialog,
@@ -11,11 +21,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog.tsx";
+import { cn } from "@/lib/utils.ts";
 import { applySnapshot } from "@/state/live.ts";
 import { toast } from "@/state/toasts.ts";
 
 export const inputCls =
-  "h-9 w-full rounded-lg border border-input bg-input/40 px-3 text-sm outline-none transition-colors select-text placeholder:text-subtle-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/40";
+  "h-touch w-full rounded-lg border border-border-strong bg-background px-3 text-[15px] text-foreground outline-none transition-colors select-text placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/40 disabled:opacity-60 aria-invalid:border-danger-text";
 
 function errText(e: unknown): string {
   return e instanceof ApiError ? e.message : String(e);
@@ -23,7 +34,7 @@ function errText(e: unknown): string {
 
 export function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground">
+    <label className="flex flex-col gap-2 text-[13px] text-muted-foreground">
       {label}
       {children}
     </label>
@@ -79,15 +90,29 @@ export function ConnectDialog({
             {t("Pick the serial port of the roaster, or use the built-in simulator.")}
           </DialogDescription>
         </DialogHeader>
-        <label className="flex items-center gap-2.5 text-sm">
-          <input
-            type="checkbox"
-            checked={simulator}
-            onChange={(e) => setSimulator(e.target.checked)}
-            className="size-4 accent-[var(--brand)]"
-          />
-          {t("Use simulator")}
-        </label>
+        <div
+          role="radiogroup"
+          aria-label={t("Connection")}
+          className="grid grid-cols-2 gap-1 rounded-lg bg-segment-track p-1"
+        >
+          {[false, true].map((sim) => (
+            <button
+              key={String(sim)}
+              type="button"
+              role="radio"
+              aria-checked={simulator === sim}
+              onClick={() => setSimulator(sim)}
+              className={cn(
+                "h-touch cursor-pointer rounded-md text-[15px] transition-colors duration-150 outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                simulator === sim
+                  ? "bg-surface-selected font-medium text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {sim ? t("Simulator") : t("Roaster")}
+            </button>
+          ))}
+        </div>
         {!simulator && (
           <Field label={t("Serial port")}>
             <select
@@ -191,5 +216,44 @@ export function StartDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+export function StopDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t("Stop recording?")}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {t(
+              "The roast will be saved to the archive. Make sure the beans have been dropped and cooled.",
+            )}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t("Cancel")}</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={async () => {
+              try {
+                const r = await api.stopRecording();
+                toast("success", t("Roast saved ({{id}})", { id: r.id }));
+              } catch (e) {
+                toast("critical", errText(e));
+              }
+            }}
+          >
+            {t("Stop and save")}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

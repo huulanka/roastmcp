@@ -1,98 +1,105 @@
 import { useTranslation } from "react-i18next";
 
 import type { Snapshot } from "@/api/types.ts";
-import { Panel } from "@/components/Panel.tsx";
+import { isRecording, liveDtr, type RorAlert } from "@/lib/roast.ts";
+import { cn } from "@/lib/utils.ts";
 import { formatClock, formatNumber } from "@/lib/units.ts";
+import { roastClock } from "@/state/helpers.ts";
 
 function Stat({
   label,
   value,
-  unit,
-  color,
-  big,
+  sub,
+  className,
 }: {
   label: string;
   value: string;
-  unit?: string;
-  color?: string;
-  big?: boolean;
+  sub: string;
+  className?: string;
 }) {
   return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[10px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-        {label}
-      </span>
-      <span
-        className={big ? "readout text-5xl font-semibold" : "readout text-2xl font-semibold"}
-        style={{ color }}
-      >
-        {value}
-        {unit && <span className="ml-1 text-xs font-normal text-muted-foreground">{unit}</span>}
-      </span>
+    <div className="flex min-w-0 flex-col gap-1">
+      <span className="text-[13px] text-muted-foreground">{label}</span>
+      <span className={`readout text-readout ${className ?? ""}`}>{value}</span>
+      <span className="truncate text-[13px] text-muted-foreground">{sub}</span>
     </div>
   );
 }
 
-export function Readouts({ snapshot }: { snapshot: Snapshot }) {
+/** The big bean temperature and the three numbers that matter next to it. */
+export function Readouts({
+  snapshot,
+  rorDelta,
+  alert,
+}: {
+  snapshot: Snapshot;
+  /** RoR now minus RoR 30 s ago, °C/min. */
+  rorDelta: number | null;
+  alert: RorAlert | null;
+}) {
   const { t } = useTranslation();
-  const p = snapshot.phases;
-  const parts = [
-    { key: "drying", label: t("Drying"), s: p?.drying_s ?? null, c: "var(--phase-drying)" },
-    { key: "maillard", label: t("Maillard"), s: p?.maillard_s ?? null, c: "var(--phase-maillard)" },
-    {
-      key: "dev",
-      label: t("Development"),
-      s: p?.development_s ?? null,
-      c: "var(--phase-development)",
-    },
-  ];
-  const sum = parts.reduce((a, x) => a + (x.s ?? 0), 0);
+  const hasCharge = snapshot.charge_t !== null;
+  const running = isRecording(snapshot.state);
+  const clock = running ? roastClock(snapshot) : null;
+  const dev = liveDtr(snapshot.events, snapshot.charge_t, snapshot.t);
+  const delta = snapshot.reference?.delta_bt ?? null;
+  const dRor =
+    rorDelta === null
+      ? "°C/min"
+      : `${rorDelta > 0.05 ? "↑" : rorDelta < -0.05 ? "↓" : "→"} ${rorDelta > 0 ? "+" : rorDelta < 0 ? "−" : "±"}${formatNumber(Math.abs(rorDelta))} / 30 s`;
 
   return (
-    <Panel className="flex flex-wrap items-center gap-x-8 gap-y-3 px-4 py-3">
-      <Stat label="BT" value={formatNumber(snapshot.bt)} unit="°C" color="var(--series-bt)" big />
-      <Stat
-        label="RoR"
-        value={formatNumber(snapshot.ror)}
-        unit="°C/min"
-        color="var(--series-ror)"
-      />
-      {snapshot.machine?.has_et && (
-        <Stat label="ET" value={formatNumber(snapshot.et)} unit="°C" color="var(--series-et)" />
-      )}
-      <Stat
-        label="DTR"
-        value={p?.dtr_pct !== null && p?.dtr_pct !== undefined ? formatNumber(p.dtr_pct) : "–"}
-        unit="%"
-      />
-      <div className="ml-auto flex min-w-64 flex-1 flex-col gap-2">
-        <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">
-          {sum > 0 &&
-            parts.map((x) => (
-              <div
-                key={x.key}
-                className="h-full transition-[width] duration-300"
-                style={{ width: `${((x.s ?? 0) / sum) * 100}%`, background: x.c }}
-              />
-            ))}
-        </div>
-        <div className="grid grid-cols-3 gap-3">
-          {parts.map((x) => (
-            <div key={x.key} className="flex flex-col">
-              <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                <span className="size-1.5 rounded-full" style={{ background: x.c }} />
-                {x.label}
-              </span>
-              <span className="readout text-sm font-medium">
-                {formatClock(x.s)}
-                <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
-                  {x.s !== null && sum > 0 ? `${formatNumber((x.s / sum) * 100, 0)}%` : ""}
-                </span>
-              </span>
-            </div>
-          ))}
-        </div>
+    <section aria-label={t("Readings")} className="flex flex-col">
+      <div className="flex items-baseline justify-between text-[13px] text-muted-foreground">
+        <span className="flex items-center gap-2">
+          <span className="h-[3px] w-4 rounded-pill bg-brand" aria-hidden="true" />
+          {t("Bean")}
+        </span>
+        {snapshot.machine?.has_et && (
+          <span className="tabular">
+            {t("Environment")} {formatNumber(snapshot.et)}°
+          </span>
+        )}
       </div>
-    </Panel>
+      <div className="mt-1 flex items-baseline gap-1.5" aria-live="off">
+        <span className="readout text-hero text-brand-text">{formatNumber(snapshot.bt)}</span>
+        <span className="text-xl text-muted-foreground">°C</span>
+      </div>
+      {delta !== null && (
+        <span
+          className={cn(
+            "mt-1.5 tabular text-[15px] font-medium",
+            Math.abs(delta) > 5 ? "text-brand-text" : "text-muted-foreground",
+          )}
+        >
+          {t("{{delta}}° to reference", {
+            delta: `${delta > 0 ? "+" : delta < 0 ? "−" : "±"}${formatNumber(Math.abs(delta))}`,
+          })}
+        </span>
+      )}
+      <div className="mt-4 grid grid-cols-3 gap-3">
+        <Stat
+          label={
+            alert === "crash" ? t("RoR · crash") : alert === "flick" ? t("RoR · flick") : "RoR"
+          }
+          value={formatNumber(snapshot.ror)}
+          className={alert ? "text-warning-text" : "text-ror-text"}
+          sub={dRor}
+        />
+        <Stat
+          label={t("Time")}
+          value={formatClock(clock)}
+          sub={hasCharge ? t("since charge") : running ? t("recording") : t("not recording")}
+        />
+        <Stat
+          label="DTR"
+          value={dev ? `${formatNumber(dev.dtr, 0)} %` : "–"}
+          className={dev ? "text-brand-text" : undefined}
+          sub={
+            dev ? t("{{time}} since crack", { time: formatClock(dev.devS) }) : t("from first crack")
+          }
+        />
+      </div>
+    </section>
   );
 }

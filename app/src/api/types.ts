@@ -93,6 +93,32 @@ export interface Recording {
   green_weight_g: number | null;
   beans: string | null;
 }
+/** The reference roast as seen from the live roast (same time since CHARGE). */
+export interface ReferenceStatus {
+  id: string;
+  title: string;
+  bt_now: number | null;
+  /** Live BT minus the reference BT now. */
+  delta_bt: number | null;
+  ror_now: number | null;
+  events: RoastEvent[];
+}
+export interface Projection {
+  /** BT expected 60 s from now. */
+  bt_60s: number | null;
+  next: null | { kind: "first_crack_start" | "drop"; bt: number; eta_s: number | null };
+}
+export interface Preheat {
+  target_c: number;
+  state: "heating" | "holding";
+}
+/** `GET /api/reference`: the reference curve, `t` in seconds since its CHARGE. */
+export interface ReferenceCurve {
+  id: string;
+  title: string;
+  points: { t: number; bt: number | null; ror: number | null }[];
+  events: RoastEvent[];
+}
 export interface Snapshot {
   version: string;
   machine: MachineInfo | null;
@@ -109,17 +135,30 @@ export interface Snapshot {
   phases: Phases | null;
   safety: SafetyStatus;
   alarms: Alarm[];
+  /** Absent on daemons without reference support. */
+  reference?: ReferenceStatus | null;
+  projection?: Projection | null;
+  /** Absent on daemons without preheat support. */
+  preheat?: Preheat | null;
 }
 export interface Note {
   t: number;
   text: string;
   origin: string;
 }
+export type CommandSource = "human" | "safety" | "autopilot" | "ai";
+export interface ControlLogEntry {
+  /** Seconds since the recording started (same base as `Point.t`), if one was running. */
+  t?: number | null;
+  at: string;
+  request: { actuator: Actuator; value: number; source: CommandSource; reason?: string };
+  outcome: CommandOutcome;
+}
 export interface Live {
   points: Point[];
   events: RoastEvent[];
   notes: Note[];
-  control_log: unknown[];
+  control_log: ControlLogEntry[];
 }
 export interface RoastSummary {
   id: string;
