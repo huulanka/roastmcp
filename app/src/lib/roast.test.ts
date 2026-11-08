@@ -31,16 +31,11 @@ describe("next action", () => {
     events.push(ev("first_crack_start"));
     expect(nextAction("charged", true, events)).toEqual({ type: "mark", kind: "drop" });
     events.push(ev("drop"));
-    expect(nextAction("dropped", true, events)).toEqual({ type: "mark", kind: "cool_end" });
-    events.push(ev("cool_end"));
-    expect(nextAction("cooling", true, events)).toEqual({ type: "stop" });
+    expect(nextAction("dropped", true, events)).toEqual({ type: "stop" });
   });
 
   it("skips first crack when the roast was dropped without one", () => {
-    expect(nextAction("dropped", true, [ev("charge"), ev("drop")])).toEqual({
-      type: "mark",
-      kind: "cool_end",
-    });
+    expect(nextAction("dropped", true, [ev("charge"), ev("drop")])).toEqual({ type: "stop" });
   });
 });
 

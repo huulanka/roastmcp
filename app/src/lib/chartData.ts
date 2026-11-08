@@ -47,7 +47,6 @@ export const EVENT_ORDER: readonly EventKind[] = [
   "second_crack_start",
   "second_crack_end",
   "drop",
-  "cool_end",
 ];
 
 export function chargeTime(events: readonly RoastEvent[]): number | null {

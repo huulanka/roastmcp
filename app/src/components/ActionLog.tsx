@@ -50,7 +50,7 @@ export function ActionLog({
       {rows.length === 0 ? (
         <p className="text-[15px] text-muted-foreground">{t("No actions yet.")}</p>
       ) : (
-        <ol className="flex max-h-64 flex-col gap-2 overflow-y-auto">
+        <ol className="flex max-h-[60vh] flex-col gap-2 overflow-y-auto">
           {rows.map((e, i) => {
             const st = entryStatus(e);
             const requested = e.request.value;
