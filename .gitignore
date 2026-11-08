@@ -1,0 +1,29 @@
+/target
+app/src-tauri/target/
+app/src-tauri/gen/
+
+# Node / frontend
+node_modules/
+app/dist/
+
+# Local data and personal roast logs — only sanitized fixtures are committed
+/data/
+*.alog
+!fixtures/**/*.alog
+*.roast.json
+!fixtures/**/*.roast.json
+*.sqlite
+*.sqlite-*
+*.db
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+*.log
+.idea/
+.vscode/*
+!.vscode/extensions.json

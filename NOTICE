@@ -1,0 +1,8 @@
+RoastMCP
+Copyright 2026 Andreas Bauer and the RoastMCP contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+RoastMCP is an independent project. It is not affiliated with, endorsed by,
+or derived from the Artisan roaster scope software. It reads and writes the
+Artisan .alog file format for interoperability only.
