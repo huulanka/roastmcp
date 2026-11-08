@@ -157,10 +157,10 @@ impl Importer<'_> {
             safe_state,
             limits: Limits {
                 max_bt_c: 240.0,
-                ai_burner_max_step: 5.0,
-                ai_burner_min_interval_s: 5.0,
-                ai_air_max_step: 10.0,
-                ai_air_min_interval_s: 2.0,
+                ai_burner_max_step: 10.0,
+                ai_burner_min_interval_s: 10.0,
+                ai_air_max_step: 20.0,
+                ai_air_min_interval_s: 5.0,
             },
             capabilities: MachineCapabilities {
                 automatic_drop: false,

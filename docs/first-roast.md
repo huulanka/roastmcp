@@ -74,8 +74,9 @@ my roast going?", "What does the rate of rise tell you?". Claude can mark
 events and add notes.
 
 For control: confirm presence in the app ("I'm at the roaster"), then ask
-Claude to take over. The safety layer limits it to burner steps of 5 points
-every 5 s and air steps of 10 points, and you confirm presence in the app
+Claude to take over. Cutting heat and adding air are never limited; raising
+the burner is limited to 10 points per 10 s and lowering the air to 20 points
+per 5 s. You confirm presence in the app
 every 3 minutes (plus 30 s grace), otherwise the roaster goes to the safe
 state. Any change you make in the app takes control back immediately. The action log is in
 `logs/actions.jsonl` in the data directory.

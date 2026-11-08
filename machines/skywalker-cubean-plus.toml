@@ -173,13 +173,17 @@ drum = 100
 [limits]
 # Bean temperature at which the safety layer cuts the burner, °C.
 max_bt_c = 240
-# Largest burner change per AI/autopilot command, percent points, and the
-# shortest time between two such changes, seconds.
-ai_burner_max_step = 5
-ai_burner_min_interval_s = 5
-# The same for air.
-ai_air_max_step = 10
-ai_air_min_interval_s = 2
+# AI/autopilot limits apply only to moves AWAY from the safe state (raising
+# the burner, lowering the air). Moves toward it - cutting heat, adding air -
+# are never limited, because experienced roasters cut heat by 15-50 % at once
+# before and during first crack (see docs/research/heat-control-practice.md).
+# Largest burner raise per command, percent points, and the shortest time
+# between two raises, seconds.
+ai_burner_max_step = 10
+ai_burner_min_interval_s = 10
+# Largest air reduction per command, and the shortest time between two.
+ai_air_max_step = 20
+ai_air_min_interval_s = 5
 
 [capabilities]
 # Beans are dropped by hand; the app shows a "drop now" cue instead.

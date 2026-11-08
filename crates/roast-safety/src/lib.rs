@@ -261,7 +261,10 @@ impl Safety {
         match self.decide(req, now) {
             Ok((value, clamped_from)) => {
                 if req.source.is_automated() {
-                    if self.current.get(&req.actuator) != Some(&value) {
+                    let away = self.current.get(&req.actuator).is_some_and(|&cur| {
+                        cur != value && !self.toward_safe(req.actuator, cur, value)
+                    });
+                    if away {
                         self.last_ai_change.insert(req.actuator, now);
                     }
                     if let Some(l) = &mut self.lease {
@@ -336,21 +339,35 @@ impl Safety {
                 // Without a known current value a step cannot be bounded.
                 return Err(RejectReason::OutOfRange);
             };
-            if value != cur
-                && self
+            // Moving toward the safe state (less burner, more air) is never
+            // limited: cutting heat quickly is what experienced roasters do
+            // before and during first crack. Only moves away from it are
+            // bounded in size and rate.
+            if !self.toward_safe(a, cur, value) {
+                if self
                     .last_ai_change
                     .get(&a)
                     .is_some_and(|&t| now - t < limit.min_interval_s)
-            {
-                return Err(RejectReason::RateLimited);
-            }
-            let bounded = value.clamp(cur - limit.max_step, cur + limit.max_step);
-            if bounded != value {
-                clamped_from = clamped_from.or(Some(req.value));
-                value = bounded;
+                {
+                    return Err(RejectReason::RateLimited);
+                }
+                let bounded = value.clamp(cur - limit.max_step, cur + limit.max_step);
+                if bounded != value {
+                    clamped_from = clamped_from.or(Some(req.value));
+                    value = bounded;
+                }
             }
         }
         Ok((value, clamped_from))
+    }
+
+    /// Whether `cur -> value` moves toward (or stays at) the safe-state value.
+    /// Actuators without a safe value have no safe direction.
+    fn toward_safe(&self, a: Actuator, cur: f64, value: f64) -> bool {
+        self.cfg
+            .safe_state
+            .get(&a)
+            .is_some_and(|&s| (value - s).abs() <= (cur - s).abs())
     }
 
     fn clamp_to_range(&self, a: Actuator, v: f64) -> (f64, Option<f64>) {
@@ -631,8 +648,9 @@ mod tests {
     }
 
     #[test]
-    fn ai_steps_are_clamped_and_rate_limited() {
+    fn ai_raises_are_bounded_but_cuts_are_free() {
         let mut s = with_ai(0.0);
+        // Raising the burner (away from safe): one bounded step per interval.
         let (o, _) = s.request(&req(Actuator::Burner, 90.0, CommandSource::Ai), 0.0);
         assert_eq!(
             o,
@@ -645,8 +663,16 @@ mod tests {
         assert_eq!(rejected(&o), Some(RejectReason::RateLimited));
         let (o, _) = s.request(&req(Actuator::Burner, 60.0, CommandSource::Ai), 5.0);
         assert_eq!(applied(&o), Some(60.0));
-        let (o, _) = s.request(&req(Actuator::Burner, 0.0, CommandSource::Ai), 11.0);
-        assert_eq!(applied(&o), Some(55.0));
+        // Cutting the burner (toward safe): any size, right away.
+        let (o, _) = s.request(&req(Actuator::Burner, 20.0, CommandSource::Ai), 5.5);
+        assert_eq!(applied(&o), Some(20.0));
+        let (o, _) = s.request(&req(Actuator::Burner, 0.0, CommandSource::Ai), 6.0);
+        assert_eq!(applied(&o), Some(0.0));
+        // More air is toward safe; less air is bounded.
+        let (o, _) = s.request(&req(Actuator::Air, 100.0, CommandSource::Ai), 6.0);
+        assert_eq!(applied(&o), Some(100.0));
+        let (o, _) = s.request(&req(Actuator::Air, 20.0, CommandSource::Ai), 6.5);
+        assert_eq!(applied(&o), Some(90.0));
     }
 
     #[test]

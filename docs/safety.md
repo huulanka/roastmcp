@@ -57,10 +57,18 @@ critical step. The AI cannot confirm presence; only the app's UI can.
 
 | | Human | AI / autopilot |
 |---|---|---|
-| Burner step | any | ≤ 5 percentage points |
-| Burner rate | any | ≤ 1 change per 5 s |
+| Burner down (toward safe) | any | any size, any time |
+| Burner up | any | ≤ 10 percentage points per command, ≤ 1 raise per 10 s |
 | Burner range | profile range | profile range, optionally narrowed per roast |
-| Air step | any | ≤ 10 points |
+| Air up (toward safe) | any | any size, any time |
+| Air down | any | ≤ 20 points per command, ≤ 1 per 5 s |
+
+Limits only bound moves away from the safe state. Experienced roasters cut
+heat by 15-50 % at once before and during first crack; a symmetric step limit
+would make the AI too slow exactly where timing matters, without making
+anything safer. The bean-temperature limit, presence confirmation and the
+lease still apply to every AI command. Background:
+[research/heat-control-practice.md](research/heat-control-practice.md).
 
 ## What the hardware does when the link drops
 

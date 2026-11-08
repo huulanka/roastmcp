@@ -14,9 +14,11 @@ const PROTOCOL_VERSION: &str = "2025-06-18";
 const INSTRUCTIONS: &str = "RoastMCP connects you to a coffee roaster. Temperatures are °C, \
 times seconds, actuator values percent. Read with get_status and get_curve; use wait to follow \
 a roast. To control the roaster, a person must first confirm presence in the RoastMCP app, then \
-call request_control. Your commands pass a safety layer: burner changes at most 5 points per \
-command and one change per 5 s, air at most 10 points; anything the person does in the app \
-overrides you and suspends your control. Keep calling wait or get_status at least every 60 s \
+call request_control. Your commands pass a safety layer: cutting the burner or adding air is \
+never limited; raising the burner is limited to 10 points per command and one raise per 10 s, \
+lowering the air to 20 points per 5 s. Act like an experienced roaster: anticipate the thermal \
+lag, make few deliberate moves (for example cut heat well before first crack) instead of many \
+small corrections. Anything the person does in the app overrides you and suspends your control. Keep calling wait or get_status at least every 60 s \
 while in control, or control returns to the person. Always give a short reason with each \
 command; it is logged with the roast. Use emergency_stop if anything looks unsafe.";
 
@@ -114,8 +116,8 @@ fn tools() -> Value {
          "inputSchema": {"type": "object", "properties": {}}},
         {"name": "release_control", "description": "Gives control back to the person; actuators hold.",
          "inputSchema": {"type": "object", "properties": {}}},
-        {"name": "set_burner", "description": "Sets the burner (heater). Max 5 points per change, one change per 5 s.", "inputSchema": set("Burner", "0-100")},
-        {"name": "set_air", "description": "Sets the airflow (fan). Max 10 points per change.", "inputSchema": set("Air", "0-100")},
+        {"name": "set_burner", "description": "Sets the burner (heater). Cuts are unlimited; raises at most 10 points per command, one raise per 10 s.", "inputSchema": set("Burner", "0-100")},
+        {"name": "set_air", "description": "Sets the airflow (fan). More air is unlimited; less air at most 20 points per 5 s.", "inputSchema": set("Air", "0-100")},
         {"name": "set_drum", "description": "Sets the drum speed.", "inputSchema": set("Drum", "machine range")},
         {"name": "emergency_stop", "description": "Emergency stop: burner off, air high, drum running; latched until a person resets it in the app.",
          "inputSchema": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"]}},
