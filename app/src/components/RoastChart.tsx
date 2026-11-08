@@ -92,15 +92,15 @@ export function RoastChart({
 
     const series: uPlot.Series[] = [
       {},
-      { ...line, scale: "bt", stroke: css("--chart-bt"), width: 3, cap: "round" },
-      { ...line, scale: "ror", stroke: css("--chart-ror"), width: 2.5 },
-      { ...line, scale: "bt", stroke: css("--chart-reference"), width: 2.5, dash: [8, 6] },
-      { ...line, scale: "ror", stroke: css("--chart-reference-ror"), width: 2.5, dash: [5, 6] },
+      { ...line, scale: "bt", stroke: css("--chart-bt"), width: 2.25, cap: "round" },
+      { ...line, scale: "ror", stroke: css("--chart-ror"), width: 1.75 },
+      { ...line, scale: "bt", stroke: css("--chart-reference"), width: 1.5, dash: [8, 6] },
+      { ...line, scale: "ror", stroke: css("--chart-reference-ror"), width: 1.5, dash: [5, 6] },
     ];
     if (actuators) {
       series.push(
-        { ...line, scale: "pct", stroke: css("--chart-burner"), width: 1.5, paths: stepped },
-        { ...line, scale: "pct", stroke: css("--chart-air"), width: 1.5, paths: stepped },
+        { ...line, scale: "pct", stroke: css("--chart-burner"), width: 1.25, paths: stepped },
+        { ...line, scale: "pct", stroke: css("--chart-air"), width: 1.25, paths: stepped },
       );
     }
 

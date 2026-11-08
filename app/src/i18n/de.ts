@@ -5,6 +5,9 @@ export const de: Record<string, string> = {
   "All fields are optional.": "Alle Felder sind optional.",
   "Allow AI again": "KI wieder erlauben",
   Archive: "Archiv",
+  History: "Verlauf",
+  "Every change to burner, air and drum: who asked, and what the machine did.":
+    "Jede Änderung an Brenner, Luft und Trommel: wer sie wollte und was die Maschine getan hat.",
   "Burner to 0": "Brenner auf 0",
   "The burner is running at {{p}} % with no roast or preheat. Some machines heat at power-on.":
     "Der Brenner läuft mit {{p}} %, ohne Röstung oder Vorheizen. Manche Röster heizen schon beim Einschalten.",

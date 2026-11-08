@@ -3,6 +3,13 @@ import { useTranslation } from "react-i18next";
 
 import { api } from "@/api/client.ts";
 import type { Snapshot } from "@/api/types.ts";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog.tsx";
 import { ActionLog } from "@/components/ActionLog.tsx";
 import { CoachCard } from "@/components/CoachCard.tsx";
 import { Controls } from "@/components/Controls.tsx";
@@ -89,6 +96,7 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
   const { snapshot, points, notes, controlLog } = useLive();
   const [startOpen, setStartOpen] = useState(false);
   const [stopOpen, setStopOpen] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
 
   const events = snapshot?.events;
   const base = snapshot?.charge_t ?? (events ? chargeTime(events) : null);
@@ -255,6 +263,11 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
               />
             </div>
           )}
+          {controlLog.length > 0 && (
+            <Button variant="ghost" onClick={() => setLogOpen(true)}>
+              {t("History")}
+            </Button>
+          )}
           {recording && action?.type !== "stop" && (
             <Button variant="ghost" onClick={() => setStopOpen(true)}>
               {t("End recording")}
@@ -270,8 +283,18 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
         <Readouts snapshot={snapshot} rorDelta={dRor} alert={alert} />
         <Controls machine={snapshot.machine} safety={snapshot.safety} />
         <CoachCard snapshot={snapshot} note={note} />
-        <ActionLog entries={controlLog} base={base} />
       </aside>
+      <Dialog open={logOpen} onOpenChange={setLogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("History")}</DialogTitle>
+            <DialogDescription>
+              {t("Every change to burner, air and drum: who asked, and what the machine did.")}
+            </DialogDescription>
+          </DialogHeader>
+          <ActionLog entries={controlLog} base={base} />
+        </DialogContent>
+      </Dialog>
       <StartDialog open={startOpen} onOpenChange={setStartOpen} />
       <StopDialog open={stopOpen} onOpenChange={setStopOpen} />
     </main>
