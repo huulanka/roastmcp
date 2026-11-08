@@ -16,7 +16,12 @@ pub trait LineIo: Send {
     fn clear_input(&mut self) -> io::Result<()>;
 }
 
-/// The serial ports the operating system offers, by name.
+/// Port names that mean a direct Bluetooth link instead of a serial port:
+/// `bluetooth:AKROASTER` (ADR 0013).
+pub const BLUETOOTH_PREFIX: &str = "bluetooth:";
+
+/// The serial ports the operating system offers, by name, followed on macOS by
+/// paired Bluetooth serial devices as `bluetooth:<name>`.
 #[must_use]
 pub fn list_ports() -> Vec<String> {
     let mut ports: Vec<String> = serialport::available_ports()
@@ -25,7 +30,95 @@ pub fn list_ports() -> Vec<String> {
         .map(|p| p.port_name)
         .collect();
     ports.sort();
+    let mut bluetooth = roast_bluetooth::list_serial_devices();
+    bluetooth.sort();
+    ports.extend(
+        bluetooth
+            .into_iter()
+            .map(|n| format!("{BLUETOOTH_PREFIX}{n}")),
+    );
     ports
+}
+
+/// Takes one complete line (without its ending) off the front of `pending`.
+fn take_line(pending: &mut Vec<u8>) -> Option<String> {
+    let pos = pending.iter().position(|&b| b == b'\n')?;
+    let line: Vec<u8> = pending.drain(..=pos).collect();
+    Some(
+        String::from_utf8_lossy(&line)
+            .trim_end_matches(['\r', '\n'])
+            .to_owned(),
+    )
+}
+
+fn trace_incomplete(pending: &[u8]) {
+    if !pending.is_empty() {
+        tracing::trace!(
+            target: "roast_driver::wire",
+            "RX (incomplete, {} bytes) {:?}",
+            pending.len(),
+            String::from_utf8_lossy(pending)
+        );
+    }
+}
+
+/// A direct Bluetooth RFCOMM link (macOS; ADR 0013). Same line protocol as
+/// the serial port, without the operating system's serial layer.
+pub struct RfcommLineIo {
+    link: roast_bluetooth::RfcommLink,
+    pending: Vec<u8>,
+}
+
+impl RfcommLineIo {
+    /// Opens the serial channel of the paired device `target` (its name, for
+    /// example `AKROASTER`, or its address).
+    ///
+    /// # Errors
+    /// When the device is not paired or does not answer, or Bluetooth direct is
+    /// not available on this system.
+    pub fn open(target: &str) -> io::Result<Self> {
+        Ok(RfcommLineIo {
+            link: roast_bluetooth::RfcommLink::open(target)?,
+            pending: Vec::new(),
+        })
+    }
+}
+
+impl LineIo for RfcommLineIo {
+    fn write_line(&mut self, line: &str, ending: &str) -> io::Result<()> {
+        tracing::trace!(target: "roast_driver::wire", "TX {line:?}");
+        let mut bytes = Vec::with_capacity(line.len() + ending.len());
+        bytes.extend_from_slice(line.as_bytes());
+        bytes.extend_from_slice(ending.as_bytes());
+        self.link.write(&bytes)
+    }
+
+    fn read_line(&mut self, timeout: Duration) -> io::Result<Option<String>> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(line) = take_line(&mut self.pending) {
+                tracing::trace!(target: "roast_driver::wire", "RX {line:?}");
+                return Ok(Some(line));
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                trace_incomplete(&self.pending);
+                return Ok(None);
+            }
+            match self.link.recv(left)? {
+                Some(bytes) => self.pending.extend_from_slice(&bytes),
+                None => {
+                    trace_incomplete(&self.pending);
+                    return Ok(None);
+                }
+            }
+        }
+    }
+
+    fn clear_input(&mut self) -> io::Result<()> {
+        self.pending.clear();
+        self.link.discard_pending()
+    }
 }
 
 /// A serial port (USB serial or Bluetooth SPP).
@@ -65,16 +158,6 @@ impl SerialLineIo {
             pending: Vec::new(),
         })
     }
-
-    fn take_line(&mut self) -> Option<String> {
-        let pos = self.pending.iter().position(|&b| b == b'\n')?;
-        let line: Vec<u8> = self.pending.drain(..=pos).collect();
-        Some(
-            String::from_utf8_lossy(&line)
-                .trim_end_matches(['\r', '\n'])
-                .to_owned(),
-        )
-    }
 }
 
 impl LineIo for SerialLineIo {
@@ -89,19 +172,12 @@ impl LineIo for SerialLineIo {
         let deadline = Instant::now() + timeout;
         let mut buf = [0u8; 256];
         loop {
-            if let Some(line) = self.take_line() {
+            if let Some(line) = take_line(&mut self.pending) {
                 tracing::trace!(target: "roast_driver::wire", "RX {line:?}");
                 return Ok(Some(line));
             }
             if Instant::now() >= deadline {
-                if !self.pending.is_empty() {
-                    tracing::trace!(
-                        target: "roast_driver::wire",
-                        "RX (incomplete, {} bytes) {:?}",
-                        self.pending.len(),
-                        String::from_utf8_lossy(&self.pending)
-                    );
-                }
+                trace_incomplete(&self.pending);
                 return Ok(None);
             }
             match self.port.read(&mut buf) {

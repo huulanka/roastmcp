@@ -28,6 +28,7 @@ roast-core = { path = "crates/roast-core" }
 roast-alog = { path = "crates/roast-alog" }
 roast-machine = { path = "crates/roast-machine" }
 roast-driver = { path = "crates/roast-driver" }
+roast-bluetooth = { path = "crates/roast-bluetooth" }
 roast-twin = { path = "crates/roast-twin" }
 roast-safety = { path = "crates/roast-safety" }
 roast-control = { path = "crates/roast-control" }

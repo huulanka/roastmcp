@@ -116,20 +116,24 @@ fn main() -> anyhow::Result<()> {
                         .unwrap_or_else(|_| "info".into()),
                 )
                 .init();
-            let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(roastd::run(roastd::DaemonOptions {
-                data_dir,
-                port,
-                machine,
-                ui_dir,
-                simulator,
-                serial_port: serial,
-                sim_speed,
-            }))
+            // On macOS the main thread serves Bluetooth (IOBluetooth calls back
+            // only there, ADR 0013); the runtime runs on a worker thread.
+            roast_driver::run_with_main_loop(move || -> anyhow::Result<()> {
+                let rt = tokio::runtime::Runtime::new()?;
+                rt.block_on(roastd::run(roastd::DaemonOptions {
+                    data_dir,
+                    port,
+                    machine,
+                    ui_dir,
+                    simulator,
+                    serial_port: serial,
+                    sim_speed,
+                }))
+            })?
         }
         Command::Mcp => mcp::serve(&data_dir),
         Command::Ports => {
-            for p in roast_driver::list_ports() {
+            for p in roast_driver::run_with_main_loop(roast_driver::list_ports)? {
                 println!("{p}");
             }
             Ok(())

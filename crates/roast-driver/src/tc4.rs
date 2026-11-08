@@ -6,7 +6,7 @@ use std::time::Duration;
 use roast_core::{ActuatorCommand, ActuatorValues};
 use roast_machine::{FieldRole, MachineProfile, ProtocolConfig, Tc4Protocol, TransportConfig};
 
-use crate::transport::{LineIo, SerialLineIo};
+use crate::transport::{BLUETOOTH_PREFIX, LineIo, RfcommLineIo, SerialLineIo};
 use crate::{DriverError, Reading, RoasterDriver};
 
 /// Lines read while waiting for a reply before giving up on it.
@@ -31,6 +31,27 @@ impl Tc4Driver<SerialLineIo> {
         };
         Self::with_opener(profile, Box::new(move || SerialLineIo::open(&port, &cfg)))
     }
+}
+
+impl Tc4Driver<RfcommLineIo> {
+    /// A driver for the profile's machine over a direct Bluetooth link to the
+    /// paired device `target` (ADR 0013). Every (re)connect opens a fresh
+    /// RFCOMM channel, so a lost link comes back without the Bluetooth settings.
+    pub fn bluetooth(profile: MachineProfile, target: String) -> Result<Self, DriverError> {
+        Self::with_opener(profile, Box::new(move || RfcommLineIo::open(&target)))
+    }
+}
+
+/// A driver for `port`: `bluetooth:<device>` for a direct Bluetooth link,
+/// anything else is a serial port.
+pub fn open_port(
+    profile: MachineProfile,
+    port: &str,
+) -> Result<Box<dyn RoasterDriver>, DriverError> {
+    Ok(match port.strip_prefix(BLUETOOTH_PREFIX) {
+        Some(target) => Box::new(Tc4Driver::bluetooth(profile, target.trim().to_owned())?),
+        None => Box::new(Tc4Driver::serial(profile, port.to_owned())?),
+    })
 }
 
 impl<L: LineIo> Tc4Driver<L> {

@@ -17,7 +17,7 @@ use roast_core::{
     ReferenceCurve, RejectReason, Roast, RoastEvent, RoastOrigin, RoastState, RorConfig,
     RorTracker, Sample, phases, project,
 };
-use roast_driver::{RoasterDriver, SimulatedMachine, Tc4Driver, simulator_profile};
+use roast_driver::{RoasterDriver, SimulatedMachine, simulator_profile};
 use roast_machine::MachineProfile;
 use roast_safety::{Safety, SafetyConfig, SafetyReaction, SafetyStatus};
 use serde::{Deserialize, Serialize};
@@ -773,9 +773,9 @@ impl Engine {
                     .filter(|p| !p.trim().is_empty())
                     .ok_or_else(|| Fail::bad("choose a port or the simulator"))?;
                 let p = self.opts.profile.clone();
-                let d = Tc4Driver::serial(p.clone(), port.clone())
+                let d = roast_driver::open_port(p.clone(), &port)
                     .map_err(|e| Fail::bad(e.to_string()))?;
-                (p, Box::new(d), Some(port), 1.0)
+                (p, d, Some(port), 1.0)
             };
 
         let same_machine = self.profile.as_ref().is_some_and(|p| p.id == profile.id);
@@ -866,10 +866,22 @@ impl Engine {
                 self.publish(None);
             }
             DriverEvent::GaveUp(e) => {
-                let hint = format!(
-                    "{e}. Check: the roaster is switched on and paired, no other program (Artisan, a second RoastMCP) holds the port, \
-                     then switch the roaster off and on and connect again. Details: logs/daemon.log (RUST_LOG=roast_driver=trace shows every line)."
-                );
+                let bluetooth = self
+                    .machine
+                    .as_ref()
+                    .and_then(|m| m.port.as_deref())
+                    .is_some_and(|p| p.starts_with(roast_driver::BLUETOOTH_PREFIX));
+                let hint = if bluetooth {
+                    format!(
+                        "{e}. Check: the roaster is switched on, paired and in range, and no other program (Artisan) is connected to it; \
+                         then connect again. Details: logs/daemon.log (RUST_LOG=roast_driver=trace shows every line)."
+                    )
+                } else {
+                    format!(
+                        "{e}. Check: the roaster is switched on and paired, no other program (Artisan, a second RoastMCP) holds the port, \
+                         then switch the roaster off and on and connect again. Details: logs/daemon.log (RUST_LOG=roast_driver=trace shows every line)."
+                    )
+                };
                 self.conn = Conn::Error;
                 self.conn_error = Some(hint.clone());
                 self.driver = None;

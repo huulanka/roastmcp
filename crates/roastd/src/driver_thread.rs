@@ -86,10 +86,14 @@ fn run(
     // already used up); a link lost later is retried indefinitely.
     let mut attempts = 0u32;
     let mut answered = false;
+    let mut last_error: Option<String> = None;
     'connect: loop {
         if !answered && attempts >= GIVE_UP_AFTER_SILENT_ATTEMPTS {
+            let detail = last_error
+                .map(|e| format!(" (last: {e})"))
+                .unwrap_or_default();
             send(DriverEvent::GaveUp(format!(
-                "the roaster did not answer in {attempts} attempts"
+                "the roaster did not answer in {attempts} attempts{detail}"
             )));
             break 'connect;
         }
@@ -101,6 +105,7 @@ fn run(
                 }
             }
             Err(e) => {
+                last_error = Some(e.to_string());
                 if !send(DriverEvent::Lost(format!("cannot connect: {e}"))) {
                     break 'connect;
                 }
@@ -135,6 +140,7 @@ fn run(
                 Err(e) => {
                     failures += 1;
                     let msg = e.to_string();
+                    last_error = Some(msg.clone());
                     if failures >= LOST_AFTER_FAILURES {
                         if !send(DriverEvent::Lost(msg)) {
                             break 'connect;

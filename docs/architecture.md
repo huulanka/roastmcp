@@ -35,7 +35,8 @@ crates/
   roast-core            domain types, units, curves, RoR, phases, event detection, metrics
   roast-alog            Artisan .alog reader/writer, fixture sanitizer
   roast-machine         machine profiles (TOML), .aset import
-  roast-driver          RoasterDriver trait, TC4 serial driver, transports (serial, mock, replay)
+  roast-driver          RoasterDriver trait, TC4 serial driver, transports (serial, Bluetooth direct, mock, replay)
+  roast-bluetooth       Bluetooth Classic RFCOMM links on macOS via IOBluetooth (ADR 0013); the only crate with unsafe code
   roast-twin            thermal model (digital twin), simulated driver, calibration
   roast-safety          arbitration, limits, rate limits, AI lease, presence, overheat, e-stop
   roast-control         autopilot controller (profile follower)
