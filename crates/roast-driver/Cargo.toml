@@ -12,6 +12,7 @@ publish.workspace = true
 [dependencies]
 roast-core.workspace = true
 roast-machine.workspace = true
+roast-bluetooth.workspace = true
 serialport = { version = "4", default-features = false }
 thiserror.workspace = true
 tracing.workspace = true

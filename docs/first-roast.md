@@ -11,7 +11,8 @@ reach.
 - Build the UI and the binary (see the README) and close Artisan or any other
   program that might hold the serial port.
 - Pair the roaster with the computer (Bluetooth). On macOS it appears as
-  `/dev/cu.AKROASTER`; `roastmcp ports` lists the ports.
+  `/dev/cu.AKROASTER` and as **AKROASTER · Bluetooth direct**
+  (`bluetooth:AKROASTER`); `roastmcp ports` lists both.
 - Know where the machine's power switch is. If anything behaves unexpectedly,
   switching the machine off is always allowed.
 
@@ -27,6 +28,15 @@ Start the desktop app (`RoastMCP.app`, see the README) and connect to
 and open the printed link. Expected: the connection badge turns green within a few
 seconds, and BT shows roughly room temperature. If it stays "connecting", the
 port is busy or not paired.
+
+**Bluetooth direct (macOS, [ADR 0013](adr/0013-bluetooth-rfcomm-on-macos.md)):**
+pick *AKROASTER · Bluetooth direct* in the connect dialog, or
+`--serial bluetooth:AKROASTER`. RoastMCP then opens the roaster's Bluetooth
+serial channel itself instead of going through `/dev/cu.AKROASTER`, so it
+neither needs a fresh connect in the Bluetooth settings nor loses the roaster
+for good when the link drops: it opens a new channel on every reconnect. The
+app remembers the choice. Until the checks at the end of ADR 0013 have passed
+on the machine, the serial port stays preselected.
 
 If the roaster does not answer, RoastMCP stays at "connecting", and after three
 silent attempts it stops with a message instead of retrying forever. Where to

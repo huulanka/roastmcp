@@ -21,6 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog.tsx";
+import { bluetoothName, lastPort, preferredPort, rememberPort, usefulPorts } from "@/lib/ports.ts";
 import { formatNumber, weightLossPct } from "@/lib/units.ts";
 import { cn } from "@/lib/utils.ts";
 import { applySnapshot } from "@/state/live.ts";
@@ -60,20 +61,20 @@ export function ConnectDialog({
     let alive = true;
     api
       .ports()
-      .then((p) => alive && setPorts(p))
+      .then((p) => alive && setPorts(usefulPorts(p)))
       .catch((e) => toast("warning", errText(e)));
     return () => {
       alive = false;
     };
   }, [open]);
 
-  const preferred = ports.find((p) => p.toUpperCase().includes("AKROASTER")) ?? ports[0];
-  const port = chosen ?? preferred;
+  const port = chosen ?? preferredPort(ports, lastPort());
 
   const connect = async () => {
     setBusy(true);
     try {
       applySnapshot(await api.connect(simulator, simulator ? undefined : port));
+      if (!simulator && port) rememberPort(port);
       onOpenChange(false);
     } catch (e) {
       toast("critical", errText(e));
@@ -88,7 +89,9 @@ export function ConnectDialog({
         <DialogHeader>
           <DialogTitle>{t("Connect to roaster")}</DialogTitle>
           <DialogDescription>
-            {t("Pick the serial port of the roaster, or use the built-in simulator.")}
+            {t(
+              "Pick how to reach the roaster (its serial port or, on a Mac, Bluetooth direct), or use the built-in simulator.",
+            )}
           </DialogDescription>
         </DialogHeader>
         <div
@@ -115,18 +118,21 @@ export function ConnectDialog({
           ))}
         </div>
         {!simulator && (
-          <Field label={t("Serial port")}>
+          <Field label={t("Port")}>
             <select
               className={inputCls}
               value={port ?? ""}
               onChange={(e) => setChosen(e.target.value)}
             >
               {ports.length === 0 && <option value="">{t("No serial ports found")}</option>}
-              {ports.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
+              {ports.map((p) => {
+                const bt = bluetoothName(p);
+                return (
+                  <option key={p} value={p}>
+                    {bt ? t("{{name}} · Bluetooth direct", { name: bt }) : p}
+                  </option>
+                );
+              })}
             </select>
           </Field>
         )}

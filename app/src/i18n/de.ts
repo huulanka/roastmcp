@@ -75,8 +75,10 @@ export const de: Record<string, string> = {
   "Only reset when the roaster is in a safe state and you are standing next to it.":
     "Nur zurücksetzen, wenn der Röster in einem sicheren Zustand ist und du daneben stehst.",
   "Overheat protection active.": "Überhitzungsschutz aktiv.",
-  "Pick the serial port of the roaster, or use the built-in simulator.":
-    "Wähle den seriellen Port des Rösters oder nutze den eingebauten Simulator.",
+  "Pick how to reach the roaster (its serial port or, on a Mac, Bluetooth direct), or use the built-in simulator.":
+    "Wähle, wie der Röster erreicht wird (serieller Port oder am Mac Bluetooth direkt), oder nutze den eingebauten Simulator.",
+  "{{name}} · Bluetooth direct": "{{name}} · Bluetooth direkt",
+  Port: "Port",
   "Re-mark now": "Jetzt neu setzen",
   Ready: "Bereit",
   Recording: "Aufzeichnung",
@@ -90,7 +92,6 @@ export const de: Record<string, string> = {
   Save: "Speichern",
   Saved: "Gespeichert",
   "Select a roast to see its curve.": "Wähle eine Röstung, um ihre Kurve zu sehen.",
-  "Serial port": "Serieller Port",
   Start: "Start",
   "Start recording": "Aufzeichnung starten",
   "Stop and save": "Stoppen und speichern",

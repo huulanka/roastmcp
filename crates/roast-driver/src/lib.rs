@@ -9,9 +9,10 @@ mod simulator;
 mod tc4;
 mod transport;
 
+pub use roast_bluetooth::run_with_main_loop;
 pub use simulator::{SimulatedMachine, simulator_profile};
-pub use tc4::{Tc4Driver, parse_read_reply};
-pub use transport::{LineIo, ScriptedIo, SerialLineIo, list_ports};
+pub use tc4::{Tc4Driver, open_port, parse_read_reply};
+pub use transport::{BLUETOOTH_PREFIX, LineIo, RfcommLineIo, ScriptedIo, SerialLineIo, list_ports};
 
 use roast_core::{ActuatorCommand, ActuatorValues, EventKind};
 

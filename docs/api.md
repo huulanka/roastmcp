@@ -93,8 +93,8 @@ interface Snapshot {
 |---|---|---|
 | `GET /api/status` | | `Snapshot` |
 | `GET /api/live` | | `{ points: Point[], events, notes: {t,text,origin}[], control_log: { t, at, previous, request: {actuator, value, source, reason}, outcome }[] }` — every request, applied (with `clamped_from` if limited) or rejected (with a reason); the running recording, or the preview (last 10 min) when not recording |
-| `GET /api/ports` | | `string[]` serial ports |
-| `POST /api/connect` | `{ simulator: boolean, port?: string }` | `Snapshot` |
+| `GET /api/ports` | | `string[]` serial ports, then on macOS paired Bluetooth serial devices as `bluetooth:<name>` (Bluetooth direct, ADR 0013) |
+| `POST /api/connect` | `{ simulator: boolean, port?: string }` | `Snapshot`; `port` is a serial port or `bluetooth:<name>` |
 | `POST /api/disconnect` | | `Snapshot` |
 | `POST /api/command` | `{ actuator, value, source?: "human" \| "ai", reason? }` | `{ outcome: CommandOutcome }` (source defaults to `human`) |
 | `POST /api/emergency-stop` | `{ reason? }` | `Snapshot` |

@@ -24,3 +24,5 @@
 - [0009](adr/0009-distribution.md) — Homebrew tap with an ad-hoc signed app
 - [0010](adr/0010-platforms.md) — macOS officially, Windows and Linux as a preview
 - [0011](adr/0011-real-logs-as-fixtures.md) — Sanitized real roast logs as test fixtures
+- [0012](adr/0012-guided-roast-flow.md) — A guided roast as three short steps around one live screen, not a modal wizard
+- [0013](adr/0013-bluetooth-rfcomm-on-macos.md) — Bluetooth roasters over a direct RFCOMM channel on macOS

@@ -19,10 +19,9 @@ Next, in order:
    link-loss test (results in the Cubean+ profile under `[link_loss]`) and AI
    control over MCP (lease after the person's confirmation, burner step and
    rate limits, air limit, human override, emergency stop); still
-   open is tuning the preheat gains on the real machine. Worth a look: on
-   macOS a direct RFCOMM channel (IOBluetooth) answered when the serial port
-   stayed silent, so a native Bluetooth transport could reconnect without the
-   person reconnecting AKROASTER by hand.
+   open is tuning the preheat gains on the real machine, and the hardware
+   checks for Bluetooth direct ([ADR 0013](adr/0013-bluetooth-rfcomm-on-macos.md));
+   when they pass, Bluetooth direct becomes the preselected connection.
 2. **UI finish and QA**: anything the redesign deferred; keyboard map
    (digits for burner/air, Enter for the next event, Esc stop), RoR trend with
    crash/flick colouring, control markers on the curve, hover read-out,
