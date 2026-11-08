@@ -18,7 +18,7 @@ import { EVENT_NAME, EVENT_ORDER } from "@/lib/chartData.ts";
 import { isRecording, primaryLabel, type PrimaryAction } from "@/lib/roast.ts";
 import { cn } from "@/lib/utils.ts";
 import { formatClock, formatNumber } from "@/lib/units.ts";
-import { attempt } from "@/state/actions.ts";
+import { attempt, markEvent } from "@/state/actions.ts";
 import { applySnapshot } from "@/state/live.ts";
 
 /** The one big button for the next step; Enter does the same. */
@@ -54,7 +54,7 @@ export function EventSegments({ snapshot }: { snapshot: Snapshot }) {
   const [asking, setAsking] = useState<EventKind | null>(null);
   const active = isRecording(snapshot.state);
   const base = snapshot.charge_t ?? snapshot.events.find((e) => e.kind === "charge")?.t ?? null;
-  const mark = (kind: EventKind) => attempt(() => api.markEvent(kind));
+  const mark = (kind: EventKind) => markEvent(kind);
   const askingName = asking ? t(EVENT_NAME[asking]) : "";
 
   return (
