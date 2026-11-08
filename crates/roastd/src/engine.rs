@@ -228,6 +228,9 @@ pub struct Snapshot {
     phases: Option<Phases>,
     safety: SafetyStatus,
     alarms: Vec<Alarm>,
+    /// Number of control log entries of the running recording; the UI reloads
+    /// the log when it changes, so actions show up before the next sample.
+    control_seq: usize,
     reference: Option<ReferenceStatus>,
     projection: Option<Projection>,
     preheat: Option<PreheatStatus>,
@@ -468,6 +471,7 @@ impl Engine {
             events,
             safety: self.safety.status(now),
             alarms: self.alarms.iter().cloned().collect(),
+            control_seq: self.roast.as_ref().map_or(0, |r| r.control_log.len()),
         }
     }
 
@@ -994,6 +998,8 @@ impl Engine {
             let entry = ControlLogEntry {
                 t: self.roast.as_ref().map(|_| self.latest_t()),
                 at: Utc::now(),
+                // The safety layer already moved its state; the old value is not known here.
+                previous: None,
                 request: CommandRequest {
                     actuator: c.actuator,
                     value: c.value,
@@ -1028,6 +1034,12 @@ impl Engine {
     pub fn command(&mut self, req: CommandRequest) -> CommandOutcome {
         let now = self.now();
         let ai_before = self.safety.ai_in_control(now);
+        let previous = self
+            .safety
+            .status(now)
+            .actuators
+            .get(&req.actuator)
+            .copied();
         let (outcome, cmd) = self.safety.request(&req, now);
         if let (Some(c), Some(d)) = (&cmd, &self.driver) {
             let _ = d.send(DriverCmd::Apply(*c));
@@ -1035,6 +1047,7 @@ impl Engine {
         let entry = ControlLogEntry {
             t: self.roast.as_ref().map(|_| self.latest_t()),
             at: Utc::now(),
+            previous,
             request: req.clone(),
             outcome: outcome.clone(),
         };

@@ -69,6 +69,7 @@ interface Snapshot {
   phases: Phases | null;
   safety: SafetyStatus;
   alarms: Alarm[];                       // the last 20, newest last
+  control_seq: number;                   // length of control_log; reload /api/live when it changes
   reference: null | {                    // see PUT /api/reference
     id: string; title: string;
     bt_now: number | null;               // reference BT at the same time since CHARGE
@@ -89,7 +90,7 @@ interface Snapshot {
 | Method & path | Body | Response |
 |---|---|---|
 | `GET /api/status` | | `Snapshot` |
-| `GET /api/live` | | `{ points: Point[], events, notes: {t,text,origin}[], control_log }` — the running recording, or the preview (last 10 min) when not recording |
+| `GET /api/live` | | `{ points: Point[], events, notes: {t,text,origin}[], control_log: { t, at, previous, request: {actuator, value, source, reason}, outcome }[] }` — every request, applied (with `clamped_from` if limited) or rejected (with a reason); the running recording, or the preview (last 10 min) when not recording |
 | `GET /api/ports` | | `string[]` serial ports |
 | `POST /api/connect` | `{ simulator: boolean, port?: string }` | `Snapshot` |
 | `POST /api/disconnect` | | `Snapshot` |

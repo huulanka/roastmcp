@@ -135,6 +135,8 @@ export interface Snapshot {
   phases: Phases | null;
   safety: SafetyStatus;
   alarms: Alarm[];
+  /** Length of the control log; changes whenever an action was logged. Absent on older daemons. */
+  control_seq?: number;
   /** Absent on daemons without reference support. */
   reference?: ReferenceStatus | null;
   projection?: Projection | null;
@@ -151,6 +153,8 @@ export interface ControlLogEntry {
   /** Seconds since the recording started (same base as `Point.t`), if one was running. */
   t?: number | null;
   at: string;
+  /** The actuator's value before the request, if known. */
+  previous?: number | null;
   request: { actuator: Actuator; value: number; source: CommandSource; reason?: string };
   outcome: CommandOutcome;
 }
