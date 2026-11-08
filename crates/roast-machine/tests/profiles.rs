@@ -48,11 +48,8 @@ fn cubean_plus_profile_matches_the_research() {
     assert_eq!(tc4.line_ending, "\n");
     let init: Vec<_> = tc4.init.iter().map(|s| s.send.as_str()).collect();
     assert_eq!(init, ["CHAN;2100", "UNITS;C", "FILT;95,95,95,95"]);
-    assert!(
-        tc4.init
-            .iter()
-            .all(|s| s.expect_prefix.as_deref() == Some("#"))
-    );
+    // Verified on hardware: the machine never acknowledges setup commands.
+    assert!(tc4.init.iter().all(|s| s.expect_prefix.is_none()));
     assert_eq!(tc4.read.command, "READ");
     assert_eq!(
         tc4.read.fields,

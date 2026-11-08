@@ -838,32 +838,11 @@ impl Engine {
     fn on_driver(&mut self, ev: DriverEvent) {
         match ev {
             DriverEvent::Connected(warnings) => {
+                // The port is open; the machine counts as connected only with
+                // its first reading (see `on_reading`).
                 for w in &warnings {
                     self.alarm("info", "init", w.clone());
                 }
-                if !warnings.is_empty() {
-                    // The port is open but the machine did not acknowledge
-                    // setup. Stay "connecting" until a reading arrives.
-                    self.alarm(
-                        "warning",
-                        "port_open_silent",
-                        "Port opened, but the roaster has not answered yet. Waiting for the first reading.".to_string(),
-                    );
-                    self.publish(None);
-                    return;
-                }
-                self.conn = Conn::Connected;
-                self.conn_error = None;
-                self.safety.set_connected(true);
-                if self.roast.is_none() {
-                    self.state = RoastState::Connected;
-                }
-                let name = self
-                    .machine
-                    .as_ref()
-                    .map(|m| m.name.clone())
-                    .unwrap_or_default();
-                self.alarm("info", "connected", format!("Connected to {name}."));
                 self.publish(None);
             }
             DriverEvent::GaveUp(e) => {

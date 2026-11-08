@@ -66,21 +66,20 @@ et_present = false
 # reconnect). Each step waits for a reply starting with `expect_prefix`; other
 # lines are discarded. Leave `expect_prefix` out to send without waiting.
 
+# The Cubean+ never acknowledges these setup commands (verified on hardware,
+# 2026-11-08), so none waits for a reply; READ answers are what count.
 # Channel mapping: logical channel 1 = thermocouple 2 (ET), logical channel 2 =
 # thermocouple 1 (BT), channels 3 and 4 unused.
 [[protocol.init]]
 send = "CHAN;2100"
-expect_prefix = "#"
 
 # Temperatures in degrees Celsius (RoastMCP works in °C throughout).
 [[protocol.init]]
 send = "UNITS;C"
-expect_prefix = "#"
 
 # Digital filter level per channel, as in the vendor's settings.
 [[protocol.init]]
 send = "FILT;95,95,95,95"
-expect_prefix = "#"
 
 # How a sample is requested and what the reply contains. The reply to READ is a
 # comma-separated line, for example `21.4,0.0,187.3,60,40,0`. Each entry of

@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button.tsx";
 import { cn } from "@/lib/utils.ts";
 import { beep } from "@/state/audio.ts";
 import { applySnapshot, hasToken, useLive } from "@/state/live.ts";
+import { setActuator } from "@/state/controls.ts";
 import { dismissToast, toast, useToasts } from "@/state/toasts.ts";
 
 function Bar({
@@ -54,6 +55,14 @@ export function Banners() {
   const [confirm, setConfirm] = useState(false);
   const safety = snapshot?.safety;
   const machine = snapshot?.machine;
+  const burner = safety?.actuators.burner;
+  const heaterOn =
+    snapshot?.connection === "connected" &&
+    snapshot.state === "connected" &&
+    !snapshot.preheat &&
+    !safety?.emergency_stop &&
+    typeof burner === "number" &&
+    burner > 0;
 
   return (
     <>
@@ -87,6 +96,24 @@ export function Banners() {
       {safety?.overheat && (
         <Bar tone="critical" icon={<Flame className="size-4" />}>
           {t("Overheat protection active.")}
+        </Bar>
+      )}
+      {heaterOn && (
+        <Bar
+          tone="warning"
+          icon={<Flame className="size-4" />}
+          action={
+            <Button variant="secondary" size="sm" onClick={() => void setActuator("burner", 0)}>
+              {t("Burner to 0")}
+            </Button>
+          }
+        >
+          {t(
+            "The burner is running at {{p}} % with no roast or preheat. Some machines heat at power-on.",
+            {
+              p: Math.round(burner ?? 0),
+            },
+          )}
         </Bar>
       )}
       {machine && !machine.link_loss_tested && (
