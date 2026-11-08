@@ -4,6 +4,30 @@ An order, not dates. Each milestone ends with a criterion for going on.
 Releases before 1.0 are `0.x`; from M2 on, RoastMCP can replace Artisan for
 roasting by hand.
 
+## Status and next steps (2026-11-08)
+
+Done: daemon with safety layer, TC4 driver (serial/Bluetooth) and simulator;
+recording with automatic CHARGE/TP/DRY END, `.roast.json` + `.alog`; MCP tools;
+desktop app (Tauri) with a global emergency stop and guarded quit; reference
+curve and projection; preheat to a target; `.alog` import; the roast-screen
+redesign ("Röstfarbe", light and dark) in progress.
+
+Next, in order:
+
+1. **First hardware test** (`docs/first-roast.md`): link-loss behaviour,
+   `CLDN,OF`, reported burner values; write the results into the Cubean+
+   profile (`[link_loss]`). Tune the preheat gains on the real machine.
+2. **UI finish and QA**: anything the redesign deferred; keyboard map
+   (digits for burner/air, Enter for the next event, Esc stop), RoR trend with
+   crash/flick colouring, control markers on the curve, hover read-out,
+   roast-degree scale with ranges, light/dark check, 1280×800 and 1440×900.
+3. **Archive**: overlay and compare roasts, roast degree and weights after
+   the roast, import from the UI (file picker / drag and drop).
+4. **Store and backup**: SQLite store (branch `wip/store`), backup to the NAS.
+5. **Autopilot (M7)**: the AI sets RoR targets, a controller with a model of
+   the machine's lag follows them; confirmation before critical steps.
+6. M4–M6 and M8 as below; release through the Homebrew tap.
+
 ## M0: foundations
 
 - Workspace with all crates, the desktop app shell, CI on macOS, Windows and
