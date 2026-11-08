@@ -5,6 +5,12 @@ export const de: Record<string, string> = {
   "All fields are optional.": "Alle Felder sind optional.",
   "Allow AI again": "KI wieder erlauben",
   Archive: "Archiv",
+  "Roast saved": "Röstung gespeichert",
+  "The recording ended at the drop. Cooling runs from the controls.":
+    "Die Aufzeichnung endete beim Drop. Die Kühlung läuft über die Steuerung.",
+  "Weight saved": "Gewicht gespeichert",
+  Later: "Später",
+  "Save weight": "Gewicht speichern",
   History: "Verlauf",
   "Every change to burner, air and drum: who asked, and what the machine did.":
     "Jede Änderung an Brenner, Luft und Trommel: wer sie wollte und was die Maschine getan hat.",

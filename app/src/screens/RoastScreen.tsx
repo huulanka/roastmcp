@@ -14,7 +14,7 @@ import { ActionLog } from "@/components/ActionLog.tsx";
 import { CoachCard } from "@/components/CoachCard.tsx";
 import { Controls } from "@/components/Controls.tsx";
 import { CurveLegend, PhaseLine, RoastScaleBar, type ScaleMarker } from "@/components/Curve.tsx";
-import { StartDialog, StopDialog } from "@/components/Dialogs.tsx";
+import { SavedDialog, StartDialog, StopDialog } from "@/components/Dialogs.tsx";
 import { EventSegments, PrimaryButton } from "@/components/EventRow.tsx";
 import { PreheatCard } from "@/components/Preheat.tsx";
 import { Readouts } from "@/components/Readouts.tsx";
@@ -31,7 +31,13 @@ import {
 } from "@/lib/chartData.ts";
 import { isRecording, latestAiNote, nextAction, rorAlert, rorDelta } from "@/lib/roast.ts";
 import { formatClock, formatNumber } from "@/lib/units.ts";
-import { attempt, emergencyStop } from "@/state/actions.ts";
+import {
+  attempt,
+  clearJustSaved,
+  emergencyStop,
+  markEvent,
+  useJustSaved,
+} from "@/state/actions.ts";
 import { nudge } from "@/state/controls.ts";
 import { applySnapshot, useLive } from "@/state/live.ts";
 import { useReferenceCurve } from "@/state/reference.ts";
@@ -97,6 +103,7 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
   const [startOpen, setStartOpen] = useState(false);
   const [stopOpen, setStopOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
+  const savedId = useJustSaved();
 
   const events = snapshot?.events;
   const base = snapshot?.charge_t ?? (events ? chargeTime(events) : null);
@@ -176,7 +183,7 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
     if (!action) return;
     if (action.type === "start") setStartOpen(true);
     else if (action.type === "stop") setStopOpen(true);
-    else void attempt(() => api.markEvent(action.kind));
+    else void markEvent(action.kind);
   };
   const primaryRef = useRef(runPrimary);
   useEffect(() => {
@@ -295,6 +302,7 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
           <ActionLog entries={controlLog} base={base} />
         </DialogContent>
       </Dialog>
+      <SavedDialog key={savedId ?? "none"} roastId={savedId} onClose={clearJustSaved} />
       <StartDialog open={startOpen} onOpenChange={setStartOpen} />
       <StopDialog open={stopOpen} onOpenChange={setStopOpen} />
     </main>

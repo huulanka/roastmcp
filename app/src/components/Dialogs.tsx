@@ -21,6 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog.tsx";
+import { formatNumber, weightLossPct } from "@/lib/units.ts";
 import { cn } from "@/lib/utils.ts";
 import { applySnapshot } from "@/state/live.ts";
 import { toast } from "@/state/toasts.ts";
@@ -255,5 +256,93 @@ export function StopDialog({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+/** Shown right after the drop: the roast is saved; the roasted weight is the one thing still to add. */
+export function SavedDialog({ roastId, onClose }: { roastId: string | null; onClose: () => void }) {
+  const { t } = useTranslation();
+  const [title, setTitle] = useState("");
+  const [green, setGreen] = useState<number | null>(null);
+  const [weight, setWeight] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!roastId) return;
+    let cancelled = false;
+    void api
+      .roast(roastId)
+      .then((r) => {
+        if (cancelled) return;
+        setTitle(r.title ?? "");
+        setGreen(r.batch?.green_weight_g ?? null);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [roastId]);
+
+  const value = parseFloat(weight.replace(",", "."));
+  const valid = Number.isFinite(value) && value > 0;
+  const loss = valid ? weightLossPct(green, value) : null;
+
+  const save = async () => {
+    if (!roastId || !valid) return;
+    setBusy(true);
+    try {
+      await api.patchRoast(roastId, { roasted_weight_g: value });
+      toast("success", t("Weight saved"));
+      onClose();
+    } catch (e) {
+      toast("critical", errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={roastId !== null} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t("Roast saved")}</DialogTitle>
+          <DialogDescription>
+            {title}
+            {" · "}
+            {t("The recording ended at the drop. Cooling runs from the controls.")}
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <Field label={t("Roasted weight (g)")}>
+            <input
+              className={inputCls}
+              inputMode="decimal"
+              autoFocus
+              value={weight}
+              onChange={(e) => setWeight(e.target.value)}
+            />
+          </Field>
+          {loss !== null && (
+            <p className="tabular text-[15px] text-muted-foreground">
+              {t("Weight loss")}: {formatNumber(loss, 1)} %
+            </p>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              {t("Later")}
+            </Button>
+            <Button type="submit" disabled={!valid || busy}>
+              {t("Save weight")}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
