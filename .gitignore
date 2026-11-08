@@ -31,3 +31,6 @@ app/dist/
 # Claude Code agent worktrees and local settings
 .claude/worktrees/
 .claude/settings.local.json
+
+# Browser automation output
+.playwright-mcp/
