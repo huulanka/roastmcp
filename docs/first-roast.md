@@ -94,6 +94,13 @@ in the Bluetooth settings. On connect it starts at burner 100 %, air 20 %;
 RoastMCP now sets the safe state at once (burner 0, air 100, drum 100), so set
 the heat again after a reconnect.
 
+**AI control over MCP (verified 2026-11-08):** when an AI calls
+`request_control`, the top bar shows **I'm at the roaster**; only after you
+press it does the AI get control. On the machine, a burner request of 25 %
+from 0 became 10 %, a second raise right after was refused, air 100 → 50
+became 80, a burner change by you locked the AI out, and its emergency stop
+latched the safe state.
+
 ## 3. A supervised roast
 
 1. Preheat as usual (for example burner 70 %, air 30 %) until the BT you
