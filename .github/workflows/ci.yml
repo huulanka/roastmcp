@@ -106,7 +106,9 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true
-          token: ${{ secrets.RELEASE_TOKEN }}
+          # RELEASE_TOKEN (a PAT) is only needed once main is protected against
+          # direct pushes; until then the workflow token can push the release.
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v7
@@ -116,5 +118,5 @@ jobs:
       - run: npm ci
       - name: Release
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
         run: npx semantic-release
