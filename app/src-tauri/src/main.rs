@@ -60,6 +60,8 @@ fn main() {
         .on_menu_event(|app, event| {
             if event.id() == "quit" {
                 request_quit(app.clone());
+            } else if event.id() == "show_log" {
+                show_log();
             }
         })
         .setup(|app| {
@@ -165,7 +167,34 @@ fn menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &PredefinedMenuItem::close_window(app, None)?,
         ],
     )?;
-    Menu::with_items(app, &[&app_menu, &edit, &view, &window])
+    let show_log = MenuItem::with_id(
+        app,
+        "show_log",
+        text("Show Log", "Protokoll anzeigen"),
+        true,
+        None::<&str>,
+    )?;
+    let help = Submenu::with_items(app, text("Help", "Hilfe"), true, &[&show_log])?;
+    Menu::with_items(app, &[&app_menu, &edit, &view, &window, &help])
+}
+
+/// Reveals the daemon log in the file manager.
+fn show_log() {
+    let log = daemon::log_path();
+    let (program, args): (&str, Vec<std::ffi::OsString>) = if cfg!(target_os = "macos") {
+        ("open", vec!["-R".into(), log.into_os_string()])
+    } else if cfg!(target_os = "windows") {
+        ("explorer", vec![log.parent().map_or_else(
+            || std::ffi::OsString::from("."),
+            |p| p.as_os_str().to_owned(),
+        )])
+    } else {
+        ("xdg-open", vec![log.parent().map_or_else(
+            || std::ffi::OsString::from("."),
+            |p| p.as_os_str().to_owned(),
+        )])
+    };
+    let _ = std::process::Command::new(program).args(args).spawn();
 }
 
 /// The daemon binary, next to the app's own executable (Tauri puts the

@@ -13,6 +13,9 @@ use crate::engine::Msg;
 
 /// Failed reads in a row after which the link counts as lost.
 const LOST_AFTER_FAILURES: u32 = 3;
+/// Connection attempts in a row that never produced a single reading, after
+/// which the thread gives up instead of retrying forever.
+const GIVE_UP_AFTER_SILENT_ATTEMPTS: u32 = 3;
 /// Pause between reconnect attempts.
 const RECONNECT_EVERY: Duration = Duration::from_secs(3);
 
@@ -36,6 +39,9 @@ pub enum DriverEvent {
     Error(String),
     /// The link is lost; the thread keeps trying to reconnect.
     Lost(String),
+    /// The port opened but the machine never answered, several times in a row.
+    /// The thread has stopped; the person has to connect again.
+    GaveUp(String),
 }
 
 /// Starts the driver thread and returns its command channel.
@@ -69,7 +75,16 @@ fn run(
 ) {
     let send = |ev: DriverEvent| engine.send(Msg::Driver(generation, ev)).is_ok();
 
+    // Attempts since the last reading; a link lost during a roast resets it.
+    let mut silent_attempts = 0u32;
     'connect: loop {
+        if silent_attempts >= GIVE_UP_AFTER_SILENT_ATTEMPTS {
+            send(DriverEvent::GaveUp(format!(
+                "the roaster did not answer in {silent_attempts} attempts"
+            )));
+            break 'connect;
+        }
+        silent_attempts += 1;
         match driver.connect() {
             Ok(warnings) => {
                 if !send(DriverEvent::Connected(warnings)) {
@@ -103,6 +118,7 @@ fn run(
             match driver.read() {
                 Ok(r) => {
                     failures = 0;
+                    silent_attempts = 0;
                     if !send(DriverEvent::Reading(r)) {
                         break 'connect;
                     }
@@ -157,5 +173,45 @@ fn wait(
             Ok(DriverCmd::Stop) | Err(RecvTimeoutError::Disconnected) => return Wait::Stop,
             Err(RecvTimeoutError::Timeout) => return Wait::Elapsed,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roast_driver::DriverError;
+
+    /// Opens fine, acknowledges nothing, never answers a read.
+    struct Silent;
+
+    impl RoasterDriver for Silent {
+        fn connect(&mut self) -> Result<Vec<String>, DriverError> {
+            Ok(vec!["no acknowledgement for \"CHAN;2100\"".into()])
+        }
+        fn read(&mut self) -> Result<Reading, DriverError> {
+            Err(DriverError::Timeout(600))
+        }
+        fn apply(&mut self, _cmd: &ActuatorCommand) -> Result<(), DriverError> {
+            Ok(())
+        }
+        fn close(&mut self) {}
+    }
+
+    #[test]
+    fn gives_up_when_the_machine_never_answers() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let _cmd = spawn_driver(Box::new(Silent), Duration::from_millis(10), 1, tx);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut connects = 0;
+        loop {
+            assert!(Instant::now() < deadline, "never gave up");
+            match rx.blocking_recv() {
+                Some(Msg::Driver(_, DriverEvent::Connected(_))) => connects += 1,
+                Some(Msg::Driver(_, DriverEvent::GaveUp(_))) => break,
+                Some(_) => {}
+                None => panic!("channel closed before GaveUp"),
+            }
+        }
+        assert_eq!(connects, GIVE_UP_AFTER_SILENT_ATTEMPTS);
     }
 }

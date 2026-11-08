@@ -28,6 +28,16 @@ and open the printed link. Expected: the connection badge turns green within a f
 seconds, and BT shows roughly room temperature. If it stays "connecting", the
 port is busy or not paired.
 
+If the roaster does not answer, RoastMCP stays at "connecting", and after three
+silent attempts it stops with a message instead of retrying forever. Where to
+look:
+
+- The log: menu *Help → Show Log* (or `~/Library/Application Support/com.andreasbauer.roastmcp/logs/daemon.log`).
+- Every line sent and received: start the daemon with
+  `RUST_LOG=info,roast_driver::wire=trace` (the app's daemon logs to the same file).
+- Who holds the port: `lsof /dev/cu.AKROASTER` (Artisan, a second daemon).
+- Switch the roaster off and on, wait for a steady Bluetooth light, connect again.
+
 Check, still with an empty, cold drum:
 
 | Step | Expected |
