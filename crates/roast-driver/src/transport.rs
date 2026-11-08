@@ -79,6 +79,7 @@ impl SerialLineIo {
 
 impl LineIo for SerialLineIo {
     fn write_line(&mut self, line: &str, ending: &str) -> io::Result<()> {
+        tracing::trace!(target: "roast_driver::wire", "TX {line:?}");
         self.port.write_all(line.as_bytes())?;
         self.port.write_all(ending.as_bytes())?;
         self.port.flush()
@@ -89,9 +90,18 @@ impl LineIo for SerialLineIo {
         let mut buf = [0u8; 256];
         loop {
             if let Some(line) = self.take_line() {
+                tracing::trace!(target: "roast_driver::wire", "RX {line:?}");
                 return Ok(Some(line));
             }
             if Instant::now() >= deadline {
+                if !self.pending.is_empty() {
+                    tracing::trace!(
+                        target: "roast_driver::wire",
+                        "RX (incomplete, {} bytes) {:?}",
+                        self.pending.len(),
+                        String::from_utf8_lossy(&self.pending)
+                    );
+                }
                 return Ok(None);
             }
             match self.port.read(&mut buf) {

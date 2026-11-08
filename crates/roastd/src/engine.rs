@@ -834,14 +834,25 @@ impl Engine {
     fn on_driver(&mut self, ev: DriverEvent) {
         match ev {
             DriverEvent::Connected(warnings) => {
+                for w in &warnings {
+                    self.alarm("info", "init", w.clone());
+                }
+                if !warnings.is_empty() {
+                    // The port is open but the machine did not acknowledge
+                    // setup. Stay "connecting" until a reading arrives.
+                    self.alarm(
+                        "warning",
+                        "port_open_silent",
+                        "Port opened, but the roaster has not answered yet. Waiting for the first reading.".to_string(),
+                    );
+                    self.publish(None);
+                    return;
+                }
                 self.conn = Conn::Connected;
                 self.conn_error = None;
                 self.safety.set_connected(true);
                 if self.roast.is_none() {
                     self.state = RoastState::Connected;
-                }
-                for w in warnings {
-                    self.alarm("info", "init", w);
                 }
                 let name = self
                     .machine
@@ -849,6 +860,17 @@ impl Engine {
                     .map(|m| m.name.clone())
                     .unwrap_or_default();
                 self.alarm("info", "connected", format!("Connected to {name}."));
+                self.publish(None);
+            }
+            DriverEvent::GaveUp(e) => {
+                let hint = format!(
+                    "{e}. Check: the roaster is switched on and paired, no other program (Artisan, a second RoastMCP) holds the port, \
+                     then switch the roaster off and on and connect again. Details: logs/daemon.log (RUST_LOG=roast_driver=trace shows every line)."
+                );
+                self.conn = Conn::Error;
+                self.conn_error = Some(hint.clone());
+                self.driver = None;
+                self.alarm("critical", "connect_failed", hint);
                 self.publish(None);
             }
             DriverEvent::Reading(r) => self.on_reading(r),
@@ -873,7 +895,17 @@ impl Engine {
         self.stale_alarmed = false;
         if self.conn != Conn::Connected {
             self.conn = Conn::Connected;
+            self.conn_error = None;
             self.safety.set_connected(true);
+            if self.roast.is_none() {
+                self.state = RoastState::Connected;
+            }
+            let name = self
+                .machine
+                .as_ref()
+                .map(|m| m.name.clone())
+                .unwrap_or_default();
+            self.alarm("info", "connected", format!("Connected to {name}."));
         }
         let t = self.t();
         let ror = r.bt.and_then(|bt| self.ror.push(t, bt));
