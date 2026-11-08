@@ -15,8 +15,10 @@ redesign ("Röstfarbe", light and dark) in progress.
 Next, in order:
 
 1. **Hardware test, remaining** (`docs/first-roast.md`): done on 2026-11-08 were
-   connect, all actuators, reported values, emergency stop, `CLDN,OF` and the
-   link-loss test (results in the Cubean+ profile under `[link_loss]`); still
+   connect, all actuators, reported values, emergency stop, `CLDN,OF`, the
+   link-loss test (results in the Cubean+ profile under `[link_loss]`) and AI
+   control over MCP (lease after the person's confirmation, burner step and
+   rate limits, air limit, human override, emergency stop); still
    open is tuning the preheat gains on the real machine. Worth a look: on
    macOS a direct RFCOMM channel (IOBluetooth) answered when the serial port
    stayed silent, so a native Bluetooth transport could reconnect without the
