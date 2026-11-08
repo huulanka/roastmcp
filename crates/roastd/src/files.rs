@@ -97,6 +97,46 @@ pub fn save(dir: &Path, roast: &Roast) -> io::Result<(PathBuf, PathBuf)> {
     Ok((json, alog))
 }
 
+/// What importing one file did.
+#[derive(Debug)]
+pub enum Imported {
+    /// Saved as this `.roast.json`.
+    Saved(PathBuf),
+    /// The archive already holds this roast (same time, same curve length).
+    AlreadyThere(PathBuf),
+}
+
+/// Imports an Artisan `.alog` into the archive: the roast as `.roast.json`
+/// and the original file unchanged beside it. Importing the same file again
+/// does nothing.
+pub fn import_alog(dir: &Path, alog: &Path) -> io::Result<Imported> {
+    let mut roast = roast_alog::read_alog_file(alog).map_err(io::Error::other)?;
+    if roast.title.trim().is_empty() {
+        roast.title = alog
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Imported roast")
+            .to_owned();
+    }
+    if let Some((path, _)) = list(dir)
+        .into_iter()
+        .find(|(_, r)| r.roasted_at == roast.roasted_at && r.samples.len() == roast.samples.len())
+    {
+        return Ok(Imported::AlreadyThere(path));
+    }
+    fs::create_dir_all(dir)?;
+    let base = base_name(&roast);
+    let mut json = dir.join(format!("{base}{JSON_EXT}"));
+    let mut n = 2;
+    while json.exists() {
+        json = dir.join(format!("{base}-{n}{JSON_EXT}"));
+        n += 1;
+    }
+    write_atomic(&json, &to_json(&roast)?)?;
+    write_atomic(&alog_path(&json), &fs::read(alog)?)?;
+    Ok(Imported::Saved(json))
+}
+
 /// Rewrites an existing roast in place (both files).
 pub fn overwrite(json: &Path, roast: &Roast) -> io::Result<()> {
     write_atomic(json, &to_json(roast)?)?;

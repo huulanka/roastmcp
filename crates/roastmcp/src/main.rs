@@ -44,6 +44,58 @@ enum Command {
     Mcp,
     /// List serial ports.
     Ports,
+    /// Import Artisan `.alog` files (or folders of them) into the archive.
+    /// The files themselves are only read.
+    Import {
+        /// `.alog` files or folders (searched recursively).
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+    },
+}
+
+fn find_alogs(path: &std::path::Path, out: &mut Vec<PathBuf>) {
+    if path.is_dir() {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+        let mut entries: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        entries.sort();
+        for p in entries {
+            find_alogs(&p, out);
+        }
+    } else if path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("alog"))
+    {
+        out.push(path.to_owned());
+    }
+}
+
+fn import(roasts_dir: &std::path::Path, paths: &[PathBuf]) -> anyhow::Result<()> {
+    let mut files = Vec::new();
+    for p in paths {
+        find_alogs(p, &mut files);
+    }
+    let (mut saved, mut there, mut failed) = (0, 0, 0);
+    for f in &files {
+        match roastd::files::import_alog(roasts_dir, f) {
+            Ok(roastd::files::Imported::Saved(_)) => saved += 1,
+            Ok(roastd::files::Imported::AlreadyThere(_)) => there += 1,
+            Err(e) => {
+                failed += 1;
+                eprintln!("{}: {e}", f.display());
+            }
+        }
+    }
+    println!(
+        "{} .alog files: {saved} imported, {there} already in the archive, {failed} failed.",
+        files.len()
+    );
+    println!("Archive: {}", roasts_dir.display());
+    if failed > 0 {
+        anyhow::bail!("{failed} files could not be imported");
+    }
+    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
@@ -82,5 +134,6 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        Command::Import { paths } => import(&data_dir.join("roasts"), &paths),
     }
 }
