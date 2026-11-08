@@ -1,0 +1,36 @@
+name: Bug report
+description: Something does not work as described
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Safety first:** if a roaster behaved dangerously, use the machine's own controls or cut its power, then report.
+        Issues that let a command bypass the safety layer belong in a private security report (see SECURITY.md), not here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+  - type: input
+    id: version
+    attributes:
+      label: RoastMCP version and platform
+      placeholder: "0.3.0 on macOS 26"
+    validations:
+      required: true
+  - type: input
+    id: machine
+    attributes:
+      label: Roaster and machine profile
+      placeholder: "Skywalker Cubean+ (skywalker-cubean-plus), or simulator"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or a protocol transcript (optional)
+      description: "`roastmcp record` writes a transcript; remove anything personal."

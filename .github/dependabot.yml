@@ -1,0 +1,17 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule: { interval: weekly }
+    groups: { cargo: { patterns: ["*"] } }
+  - package-ecosystem: cargo
+    directory: /app/src-tauri
+    schedule: { interval: weekly }
+    groups: { cargo-app: { patterns: ["*"] } }
+  - package-ecosystem: npm
+    directory: /app
+    schedule: { interval: weekly }
+    groups: { npm-app: { patterns: ["*"] } }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }

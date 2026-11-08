@@ -1,0 +1,28 @@
+name: Support for a roaster
+description: Ask for (or offer to help with) support for a roaster
+labels: [machine]
+body:
+  - type: input
+    id: machine
+    attributes:
+      label: Roaster (vendor and model)
+    validations:
+      required: true
+  - type: textarea
+    id: connection
+    attributes:
+      label: How does it connect today?
+      description: "USB serial, Bluetooth, Wi-Fi, Modbus … Does it work with Artisan? With which device setting?"
+    validations:
+      required: true
+  - type: textarea
+    id: aset
+    attributes:
+      label: Artisan settings (.aset), if you have them
+      description: "`roastmcp aset import` can turn them into a draft machine profile."
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Can you help test?
+      options:
+        - label: I can record a protocol transcript and run the link-loss test from docs/safety.md
