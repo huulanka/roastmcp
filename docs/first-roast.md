@@ -17,11 +17,14 @@ reach.
 
 ## 1. Connect with an empty drum
 
+Start the desktop app (`RoastMCP.app`, see the README) and connect to
+`/dev/cu.AKROASTER` from the app. Without the app:
+
 ```sh
 ./target/release/roastmcp daemon --serial /dev/cu.AKROASTER
 ```
 
-Open the printed link. Expected: the connection badge turns green within a few
+and open the printed link. Expected: the connection badge turns green within a few
 seconds, and BT shows roughly room temperature. If it stays "connecting", the
 port is busy or not paired.
 
@@ -56,7 +59,12 @@ Until then, use AI control only while standing at the machine.
 ## 3. A supervised roast
 
 1. Preheat as usual (for example burner 70 %, air 30 %) until the BT you
-   normally charge at.
+   normally charge at — or use **Aufheizen** with a target temperature: it
+   raises the burner in bounded steps, holds the target, asks for presence
+   every 3 minutes and ends at CHARGE or as soon as you change anything. Watch
+   the first run closely; its control gains are untested on the machine.
+   Optionally pick an earlier roast as the reference (archive → "Als
+   Referenz"; your imported Artisan roasts are there).
 2. Press **Start recording** (title, green weight), then **CHARGE** as the
    beans go in. Turning point and DRY END are detected automatically; correct
    them by clicking the button again.
