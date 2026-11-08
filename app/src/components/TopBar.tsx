@@ -173,10 +173,14 @@ function MachineStatus({
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="flex h-touch min-w-0 cursor-pointer items-center gap-2 rounded-lg px-2 text-[13px] text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+          // Never squeezed away: whether this is the simulator or a real roaster
+          // must stay in view. The full name is in the popover.
+          className="flex h-touch min-w-24 shrink-0 cursor-pointer items-center gap-2 rounded-lg px-2 text-[13px] text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           <span className={cn("size-2 rounded-pill", linkOk ? "bg-ok" : "bg-danger-text")} />
-          <span className="max-w-48 min-w-0 truncate">{machine.name}</span>
+          <span className="max-w-48 min-w-0 truncate">
+            {machine.simulated ? t("Simulator") : machine.name}
+          </span>
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-72 gap-3 p-4">
@@ -205,11 +209,27 @@ function MachineStatus({
   );
 }
 
-/** Shown only while an AI holds control or is paused by a person. */
+/**
+ * Shown only while an AI holds control, asks for it, or is paused by a person.
+ * An AI asking for control needs "I'm at the roaster" first; this is the one
+ * place that offers it in view (the alarm toast says who asks).
+ */
 function AiStatus({ snapshot }: { snapshot: Snapshot }) {
   const { t } = useTranslation();
   const s = snapshot.safety;
   const presence = presenceView(s);
+  const asking = s.lease_holder ? null : (snapshot.control_request ?? null);
+  if (asking) {
+    return (
+      <Button
+        className="shrink-0"
+        title={t("{{holder}} asks for control.", { holder: asking })}
+        onClick={() => void confirmPresence()}
+      >
+        {t("I'm at the roaster")}
+      </Button>
+    );
+  }
   if (!s.lease_holder && !s.ai_suspended) return null;
   const left = s.lease_remaining_s;
   return (
@@ -290,7 +310,7 @@ export function TopBar({
           </button>
         ))}
       </nav>
-      <div className="flex min-w-0 flex-[1_1_18rem] items-center justify-end gap-3">
+      <div className="flex min-w-fit flex-[1_1_18rem] items-center justify-end gap-3">
         <MachineStatus snapshot={snapshot} onConnect={onConnect} />
         {snapshot && <AiStatus snapshot={snapshot} />}
         <SettingsMenu />

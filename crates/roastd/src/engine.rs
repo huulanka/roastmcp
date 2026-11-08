@@ -236,7 +236,13 @@ pub struct Snapshot {
     reference: Option<ReferenceStatus>,
     projection: Option<Projection>,
     preheat: Option<PreheatStatus>,
+    /// An AI that asked for control but needs a presence confirmation first;
+    /// the app offers "I'm at the roaster" while this is set.
+    control_request: Option<String>,
 }
+
+/// How long an AI's refused control request keeps the presence prompt up.
+const CONTROL_REQUEST_SHOWN_FOR: Duration = Duration::from_secs(120);
 
 /// The reference curve at the current moment of the roast.
 #[derive(Debug, Clone, Serialize)]
@@ -335,6 +341,9 @@ pub struct Engine {
     audit: Option<File>,
     reference: Option<ReferenceCurve>,
     preheat: Option<Preheat>,
+    /// Holder and time of a control request refused for a missing presence
+    /// confirmation.
+    control_request: Option<(String, Instant)>,
 }
 
 /// Starts the engine task and its safety ticker.
@@ -366,6 +375,7 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
         last_ror: None,
         last_reading: None,
         stale_alarmed: false,
+        control_request: None,
         last_autosave: Instant::now(),
         alarms: VecDeque::new(),
         next_alarm: 1,
@@ -459,6 +469,11 @@ impl Engine {
                 .and_then(|r| phases(r, t.unwrap_or(0.0))),
             reference: self.reference_status(t, charge_t),
             projection: self.projection(&events, charge_t),
+            control_request: self
+                .control_request
+                .as_ref()
+                .filter(|(_, at)| at.elapsed() < CONTROL_REQUEST_SHOWN_FOR)
+                .map(|(holder, _)| holder.clone()),
             preheat: self.preheat.as_ref().map(|p| PreheatStatus {
                 target_c: p.target_c,
                 state: if self
@@ -1081,6 +1096,8 @@ impl Engine {
     pub fn confirm_presence(&mut self) -> Snapshot {
         let now = self.now();
         self.safety.confirm_presence(now);
+        // The AI asks again itself; the prompt has done its job.
+        self.control_request = None;
         self.audit(serde_json::json!({"type": "presence"}));
         self.publish(None);
         self.snapshot()
@@ -1100,6 +1117,7 @@ impl Engine {
         let before = self.safety.status(now).lease_holder;
         match self.safety.acquire_lease(holder, now) {
             Ok(l) => {
+                self.control_request = None;
                 if before.as_deref() != Some(holder) {
                     self.audit(serde_json::json!({"type": "lease", "holder": holder}));
                     self.alarm("info", "ai_control", format!("AI ({holder}) has control."));
@@ -1110,8 +1128,31 @@ impl Engine {
                     expires_in_s: l.expires_at - now,
                 })
             }
-            Err(reason) => Err(Fail::conflict(reject_text(reason), Some(reason))),
+            Err(reason) => {
+                if reason == RejectReason::PresenceRequired {
+                    self.ask_for_presence(holder);
+                }
+                Err(Fail::conflict(reject_text(reason), Some(reason)))
+            }
         }
+    }
+
+    /// An AI wants control but nobody confirmed being at the roaster: tell the
+    /// person (once per request burst) and let the app offer the button.
+    fn ask_for_presence(&mut self, holder: &str) {
+        let fresh = self
+            .control_request
+            .as_ref()
+            .is_some_and(|(h, at)| h == holder && at.elapsed() < CONTROL_REQUEST_SHOWN_FOR);
+        self.control_request = Some((holder.to_owned(), Instant::now()));
+        if !fresh {
+            self.alarm(
+                "warning",
+                "control_request",
+                format!("{holder} asks for control. Press \u{201c}I'm at the roaster\u{201d} in the app to allow it."),
+            );
+        }
+        self.publish(None);
     }
 
     /// The AI gives up control; actuators hold.
@@ -1376,7 +1417,7 @@ pub fn reject_text(r: RejectReason) -> &'static str {
         }
         RejectReason::NoLease => "AI control needs a lease: call request_control first.",
         RejectReason::PresenceRequired => {
-            "A person must confirm being at the roaster in the app first."
+            "A person must confirm being at the roaster in the app first. The app now asks them; request control again once they have."
         }
         RejectReason::OutOfRange => "The value is out of range.",
         RejectReason::RateLimited => "Too soon after the previous change.",
