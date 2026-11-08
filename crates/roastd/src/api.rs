@@ -69,6 +69,7 @@ pub fn router(state: AppState, ui_dir: Option<PathBuf>) -> Router {
         .route("/ws", get(ws))
         .route("/shutdown", post(shutdown))
         .route("/reference", get(reference).put(set_reference))
+        .route("/preheat", post(preheat_start).delete(preheat_stop))
         .layer(middleware::from_fn_with_state(state.clone(), auth));
 
     let mut app = Router::new().nest("/api", api);
@@ -105,6 +106,29 @@ async fn auth(
             reason: None,
         }
         .into_response()
+    }
+}
+
+#[derive(Deserialize)]
+struct PreheatBody {
+    target_c: f64,
+}
+
+async fn preheat_start(
+    State(st): State<AppState>,
+    Json(b): Json<PreheatBody>,
+) -> impl IntoResponse {
+    match st.engine.call(move |e| e.start_preheat(b.target_c)).await {
+        Ok(Ok(s)) => Json(s).into_response(),
+        Ok(Err(f)) => f.into_response(),
+        Err(e) => engine_gone(&e).into_response(),
+    }
+}
+
+async fn preheat_stop(State(st): State<AppState>) -> impl IntoResponse {
+    match st.engine.call(|e| e.stop_preheat()).await {
+        Ok(s) => Json(s).into_response(),
+        Err(e) => engine_gone(&e).into_response(),
     }
 }
 

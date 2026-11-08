@@ -53,6 +53,18 @@ confirmation at a regular interval (default every 3 minutes; configurable,
 cannot be disabled) — one key or one click. It is also required before every
 critical step. The AI cannot confirm presence; only the app's UI can.
 
+## Preheat
+
+Preheating to a target temperature (started by a person in the app) is an
+autopilot: it holds the lease as `preheat`, its burner commands pass the safety
+layer under the AI rules (bounded raises, cuts free, never above the profile's
+`max_bt_c - 10`), and presence must be confirmed while it runs. Starting it
+counts as a presence confirmation and allows automation again. It ends at
+CHARGE, on any manual command, an emergency stop, a lost link or a missed
+presence confirmation; the burner then holds its value and the person has
+control. The controller is a PI controller on the bean probe with anti-windup;
+its gains are a first guess and need checking on each machine.
+
 ## Limits (defaults, per machine profile)
 
 | | Human | AI / autopilot |

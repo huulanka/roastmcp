@@ -80,6 +80,7 @@ interface Snapshot {
     bt_60s: number | null;
     next: null | { kind: "first_crack_start" | "drop"; bt: number; eta_s: number | null };
   };                                     // next: from the reference's event temperatures
+  preheat: null | { target_c: number; state: "heating" | "holding" };
 }
 ```
 
@@ -111,6 +112,8 @@ interface Snapshot {
 | `GET /api/roasts/{id}/alog` | | Artisan `.alog` text (download) |
 | `GET /api/reference` | | `null` or `{ id, title, points: {t, bt, ror}[], events }` — `t` in seconds since the reference's CHARGE |
 | `PUT /api/reference` | `{ id: string \| null }` | `Snapshot` (sets or clears the reference curve; 404 for an unknown id) |
+| `POST /api/preheat` | `{ target_c }` | `Snapshot` — preheat to `target_c` (bean probe) and hold it; 400 outside 50 … `max_bt_c - 10`, 409 after CHARGE or when automation is not allowed (`reason`) |
+| `DELETE /api/preheat` | | `Snapshot` — stop preheating; the burner holds |
 | `POST /api/shutdown` | | 202; the daemon exits as on Ctrl-C (safe state if the burner is on, recording saved) |
 
 ## WebSocket `GET /api/ws?token=…`

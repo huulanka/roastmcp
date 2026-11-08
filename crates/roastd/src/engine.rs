@@ -149,6 +149,38 @@ struct ActuatorSpec {
     step: f64,
 }
 
+/// Lease holder name of the preheat controller.
+const PREHEAT_HOLDER: &str = "preheat";
+/// How often the preheat controller acts, seconds.
+const PREHEAT_STEP_S: f64 = 5.0;
+/// Highest burner value the preheat controller asks for, percent.
+const PREHEAT_MAX_BURNER: f64 = 90.0;
+/// Proportional gain, burner percent per °C below the target.
+const PREHEAT_KP: f64 = 2.5;
+/// Integral gain, burner percent per °C·s.
+const PREHEAT_KI: f64 = 0.05;
+/// Above target + this, the burner goes off.
+const PREHEAT_OVERSHOOT_C: f64 = 5.0;
+/// Within this of the target, preheat counts as holding.
+const PREHEAT_BAND_C: f64 = 3.0;
+
+/// The preheat controller: brings the bean probe to a target and holds it.
+/// It is an autopilot: its commands pass the safety layer with the AI rules
+/// (lease, presence, bounded raises), and anything a person does ends it.
+#[derive(Debug, Clone)]
+struct Preheat {
+    target_c: f64,
+    integral: f64,
+    last_step: Option<f64>,
+    last_raise: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PreheatStatus {
+    target_c: f64,
+    state: &'static str,
+}
+
 /// One point of the live curve.
 #[derive(Debug, Clone, Serialize)]
 pub struct Point {
@@ -198,6 +230,7 @@ pub struct Snapshot {
     alarms: Vec<Alarm>,
     reference: Option<ReferenceStatus>,
     projection: Option<Projection>,
+    preheat: Option<PreheatStatus>,
 }
 
 /// The reference curve at the current moment of the roast.
@@ -296,6 +329,7 @@ pub struct Engine {
     next_alarm: u64,
     audit: Option<File>,
     reference: Option<ReferenceCurve>,
+    preheat: Option<Preheat>,
 }
 
 /// Starts the engine task and its safety ticker.
@@ -332,6 +366,7 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
         next_alarm: 1,
         audit,
         reference: None,
+        preheat: None,
     };
     engine.recover_autosave();
 
@@ -419,6 +454,17 @@ impl Engine {
                 .and_then(|r| phases(r, t.unwrap_or(0.0))),
             reference: self.reference_status(t, charge_t),
             projection: self.projection(&events, charge_t),
+            preheat: self.preheat.as_ref().map(|p| PreheatStatus {
+                target_c: p.target_c,
+                state: if self
+                    .last_bt
+                    .is_some_and(|bt| bt >= p.target_c - PREHEAT_BAND_C)
+                {
+                    "holding"
+                } else {
+                    "heating"
+                },
+            }),
             events,
             safety: self.safety.status(now),
             alarms: self.alarms.iter().cloned().collect(),
@@ -459,6 +505,138 @@ impl Engine {
             .rev()
             .collect();
         project(&recent, events, self.reference.as_ref())
+    }
+
+    // ---------------------------------------------------------------- preheat
+
+    /// Starts preheating to `target_c` (bean probe). A person starts it in
+    /// the app, which confirms presence and allows automation; it ends at
+    /// CHARGE, on any manual command, an emergency stop or a lost link.
+    pub fn start_preheat(&mut self, target_c: f64) -> Result<Snapshot, Fail> {
+        let max = self.safety.config().max_bt_c - 10.0;
+        if !(50.0..=max).contains(&target_c) {
+            return Err(Fail::bad(format!(
+                "the preheat target must be between 50 and {max:.0} °C"
+            )));
+        }
+        if self.roast.as_ref().is_some_and(|r| r.charge_t().is_some()) {
+            return Err(Fail::conflict("the roast has started (CHARGE)", None));
+        }
+        let now = self.now();
+        self.safety.resume_ai();
+        self.safety.confirm_presence(now);
+        self.safety
+            .acquire_lease(PREHEAT_HOLDER, now)
+            .map_err(|r| Fail::conflict(reject_text(r), Some(r)))?;
+        self.preheat = Some(Preheat {
+            target_c,
+            integral: 0.0,
+            last_step: None,
+            last_raise: None,
+        });
+        self.audit(serde_json::json!({"type": "preheat_started", "target_c": target_c}));
+        self.alarm(
+            "info",
+            "preheat",
+            format!("Preheating to {target_c:.0} °C. Confirm presence while it runs."),
+        );
+        self.preheat_step(now);
+        self.publish(None);
+        Ok(self.snapshot())
+    }
+
+    /// Stops preheating; the burner keeps its value and you have control.
+    pub fn stop_preheat(&mut self) -> Snapshot {
+        self.end_preheat("Preheat stopped - you have control.");
+        self.snapshot()
+    }
+
+    fn end_preheat(&mut self, message: &str) {
+        if self.preheat.take().is_none() {
+            return;
+        }
+        if self.safety.status(self.now()).lease_holder.as_deref() == Some(PREHEAT_HOLDER) {
+            self.safety.release_lease();
+        }
+        self.audit(serde_json::json!({"type": "preheat_ended", "message": message}));
+        self.alarm("info", "preheat", message.to_owned());
+        self.publish(None);
+    }
+
+    fn preheat_step(&mut self, now: f64) {
+        let Some(p) = self.preheat.as_ref() else {
+            return;
+        };
+        if self.roast.as_ref().is_some_and(|r| r.charge_t().is_some()) {
+            self.end_preheat("CHARGE - preheat ended, you have control.");
+            return;
+        }
+        if self.safety.status(now).lease_holder.as_deref() != Some(PREHEAT_HOLDER) {
+            self.end_preheat("Preheat ended - you have control.");
+            return;
+        }
+        if p.last_step.is_some_and(|l| now - l < PREHEAT_STEP_S) {
+            return;
+        }
+        if self.safety.acquire_lease(PREHEAT_HOLDER, now).is_err() {
+            self.end_preheat("Preheat ended: presence not confirmed or control not allowed.");
+            return;
+        }
+        let Some(bt) = self.last_bt else {
+            return;
+        };
+        let current = self
+            .safety
+            .status(now)
+            .actuators
+            .get(&Actuator::Burner)
+            .copied()
+            .unwrap_or(0.0);
+        let Some(p) = self.preheat.as_mut() else {
+            return;
+        };
+        let dt = p
+            .last_step
+            .map_or(0.0, |l| (now - l).min(2.0 * PREHEAT_STEP_S));
+        p.last_step = Some(now);
+        let error = p.target_c - bt;
+        let unclamped = PREHEAT_KP * error + PREHEAT_KI * (p.integral + error * dt);
+        // Integrate only while the output is not saturated in that direction.
+        if (0.0..=PREHEAT_MAX_BURNER).contains(&unclamped)
+            || (unclamped > PREHEAT_MAX_BURNER && error < 0.0)
+            || (unclamped < 0.0 && error > 0.0)
+        {
+            p.integral += error * dt;
+        }
+        let mut target = (PREHEAT_KP * error + PREHEAT_KI * p.integral)
+            .clamp(0.0, PREHEAT_MAX_BURNER)
+            .round();
+        if error < -PREHEAT_OVERSHOOT_C {
+            target = 0.0;
+        }
+        if (target - current).abs() < 2.0 {
+            return;
+        }
+        let raise = target > current;
+        let min_interval = self
+            .safety
+            .config()
+            .ai_limits
+            .get(&Actuator::Burner)
+            .map_or(0.0, |l| l.min_interval_s);
+        if raise && p.last_raise.is_some_and(|l| now - l < min_interval) {
+            return;
+        }
+        if raise {
+            p.last_raise = Some(now);
+        }
+        let reason = format!("preheat to {:.0} °C", p.target_c);
+        self.command(CommandRequest {
+            actuator: Actuator::Burner,
+            value: target,
+            source: CommandSource::Autopilot,
+            reason: Some(reason),
+        });
     }
 
     // -------------------------------------------------------------- reference
@@ -739,6 +917,7 @@ impl Engine {
         for r in self.safety.tick(now, self.last_bt) {
             self.apply_reaction(&r);
         }
+        self.preheat_step(now);
         if self.conn == Conn::Connected
             && !self.stale_alarmed
             && self
