@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/huulanka/roastmcp/compare/v1.1.0...v1.2.0) (2026-11-08)
+
+
+### Features
+
+* show the drum in rpm and stop false "limited" toasts ([#19](https://github.com/huulanka/roastmcp/issues/19)) ([e0f7c25](https://github.com/huulanka/roastmcp/commit/e0f7c2533cd65f17dc53e47ee5129d09d7e8bd45))
+
 # [1.1.0](https://github.com/huulanka/roastmcp/compare/v1.0.1...v1.1.0) (2026-11-08)
 
 
