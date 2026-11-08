@@ -184,15 +184,21 @@ fn show_log() {
     let (program, args): (&str, Vec<std::ffi::OsString>) = if cfg!(target_os = "macos") {
         ("open", vec!["-R".into(), log.into_os_string()])
     } else if cfg!(target_os = "windows") {
-        ("explorer", vec![log.parent().map_or_else(
-            || std::ffi::OsString::from("."),
-            |p| p.as_os_str().to_owned(),
-        )])
+        (
+            "explorer",
+            vec![log.parent().map_or_else(
+                || std::ffi::OsString::from("."),
+                |p| p.as_os_str().to_owned(),
+            )],
+        )
     } else {
-        ("xdg-open", vec![log.parent().map_or_else(
-            || std::ffi::OsString::from("."),
-            |p| p.as_os_str().to_owned(),
-        )])
+        (
+            "xdg-open",
+            vec![log.parent().map_or_else(
+                || std::ffi::OsString::from("."),
+                |p| p.as_os_str().to_owned(),
+            )],
+        )
     };
     let _ = std::process::Command::new(program).args(args).spawn();
 }
