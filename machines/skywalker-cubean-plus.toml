@@ -1,0 +1,199 @@
+# Machine profile: Skywalker Cubean+
+#
+# This file is also the template for new machines. Copy it to
+# `machines/<your-machine-id>.toml`, change every value, and keep the comments
+# that still apply. The file name must equal `id`. Profiles are checked by
+# `cargo test -p roast-machine`; the rules are in crates/roast-machine/src/validate.rs.
+#
+# Safety-relevant sections ([safe_state], [limits], [link_loss]) are reviewed
+# with particular care. Read docs/safety.md before changing them.
+#
+# Sources for this profile: the vendor's Artisan settings file and the notes
+# in docs/research/artisan-and-cubean-plus.md.
+
+# Stable identifier: lowercase letters, digits and dashes. Stored with every
+# roast, so do not change it once roasts were recorded with it.
+id = "skywalker-cubean-plus"
+name = "Skywalker Cubean+"
+vendor = "Skywalker (Foshan Akimita)"
+model = "Cubean+"
+notes = """
+Electric drum roaster. Connected over Bluetooth Classic (SPP); the device is
+named AKROASTER. Speaks a TC4 dialect close to Artisan's "Kaleido Legacy"
+preset. Has no environment probe: ET reads a constant and is ignored.
+Reports burner and air back in every READ reply; the reported burner value
+sometimes differs from the set value (e.g. 21.7 or 28.3 %), so the firmware
+ramps or quantises - to be characterised. Beans are dropped by hand.
+"""
+
+# Seconds between two samples. The vendor's Artisan settings use 1.5 s; RoastMCP
+# samples TC4 machines every 1.0 s for a smoother rate of rise. Lower only after
+# checking that the machine answers READ reliably at that rate.
+sampling_interval_s = 1.0
+
+# ---------------------------------------------------------------------------
+# How the computer reaches the machine.
+# ---------------------------------------------------------------------------
+[transport]
+# "serial" covers USB serial adapters and Bluetooth SPP, which the operating
+# system exposes as a serial port.
+kind = "serial"
+# The usual device path. On macOS, pairing creates /dev/cu.AKROASTER; Windows
+# shows a COM port and Linux an rfcomm device. The user can pick another port.
+port_hint = "/dev/cu.AKROASTER"
+# 115200 baud, 8 data bits, no parity, 1 stop bit (8N1).
+baud_rate = 115200
+data_bits = 8
+parity = "none"        # "none", "even" or "odd"
+stop_bits = 1
+# How long to wait for a reply line, milliseconds. Must be shorter than the
+# sampling interval. Artisan's vendor settings use 0.6 s.
+timeout_ms = 600
+
+# ---------------------------------------------------------------------------
+# The wire protocol.
+# ---------------------------------------------------------------------------
+[protocol]
+# The TC4 family: line-based ASCII, one command per line, comma-separated replies.
+kind = "tc4"
+# Appended to every line sent. Replies may end in "\n" or "\r\n".
+line_ending = "\n"
+# The machine has no environment-temperature probe; the "et" field below is
+# read but ignored.
+et_present = false
+
+# Initialisation, sent once after the port is opened (and again after a
+# reconnect). Each step waits for a reply starting with `expect_prefix`; other
+# lines are discarded. Leave `expect_prefix` out to send without waiting.
+
+# Channel mapping: logical channel 1 = thermocouple 2 (ET), logical channel 2 =
+# thermocouple 1 (BT), channels 3 and 4 unused.
+[[protocol.init]]
+send = "CHAN;2100"
+expect_prefix = "#"
+
+# Temperatures in degrees Celsius (RoastMCP works in °C throughout).
+[[protocol.init]]
+send = "UNITS;C"
+expect_prefix = "#"
+
+# Digital filter level per channel, as in the vendor's settings.
+[[protocol.init]]
+send = "FILT;95,95,95,95"
+expect_prefix = "#"
+
+# How a sample is requested and what the reply contains. The reply to READ is a
+# comma-separated line, for example `21.4,0.0,187.3,60,40,0`. Each entry of
+# `fields` names the role of one reply field, in order:
+#   "ambient"           board (ambient) temperature, °C
+#   "et"                environment temperature, °C
+#   "bt"                bean temperature, °C (exactly one is required)
+#   "actuator:<name>"   actual value of an actuator, percent (burner, air,
+#                       drum, filter) - mark that actuator `reported = true`
+#   "setpoint"          controller setpoint (constant and unused on this machine)
+#   "ignore"            present but unused
+# Blank fields and -1 count as "no reading"; fields beyond the list are ignored.
+[protocol.read]
+command = "READ"
+fields = ["ambient", "et", "bt", "actuator:burner", "actuator:air", "setpoint"]
+
+# ---------------------------------------------------------------------------
+# Continuous actuators. `command` is a template: {} is replaced by an integer
+# percent value, clamped to min..max. Commands are fire-and-forget; any reply
+# is discarded before the next READ. `step` is the granularity offered to
+# people and controllers. `reported = true` means the READ reply contains the
+# actual value (see protocol.read.fields).
+# ---------------------------------------------------------------------------
+
+# Heater power.
+[[actuators]]
+actuator = "burner"
+command = "OT1,{}"
+min = 0
+max = 100
+step = 1
+reported = true
+
+# Drum fan (airflow through the drum).
+[[actuators]]
+actuator = "air"
+command = "OT2,{}"
+min = 0
+max = 100
+step = 1
+reported = true
+
+# Drum speed. 100 % is about 68 rpm, 80 % about 55 rpm; the machine does not
+# accept less than 80 %, so the drum cannot be stopped from software.
+[[actuators]]
+actuator = "drum"
+command = "OT3,{}"
+min = 80
+max = 100
+step = 1
+reported = false
+
+# Smoke filter fan.
+[[actuators]]
+actuator = "filter"
+command = "OT4,{}"
+min = 0
+max = 100
+step = 1
+reported = false
+
+# ---------------------------------------------------------------------------
+# On/off actuators: one fixed line each for on and off.
+# ---------------------------------------------------------------------------
+
+# Bean cooling (cooling tray stirrer and fan). The vendor's settings switch it
+# off with "CLDN,OF"; Artisan's Kaleido preset uses "CLDN,OFF". "OF" is what the
+# vendor ships - verify on the machine.
+[[switches]]
+actuator = "cooling"
+on = "CLDN,ON"
+off = "CLDN,OF"
+
+# ---------------------------------------------------------------------------
+# The safe state, set by the safety layer on an emergency stop and on safety
+# reactions (overheat, missed presence confirmation). Burner to its minimum,
+# air high, drum running - never "everything off": hot beans without airflow
+# or drum movement can ignite. Values are percent, "on"/"off" for switches, or
+# "keep". Actuators not listed keep their value (filter and cooling here).
+# ---------------------------------------------------------------------------
+[safe_state]
+burner = 0
+air = 100
+drum = 100
+
+# ---------------------------------------------------------------------------
+# Safety limits. The AI/autopilot limits are the defaults from docs/safety.md;
+# human commands are only bound by the actuator ranges.
+# ---------------------------------------------------------------------------
+[limits]
+# Bean temperature at which the safety layer cuts the burner, °C.
+max_bt_c = 240
+# Largest burner change per AI/autopilot command, percent points, and the
+# shortest time between two such changes, seconds.
+ai_burner_max_step = 5
+ai_burner_min_interval_s = 5
+# The same for air.
+ai_air_max_step = 10
+ai_air_min_interval_s = 2
+
+[capabilities]
+# Beans are dropped by hand; the app shows a "drop now" cue instead.
+automatic_drop = false
+# The READ reply contains the actual burner and air values.
+reports_actuators = true
+
+# ---------------------------------------------------------------------------
+# What the machine does when the link breaks. Run the test protocol in
+# docs/safety.md (empty drum, low power, person present) and describe what
+# you saw; set `tested = true` only then. AI control should not be used on a
+# machine whose link-loss behaviour is untested.
+# ---------------------------------------------------------------------------
+[link_loss]
+tested = false
+link_lost = "not yet tested"
+software_killed = "not yet tested"

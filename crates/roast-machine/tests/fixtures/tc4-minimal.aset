@@ -1,0 +1,46 @@
+; Hand-written minimal Artisan settings file for a fictional TC4 roaster.
+; It contains only the keys the importer reads, plus a few distractions
+; (an opaque @Variant blob, a percent-encoded key, an unrelated section).
+; Event types are not listed, so Artisan's defaults apply:
+; 0 = Air, 1 = Drum, 2 = Damper, 3 = Burner.
+[General]
+Delay=1200
+ETcurve=true
+Mode=C
+roastertype_setup=Example Drum Roaster +
+
+[Device]
+ArduinoFILT=80, 80, 70, 70
+arduinoATChannel=None
+arduinoBTChannel=2
+arduinoETChannel=1
+id=19
+
+[ExtraDev]
+extradevices=32, 22
+extraname1={3},
+extraname2={0}, Heater
+
+[ExtraEventButtons]
+buttonpalette=@Variant(\0\0\0\t\0\0\0\x2\0\0\0\t, \0\0\0\n\"x\")
+extraeventsactions=1, 1, 1, 1, 0, 1
+extraeventsactionstrings="OT1,{}", "COOL,ON", "COOL,OFF", "OT4,{}", ignored, "PID;ON"
+extraeventslabels=+5%\n\\t, \\1\nCooling, \\0\nCooling, 50%\nFilter, Note, PID
+extraeventstypes=8, 4, 4, 4, 4, 4
+
+[PXG4]
+pv%3F=0
+
+[SerialPort]
+baudrate=115200
+bytesize=8
+comport=/dev/ttyUSB0
+parity=N
+stopbits=1
+timeout=0.5
+
+[Sliders]
+slideractions=1, 1, 1, 1
+slidercommands="OT2,{}", "OT3,{}", , "OT1,{}"
+slidermax=100, 100, 100, 100
+slidermin=10, 60, 0, 0

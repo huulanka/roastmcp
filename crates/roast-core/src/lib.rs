@@ -10,18 +10,24 @@
 //!   `100.0` (on).
 
 pub mod actuator;
+pub mod analysis;
 pub mod command;
 pub mod cupping;
 pub mod event;
 pub mod experiment;
 pub mod inventory;
 pub mod maintenance;
+mod num;
 pub mod profile;
 pub mod roast;
+pub mod ror;
 pub mod sample;
 pub mod state;
+#[cfg(test)]
+mod testutil;
 
 pub use actuator::{Actuator, ActuatorValues};
+pub use analysis::{DetectorConfig, EventDetector, Phases, phases};
 pub use command::{
     ActuatorCommand, CommandOutcome, CommandRequest, CommandSource, ControlLogEntry, RejectReason,
 };
@@ -42,6 +48,7 @@ pub use profile::{
 pub use roast::{
     Ambient, BatchInfo, ColorScale, ROAST_FILE_SCHEMA_VERSION, Roast, RoastDegree, RoastOrigin,
 };
+pub use ror::{RorConfig, RorTracker, ror_series};
 pub use sample::Sample;
 pub use state::RoastState;
 

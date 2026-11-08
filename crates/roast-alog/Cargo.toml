@@ -10,7 +10,13 @@ authors.workspace = true
 publish.workspace = true
 
 [dependencies]
+chrono.workspace = true
 roast-core.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
 
 [lints]
 workspace = true

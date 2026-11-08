@@ -11,6 +11,12 @@ publish.workspace = true
 
 [dependencies]
 roast-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+toml = "1"
+
+[dev-dependencies]
+tempfile = "3"
 
 [lints]
 workspace = true
