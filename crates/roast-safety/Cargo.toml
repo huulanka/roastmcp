@@ -11,6 +11,8 @@ publish.workspace = true
 
 [dependencies]
 roast-core.workspace = true
+roast-machine.workspace = true
+serde.workspace = true
 
 [lints]
 workspace = true

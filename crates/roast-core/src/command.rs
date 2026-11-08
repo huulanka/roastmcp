@@ -67,6 +67,9 @@ pub enum RejectReason {
     NotSupported,
     /// No roaster is connected.
     Disconnected,
+    /// The bean temperature is above the machine's limit; the burner may
+    /// not be raised.
+    Overheat,
 }
 
 /// What the safety layer did with a request.
