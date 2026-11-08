@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/huulanka/roastmcp/compare/v1.2.0...v1.3.0) (2026-11-08)
+
+
+### Features
+
+* connect Bluetooth roasters directly over RFCOMM on macOS ([#20](https://github.com/huulanka/roastmcp/issues/20)) ([6c9c2ea](https://github.com/huulanka/roastmcp/commit/6c9c2eaec3b26bd3d345b5aaaa819d01faaf9361))
+
 # [1.2.0](https://github.com/huulanka/roastmcp/compare/v1.1.0...v1.2.0) (2026-11-08)
 
 
