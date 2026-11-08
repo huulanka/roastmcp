@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import { api } from "@/api/client.ts";
 import type { Snapshot } from "@/api/types.ts";
+import { ActionLog } from "@/components/ActionLog.tsx";
 import { CoachCard } from "@/components/CoachCard.tsx";
 import { Controls } from "@/components/Controls.tsx";
 import { CurveLegend, PhaseLine, RoastScaleBar, type ScaleMarker } from "@/components/Curve.tsx";
@@ -85,7 +86,7 @@ function Disconnected({
 
 export function RoastScreen({ onConnect }: { onConnect: () => void }) {
   const { t } = useTranslation();
-  const { snapshot, points, notes } = useLive();
+  const { snapshot, points, notes, controlLog } = useLive();
   const [startOpen, setStartOpen] = useState(false);
   const [stopOpen, setStopOpen] = useState(false);
 
@@ -237,6 +238,7 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
             band={band}
             overlay={overlay}
             minSpanS={720}
+            actuators
             label={chartLabel}
           />
         </div>
@@ -268,6 +270,7 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
         <Readouts snapshot={snapshot} rorDelta={dRor} alert={alert} />
         <Controls machine={snapshot.machine} safety={snapshot.safety} />
         <CoachCard snapshot={snapshot} note={note} />
+        <ActionLog entries={controlLog} base={base} />
       </aside>
       <StartDialog open={startOpen} onOpenChange={setStartOpen} />
       <StopDialog open={stopOpen} onOpenChange={setStopOpen} />

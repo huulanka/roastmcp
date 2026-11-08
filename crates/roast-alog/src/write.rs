@@ -403,6 +403,7 @@ mod tests {
         ControlLogEntry {
             t: Some(t),
             at: DateTime::<Utc>::UNIX_EPOCH,
+            previous: None,
             request: CommandRequest {
                 actuator,
                 value,

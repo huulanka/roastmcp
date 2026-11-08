@@ -1,13 +1,15 @@
 import { useSyncExternalStore } from "react";
 
 import { api, ApiError, getToken, wsUrl } from "@/api/client.ts";
-import type { Note, Point, Snapshot, WsMessage } from "@/api/types.ts";
+import type { ControlLogEntry, Note, Point, Snapshot, WsMessage } from "@/api/types.ts";
 
 export interface LiveState {
   snapshot: Snapshot | null;
   points: Point[];
   /** Notes of the running recording (AI coaching among them); refreshed every few seconds. */
   notes: Note[];
+  /** Control actions of the running recording, newest last. */
+  controlLog: ControlLogEntry[];
   /** WebSocket is open. */
   online: boolean;
   /** At least one successful exchange happened since the last failure. */
@@ -20,6 +22,7 @@ let state: LiveState = {
   snapshot: null,
   points: [],
   notes: [],
+  controlLog: [],
   online: false,
   reachable: true,
   authError: false,
@@ -68,6 +71,7 @@ async function sync(): Promise<void> {
       snapshot,
       points,
       notes: live.notes ?? [],
+      controlLog: live.control_log ?? [],
       reachable: true,
       authError: false,
     });
@@ -99,6 +103,23 @@ async function refreshExtras(): Promise<void> {
   }
 }
 
+let loadingLog = false;
+
+/** An action was logged: fetch the log right away instead of waiting for the next poll. */
+async function refreshControlLog(seq: number): Promise<void> {
+  if (loadingLog || syncing) return;
+  loadingLog = true;
+  try {
+    const live = await api.live();
+    const controlLog = live.control_log ?? [];
+    if (controlLog.length !== state.controlLog.length || seq === 0) set({ controlLog });
+  } catch {
+    /* the WebSocket reports reachability */
+  } finally {
+    loadingLog = false;
+  }
+}
+
 export function startLive(): () => void {
   let ws: WebSocket | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -127,6 +148,8 @@ export function startLive(): () => void {
           if (syncing) pending.push(msg.point);
           else patch.points = appendPoint(state.points, msg.point);
         }
+        const seq = msg.snapshot.control_seq ?? 0;
+        if (seq !== state.controlLog.length) void refreshControlLog(seq);
         set(patch);
       }
     };

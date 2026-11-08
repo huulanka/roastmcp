@@ -404,6 +404,7 @@ fn special_events(
             Some(actuator) => log.push(ControlLogEntry {
                 t: Some(t),
                 at: at_recording_time(roasted_at, t),
+                previous: None,
                 request: CommandRequest {
                     actuator,
                     value: pct,

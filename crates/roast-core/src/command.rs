@@ -96,6 +96,9 @@ pub struct ControlLogEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub t: Option<f64>,
     pub at: DateTime<Utc>,
+    /// The actuator's value before the request, if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<f64>,
     pub request: CommandRequest,
     pub outcome: CommandOutcome,
 }
