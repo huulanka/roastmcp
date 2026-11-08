@@ -90,7 +90,11 @@ export function Banners() {
       )}
       {machine && !safety?.connected && (
         <Bar tone="critical" icon={<WifiOff className="size-4" />}>
-          {t("Link to the roaster lost. Check the Bluetooth connection and stay at the roaster.")}
+          <span className="font-semibold">{t("Link to the roaster lost.")}</span>{" "}
+          {/* The profile's tested advice; German when de.ts has the sentence. */}
+          {machine.link_lost
+            ? t(machine.link_lost)
+            : t("Check the Bluetooth connection and stay at the roaster.")}
         </Bar>
       )}
       {safety?.overheat && (

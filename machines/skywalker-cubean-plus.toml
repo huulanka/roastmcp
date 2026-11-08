@@ -24,6 +24,12 @@ preset. Has no environment probe: ET reads a constant and is ignored.
 Reports burner and air back in every READ reply; the reported burner value
 sometimes differs from the set value (e.g. 21.7 or 28.3 %), so the firmware
 ramps or quantises - to be characterised. Beans are dropped by hand.
+
+Without a host the machine idles: heater, fan and drum off. As soon as a host
+connects it runs at its own defaults - burner 100 %, air 20 % - until it gets
+commands; RoastMCP sends the safe state on every connect (verified 2026-11-08).
+On macOS only the first port open after connecting AKROASTER in the Bluetooth
+settings is answered; reopening the port does not bring the link back.
 """
 
 # Seconds between two samples. The vendor's Artisan settings use 1.5 s, which is
@@ -192,11 +198,20 @@ reports_actuators = true
 
 # ---------------------------------------------------------------------------
 # What the machine does when the link breaks. Run the test protocol in
-# docs/safety.md (empty drum, low power, person present) and describe what
+# docs/first-roast.md (empty drum, low power, person present) and describe what
 # you saw; set `tested = true` only then. AI control should not be used on a
-# machine whose link-loss behaviour is untested.
+# machine whose link-loss behaviour is untested. `link_lost` is shown to people
+# in the "link lost" banner, so write it as advice.
+#
+# Tested 2026-11-08 on an empty drum at burner 20 %, air 40 %: dropping only
+# the AKROASTER Bluetooth link, and `kill -9` of the daemon. In both cases the
+# machine went to standby within seconds (heater, fan and drum stopped; the
+# display shows only the temperature) and READ afterwards reports its defaults
+# (burner 100, air 20), not the actual outputs. RoastMCP noticed the loss after
+# three missed readings (about 5 s) and kept retrying, but the link only came
+# back after connecting AKROASTER again in the Bluetooth settings.
 # ---------------------------------------------------------------------------
 [link_loss]
-tested = false
-link_lost = "not yet tested"
-software_killed = "not yet tested"
+tested = true
+link_lost = "The roaster stops heater, fan and drum within seconds. Drop hot beans now. It does not reconnect by itself: connect AKROASTER again in the Bluetooth settings."
+software_killed = "Same as a lost link: standby (heater, fan and drum stop) as soon as the port closes, also after kill -9. A normal quit sends the safe state first."

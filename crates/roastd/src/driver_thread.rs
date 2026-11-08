@@ -13,11 +13,16 @@ use crate::engine::Msg;
 
 /// Failed reads in a row after which the link counts as lost.
 const LOST_AFTER_FAILURES: u32 = 3;
-/// Connection attempts in a row that never produced a single reading, after
-/// which the thread gives up instead of retrying forever.
+/// Connection attempts without a single reading after which the thread gives
+/// up. Only applies before the machine first answered: once it has, a lost link
+/// is retried for as long as the connection is wanted (a roast may be running).
 const GIVE_UP_AFTER_SILENT_ATTEMPTS: u32 = 3;
 /// Pause between reconnect attempts.
-const RECONNECT_EVERY: Duration = Duration::from_secs(3);
+const RECONNECT_EVERY: Duration = if cfg!(test) {
+    Duration::from_millis(50)
+} else {
+    Duration::from_secs(3)
+};
 
 /// From the engine to the driver thread.
 pub enum DriverCmd {
@@ -39,8 +44,9 @@ pub enum DriverEvent {
     Error(String),
     /// The link is lost; the thread keeps trying to reconnect.
     Lost(String),
-    /// The port opened but the machine never answered, several times in a row.
-    /// The thread has stopped; the person has to connect again.
+    /// The machine never answered since the connection was started, several
+    /// attempts in a row. The thread has stopped; the person has to connect
+    /// again.
     GaveUp(String),
 }
 
@@ -75,16 +81,19 @@ fn run(
 ) {
     let send = |ev: DriverEvent| engine.send(Msg::Driver(generation, ev)).is_ok();
 
-    // Attempts since the last reading; a link lost during a roast resets it.
-    let mut silent_attempts = 0u32;
+    // Attempts so far, and whether the machine ever answered. Giving up only
+    // makes sense for a machine that never answered (wrong port, BT session
+    // already used up); a link lost later is retried indefinitely.
+    let mut attempts = 0u32;
+    let mut answered = false;
     'connect: loop {
-        if silent_attempts >= GIVE_UP_AFTER_SILENT_ATTEMPTS {
+        if !answered && attempts >= GIVE_UP_AFTER_SILENT_ATTEMPTS {
             send(DriverEvent::GaveUp(format!(
-                "the roaster did not answer in {silent_attempts} attempts"
+                "the roaster did not answer in {attempts} attempts"
             )));
             break 'connect;
         }
-        silent_attempts += 1;
+        attempts += 1;
         match driver.connect() {
             Ok(warnings) => {
                 if !send(DriverEvent::Connected(warnings)) {
@@ -118,7 +127,7 @@ fn run(
             match driver.read() {
                 Ok(r) => {
                     failures = 0;
-                    silent_attempts = 0;
+                    answered = true;
                     if !send(DriverEvent::Reading(r)) {
                         break 'connect;
                     }
@@ -213,5 +222,51 @@ mod tests {
             }
         }
         assert_eq!(connects, GIVE_UP_AFTER_SILENT_ATTEMPTS);
+    }
+
+    /// Answers a few reads, then falls silent for good (BT switched off).
+    struct AnswersThenSilent(u32);
+
+    impl RoasterDriver for AnswersThenSilent {
+        fn connect(&mut self) -> Result<Vec<String>, DriverError> {
+            Ok(Vec::new())
+        }
+        fn read(&mut self) -> Result<Reading, DriverError> {
+            if self.0 == 0 {
+                return Err(DriverError::Timeout(600));
+            }
+            self.0 -= 1;
+            Ok(Reading::default())
+        }
+        fn apply(&mut self, _cmd: &ActuatorCommand) -> Result<(), DriverError> {
+            Ok(())
+        }
+        fn close(&mut self) {}
+    }
+
+    #[test]
+    fn keeps_reconnecting_after_the_machine_has_answered() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let _cmd = spawn_driver(
+            Box::new(AnswersThenSilent(2)),
+            Duration::from_millis(10),
+            1,
+            tx,
+        );
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let (mut readings, mut connects, mut lost) = (0, 0, 0);
+        while connects < GIVE_UP_AFTER_SILENT_ATTEMPTS + 3 {
+            assert!(Instant::now() < deadline, "stopped reconnecting");
+            match rx.blocking_recv() {
+                Some(Msg::Driver(_, DriverEvent::Connected(_))) => connects += 1,
+                Some(Msg::Driver(_, DriverEvent::Reading(_))) => readings += 1,
+                Some(Msg::Driver(_, DriverEvent::Lost(_))) => lost += 1,
+                Some(Msg::Driver(_, DriverEvent::GaveUp(e))) => panic!("gave up: {e}"),
+                Some(_) => {}
+                None => panic!("channel closed"),
+            }
+        }
+        assert_eq!(readings, 2);
+        assert!(lost >= GIVE_UP_AFTER_SILENT_ATTEMPTS, "{lost}");
     }
 }

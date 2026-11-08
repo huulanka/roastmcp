@@ -72,11 +72,13 @@ Check, still with an empty, cold drum:
 This answers what the machine does when the computer goes away
 (`docs/safety.md`). With burner 20 % and air 40 %:
 
-1. Switch off Bluetooth on the computer (or move out of range) for 30 s.
+1. Disconnect only AKROASTER in the Bluetooth settings (or move out of
+   range) for 30 s. Switching Bluetooth off also drops other devices, such
+   as hearing aids.
    Watch the machine: does the heater stay on, switch off, or does the
    machine show an error? The app shows "link lost" and keeps trying to
    reconnect.
-2. Switch Bluetooth back on. Expected: RoastMCP reconnects by itself.
+2. Connect AKROASTER again. RoastMCP keeps retrying and picks the link up.
 3. Repeat with the daemon stopped by Ctrl-C: RoastMCP sends the safe state
    (burner 0, air 100) before it exits. Then kill it hard
    (`kill -9 <pid from daemon.json>`) and watch the machine again.
@@ -84,6 +86,13 @@ This answers what the machine does when the computer goes away
 Write what you saw into `machines/skywalker-cubean-plus.toml` under
 `[link_loss]` and set `tested = true` only when all three cases are known.
 Until then, use AI control only while standing at the machine.
+
+**Result for the Cubean+ (2026-11-08):** in every case the machine goes to
+standby within seconds - heater, fan and drum stop, the display shows only the
+temperature. It does not reconnect by itself on macOS; connect AKROASTER again
+in the Bluetooth settings. On connect it starts at burner 100 %, air 20 %;
+RoastMCP now sets the safe state at once (burner 0, air 100, drum 100), so set
+the heat again after a reconnect.
 
 ## 3. A supervised roast
 

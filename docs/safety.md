@@ -36,7 +36,8 @@ or drum movement the beans can ignite.
 | Presence confirmation missed while AI/autopilot is in control (interval default 3 min + 30 s grace) | Safe state, alarm |
 | Critical step requested by AI/autopilot (start, DROP, step larger than the normal limit) | Waits for human confirmation |
 | Bean temperature above the machine's limit, or implausible rise | Burner cut by the safety layer, alarm |
-| Roaster link lost / stale data | Alarm; reconnect attempts; AI control suspended |
+| Roaster link lost / stale data | Alarm with the machine's tested advice; reconnect attempts for as long as the connection is wanted; AI control suspended |
+| Roaster connects or reconnects | Safe state set at once (a machine may start at its own defaults: the Cubean+ heats at 100 %); the person sets the heat again |
 | Emergency stop (button, Escape in the app, global shortcut ⌘⇧⎋ / Ctrl+Alt+Esc, MCP tool) | Safe state, latched: AI and autopilot locked out until a human resets |
 | App crashes | Daemon keeps running with all rules; app reconnects |
 | Daemon stopped (Ctrl-C, SIGTERM) | Safe state is sent first if the burner is on; the running recording is saved |
@@ -90,7 +91,9 @@ Each machine profile records the tested behaviour.
 **Test protocol** (empty drum, low power, person present, extinguisher at hand):
 
 1. Connect, start recording, set burner 20 %, air 50 %, drum on.
-2. Break the link (switch off Bluetooth on the computer, or unplug).
+2. Break the link (unplug, or disconnect only the roaster in the Bluetooth
+   settings: switching Bluetooth off also drops other devices, such as
+   hearing aids).
 3. Observe for 60 s: does the burner stay on, does the machine shut down, does
    the fan keep running, does the display show a warning?
 4. Restore the link: does the machine accept commands again without a restart?
@@ -98,7 +101,10 @@ Each machine profile records the tested behaviour.
 
 | Machine | Link lost | Software killed | Tested |
 |---|---|---|---|
-| Skywalker Cubean+ (BT) | not yet tested | not yet tested | — |
+| Skywalker Cubean+ (BT) | Standby within seconds: heater, fan **and drum** stop. Does not come back by itself on macOS: connect AKROASTER again in the Bluetooth settings. On connect it runs at burner 100 %, air 20 % until commanded | Same standby as soon as the port closes (also `kill -9`) | 2026-11-08 |
+
+Because the Cubean+ stops the drum and fan, a link lost mid-roast leaves hot
+beans standing in a heated drum: drop them, then reconnect. The banner says so.
 
 ## Verifying the safety layer
 

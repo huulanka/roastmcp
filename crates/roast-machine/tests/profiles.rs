@@ -88,7 +88,7 @@ fn cubean_plus_profile_matches_the_research() {
     assert_eq!(p.safe_state[&Actuator::Drum], SafeValue::Value(100.0));
     assert!((p.sampling_interval_s - 1.5).abs() < 1e-9);
     assert!((p.limits.max_bt_c - 240.0).abs() < 1e-9);
-    assert!(!p.link_loss.tested);
+    assert!(p.link_loss.tested);
     assert!(p.capabilities.reports_actuators);
     assert_eq!(burner.render(42), "OT1,42");
 }

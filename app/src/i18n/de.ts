@@ -55,8 +55,13 @@ export const de: Record<string, string> = {
   "Green weight": "Rohgewicht",
   "Green weight (g)": "Rohgewicht (g)",
   "I'm at the roaster": "Ich bin am Röster",
-  "Link to the roaster lost. Check the Bluetooth connection and stay at the roaster.":
-    "Verbindung zum Röster verloren. Bluetooth prüfen und am Röster bleiben.",
+  "Link to the roaster lost.": "Verbindung zum Röster verloren.",
+  "Check the Bluetooth connection and stay at the roaster.":
+    "Bluetooth-Verbindung prüfen und am Röster bleiben.",
+  // Machine profile advice (machines/*.toml, [link_loss].link_lost).
+  "The roaster stops heater, fan and drum within seconds. Drop hot beans now. It does not reconnect by itself: connect AKROASTER again in the Bluetooth settings.":
+    "Der Röster stoppt nach wenigen Sekunden Heizung, Lüfter und Trommel. Heiße Bohnen jetzt auswerfen. Er verbindet sich nicht von selbst: AKROASTER in den Bluetooth-Einstellungen neu verbinden.",
+  "Simulator: no real machine is affected.": "Simulator: Keine echte Maschine betroffen.",
   "Link-loss behaviour of this machine is untested — stay at the roaster.":
     "Das Verhalten dieser Maschine bei Verbindungsverlust ist ungetestet — bleib am Röster.",
   "Loading…": "Lädt …",

@@ -15,9 +15,12 @@ redesign ("Röstfarbe", light and dark) in progress.
 Next, in order:
 
 1. **Hardware test, remaining** (`docs/first-roast.md`): done on 2026-11-08 were
-   connect, all actuators, reported values, emergency stop and `CLDN,OF`; still
-   open is the link-loss behaviour (write it into the Cubean+ profile under
-   `[link_loss]`) and tuning the preheat gains on the real machine.
+   connect, all actuators, reported values, emergency stop, `CLDN,OF` and the
+   link-loss test (results in the Cubean+ profile under `[link_loss]`); still
+   open is tuning the preheat gains on the real machine. Worth a look: on
+   macOS a direct RFCOMM channel (IOBluetooth) answered when the serial port
+   stayed silent, so a native Bluetooth transport could reconnect without the
+   person reconnecting AKROASTER by hand.
 2. **UI finish and QA**: anything the redesign deferred; keyboard map
    (digits for burner/air, Enter for the next event, Esc stop), RoR trend with
    crash/flick colouring, control markers on the curve, hover read-out,
@@ -57,7 +60,7 @@ Cubean+, with curves that match what the roaster and Artisan showed.
 - Controls (sliders, step buttons, configurable keys), alarms, sound cues.
 - Safety layer complete: limits, arbitration, emergency stop with latch,
   overheat guard, link watchdog, audit log as roast events.
-- The link-loss test from [safety](safety.md) done for the Cubean+.
+- The link-loss test from [safety](safety.md) done for the Cubean+ (2026-11-08).
 
 *Go on when:* five roasts done with RoastMCP alone, no Artisan; safety tests and
 simulator fault injection pass.
