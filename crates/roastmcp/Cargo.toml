@@ -17,7 +17,7 @@ roastd.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-ureq = { version = "2", features = ["json"] }
+ureq = { version = "3", features = ["json"] }
 
 [lints]
 workspace = true
