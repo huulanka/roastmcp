@@ -14,9 +14,10 @@ redesign ("Röstfarbe", light and dark) in progress.
 
 Next, in order:
 
-1. **First hardware test** (`docs/first-roast.md`): link-loss behaviour,
-   `CLDN,OF`, reported burner values; write the results into the Cubean+
-   profile (`[link_loss]`). Tune the preheat gains on the real machine.
+1. **Hardware test, remaining** (`docs/first-roast.md`): done on 2026-11-08 were
+   connect, all actuators, reported values, emergency stop and `CLDN,OF`; still
+   open is the link-loss behaviour (write it into the Cubean+ profile under
+   `[link_loss]`) and tuning the preheat gains on the real machine.
 2. **UI finish and QA**: anything the redesign deferred; keyboard map
    (digits for burner/air, Enter for the next event, Esc stop), RoR trend with
    crash/flick colouring, control markers on the curve, hover read-out,
