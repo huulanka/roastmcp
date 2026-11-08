@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/huulanka/roastmcp/compare/v1.0.1...v1.1.0) (2026-11-08)
+
+
+### Features
+
+* **app:** offer "I'm at the roaster" when an AI asks for control ([#17](https://github.com/huulanka/roastmcp/issues/17)) ([e51d668](https://github.com/huulanka/roastmcp/commit/e51d668f3bb43b9abe751fa6d59a5a535349181a))
+
 ## [1.0.1](https://github.com/huulanka/roastmcp/compare/v1.0.0...v1.0.1) (2026-11-08)
 
 

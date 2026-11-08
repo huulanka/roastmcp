@@ -1197,7 +1197,7 @@ dependencies = [
 
 [[package]]
 name = "roast-alog"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1208,28 +1208,28 @@ dependencies = [
 
 [[package]]
 name = "roast-api"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "roast-core",
 ]
 
 [[package]]
 name = "roast-audio"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "roast-core",
 ]
 
 [[package]]
 name = "roast-control"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "roast-core",
 ]
 
 [[package]]
 name = "roast-core"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "chrono",
  "proptest",
@@ -1241,7 +1241,7 @@ dependencies = [
 
 [[package]]
 name = "roast-driver"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "roast-core",
  "roast-machine",
@@ -1252,7 +1252,7 @@ dependencies = [
 
 [[package]]
 name = "roast-machine"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "roast-core",
  "serde",
@@ -1263,7 +1263,7 @@ dependencies = [
 
 [[package]]
 name = "roast-safety"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "roast-core",
  "roast-machine",
@@ -1272,21 +1272,21 @@ dependencies = [
 
 [[package]]
 name = "roast-store"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "roast-core",
 ]
 
 [[package]]
 name = "roast-twin"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "roast-core",
 ]
 
 [[package]]
 name = "roastd"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1307,7 +1307,7 @@ dependencies = [
 
 [[package]]
 name = "roastmcp"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "clap",
