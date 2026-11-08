@@ -83,6 +83,7 @@ interface Snapshot {
     next: null | { kind: "first_crack_start" | "drop"; bt: number; eta_s: number | null };
   };                                     // next: from the reference's event temperatures
   preheat: null | { target_c: number; state: "heating" | "holding" };
+  control_request: string | null;  // an AI asked for control and waits for "I'm at the roaster" (shown 120 s)
 }
 ```
 

@@ -155,6 +155,7 @@ export const de: Record<string, string> = {
   "Medium-dark": "Mitteldunkel",
   "Next event": "Nächstes Ereignis",
   "No AI connected.": "Keine KI verbunden.",
+  "{{holder}} asks for control.": "{{holder}} möchte übernehmen.",
   "No notes yet.": "Noch keine Hinweise.",
   "No roaster": "Kein Röster",
   "No roaster connected": "Kein Röster verbunden",

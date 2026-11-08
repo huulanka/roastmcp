@@ -53,6 +53,9 @@ While the AI or the autopilot is in control, the app asks for a short
 confirmation at a regular interval (default every 3 minutes; configurable,
 cannot be disabled) — one key or one click. It is also required before every
 critical step. The AI cannot confirm presence; only the app's UI can.
+When an AI asks for control without a fresh confirmation, the request is
+refused and the app shows "I'm at the roaster" in the top bar (with an alarm
+sound) for two minutes; the AI then asks again.
 
 ## Preheat
 

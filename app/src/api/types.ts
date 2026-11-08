@@ -144,6 +144,8 @@ export interface Snapshot {
   projection?: Projection | null;
   /** Absent on daemons without preheat support. */
   preheat?: Preheat | null;
+  /** An AI asked for control and waits for "I'm at the roaster". */
+  control_request?: string | null;
 }
 export interface Note {
   t: number;
