@@ -293,7 +293,7 @@ export function TopBar({
         </div>
       </div>
       <nav aria-label={t("Screens")} className="flex gap-1 rounded-lg bg-segment-track p-1">
-        {(["roast", "archive"] as const).map((s) => (
+        {(["roast", "inventory", "archive"] as const).map((s) => (
           <button
             key={s}
             type="button"
@@ -306,7 +306,7 @@ export function TopBar({
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            {s === "roast" ? t("Roast") : t("Archive")}
+            {s === "roast" ? t("Roast") : s === "inventory" ? t("Inventory") : t("Archive")}
           </button>
         ))}
       </nav>

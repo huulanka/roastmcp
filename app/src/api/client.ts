@@ -4,12 +4,14 @@ import type {
   EventKind,
   Live,
   Lot,
+  LotDetails,
   ReferenceCurve,
   Roast,
   RoastEvent,
   RoastPlan,
   RoastSummary,
   Snapshot,
+  StockMovement,
 } from "./types.ts";
 
 const TOKEN_KEY = "roastmcp.token";
@@ -121,6 +123,16 @@ export const api = {
     plan?: RoastPlan;
   }) => request<Snapshot>("POST", "/api/recording/start", body),
   lots: (archived = false) => request<Lot[]>("GET", `/api/lots${archived ? "?archived=true" : ""}`),
+  lotMovements: (id: string) =>
+    request<StockMovement[]>("GET", `/api/lots/${encodeURIComponent(id)}/movements`),
+  addLot: (body: LotDetails & { name: string; purchase_g?: number; purchase_date?: string }) =>
+    request<Lot>("POST", "/api/lots", body),
+  patchLot: (id: string, body: { name?: string; details?: LotDetails; archived?: boolean }) =>
+    request<Lot>("PATCH", `/api/lots/${encodeURIComponent(id)}`, body),
+  addPurchase: (id: string, body: { grams: number; date?: string; note?: string }) =>
+    request<Lot>("POST", `/api/lots/${encodeURIComponent(id)}/purchases`, body),
+  adjustLot: (id: string, body: { grams: number; note?: string }) =>
+    request<Lot>("POST", `/api/lots/${encodeURIComponent(id)}/adjustments`, body),
   stopRecording: () =>
     request<{ id: string; json_path: string; alog_path: string }>("POST", "/api/recording/stop"),
   markEvent: (kind: EventKind) =>

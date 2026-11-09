@@ -120,7 +120,11 @@ latched the safe state.
    the first run closely; its control gains are untested on the machine.
    Optionally pick an earlier roast as the reference (archive → "Als
    Referenz"; your imported Artisan roasts are there).
-2. Press **Start recording**: pick the bean from the inventory (its stock is
+2. Record your green coffee once under **Lager** (Inventory, top tab):
+   **Einkauf erfassen** asks for name and amount, then optionally, page by
+   page, origin, processing, quality and supplier as on the importer's offer
+   sheet. "Sack nachgewogen?" sets the stock to what the scale says.
+3. Press **Start recording**: pick the bean from the inventory (its stock is
    shown and debited when the roast is saved), the green weight, the goal and,
    as the plan, an earlier roast (by default the last one of this bean); its
    drop temperature and DTR become the targets, editable. During the roast the
@@ -135,9 +139,9 @@ latched the safe state.
    beans left). On 23 of your Artisan roasts this matched Artisan's marks
    within 4.5 s, with no false DROP. The big button marks any of them by hand
    at once and wins over the detection.
-3. Roast by hand with the sliders or the keys (Q/A burner, W/S air). Mark
+4. Roast by hand with the sliders or the keys (Q/A burner, W/S air). Mark
    **FC start** when you hear first crack.
-4. DROP, marked or detected, saves the roast as `.roast.json` and `.alog`
+5. DROP, marked or detected, saves the roast as `.roast.json` and `.alog`
    (open it in Artisan or upload it wherever you use `.alog`) and asks for the
    roasted weight.
 

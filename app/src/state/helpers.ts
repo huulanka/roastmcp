@@ -1,7 +1,7 @@
 import type { RoastState, Snapshot } from "@/api/types.ts";
 import { chargeTime } from "@/lib/chartData.ts";
 
-export type Screen = "roast" | "archive";
+export type Screen = "roast" | "inventory" | "archive";
 
 export function stateLabel(t: (k: string) => string, s: RoastState): string {
   const m: Record<RoastState, string> = {

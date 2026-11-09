@@ -277,7 +277,7 @@ export function StartDialog({
             </div>
             <p className="min-h-5 text-[13px] text-muted-foreground">
               {lots.length === 0
-                ? t("No beans in the inventory yet: record a purchase under Archive › Inventory.")
+                ? t("No beans in stock yet: record a purchase in Inventory.")
                 : lot && lastOfLot
                   ? t("Last on {{date}}: {{time}} min, drop {{drop}} °C{{loss}}.", {
                       date: shortDate(lastOfLot.roasted_at),
