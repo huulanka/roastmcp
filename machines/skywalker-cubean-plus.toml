@@ -206,6 +206,11 @@ ai_air_min_interval_s = 5
 # before CHARGE, seconds (ADR 0018). Everything else - an AI in control, the
 # roast itself - keeps the 3 min interval. A gong sounds 60 s and 20 s before.
 preheat_presence_interval_s = 600
+# A person's command on these actuators ends AI control: they are the heat
+# loop the AI steers (ADR 0019). Filter and cooling are not listed, so the
+# person can turn up the smoke filter or start the cooling tray while an AI
+# roasts. Must include the burner.
+takeover_actuators = ["burner", "air", "drum"]
 
 [capabilities]
 # Beans are dropped by hand; the app shows a "drop now" cue instead.

@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use roast_core::design::{self, CurvePoint, Milestones};
-use roast_core::{ActionTrigger, Actuator, PlannedAction, ProfileTarget, Roast};
+use roast_core::{
+    ActionTrigger, Actuator, MAX_EVENT_OFFSET_S, PlannedAction, ProfileTarget, RecipeAnchor, Roast,
+};
 use serde_json::{Value, json};
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
@@ -21,20 +23,34 @@ step and when it is due; plus a projection (BT in 60 s, the next milestone and w
 reached). set_reference picks a roast or a profile. Profiles are the roaster's plans: read them \
 with list_profiles and get_profile, develop them with the person through create_profile and \
 add_profile_version (every change is a new version they see at once in the app's Profile tab), \
-and roast one with start_recording(profile). When you control a roast that follows a profile, \
-make the recipe's moves yourself around their time, and correct only when the deviation from \
-the plan persists. The person does CHARGE and DROP by hand; announce them. At DROP the daemon \
-turns the burner off, switches the bean cooling on (already 30 s before the planned DROP) and \
-gives control back to the person. set_filter turns up the smoke filter, set_cooling switches \
-the bean cooling. wait returns a compact status with only new events and alarms. \
-To control the roaster, a person must first confirm presence in the RoastMCP app, then \
-call request_control. Your commands pass a safety layer: cutting the burner or adding air is \
-never limited; raising the burner is limited to 10 points per command and one raise per 10 s, \
-lowering the air to 20 points per 5 s. Act like an experienced roaster: anticipate the thermal \
-lag, make few deliberate moves (for example cut heat well before first crack) instead of many \
-small corrections. Anything the person does in the app overrides you and suspends your control. Keep calling wait or get_status at least every 60 s \
-while in control, or control returns to the person. Always give a short reason with each \
-command; it is logged with the roast. Use emergency_stop if anything looks unsafe.";
+and roast one with start_recording(profile). A recipe step comes at a roast time, at a bean \
+temperature, or a time after dry end or first crack (after, offset_s): those wait for the event, \
+marked or detected, so they follow the beans. \
+Take control before CHARGE: call request_control while the preheat holds; the app gongs and asks \
+the person to confirm presence, then the preheat keeps holding under your lease until CHARGE. \
+While you hold control and the plan is a profile, the daemon runs the recipe itself: it sets each \
+step on time (at CHARGE the first step at once), logs it and reports it as a new alarm. Your job \
+is judgement: watch the deviation from the plan and the projection, and change the rest of the \
+recipe for this roast with adjust_recipe (move steps, change values, skip them; steps are \
+numbered as in get_status recipe.steps). A direct set_burner or set_air replaces only the step \
+that is due on that actuator; later steps still come, so skip those you do not want. After the \
+roast you may propose your changes as a new profile version with add_profile_version; they are \
+not saved on their own. Mark first_crack_start as soon as the person reports it. \
+The person does CHARGE and DROP by hand; announce them. A CHARGE the person marks in the app \
+also confirms their presence. At DROP the daemon turns the burner off, switches the bean \
+cooling on (already 30 s before the planned DROP) and gives control back to the person. \
+set_filter turns up the smoke filter, set_cooling switches the bean cooling. wait returns a \
+compact status with only new events and alarms. \
+To control the roaster, a person must confirm presence in the RoastMCP app (every 3 min while \
+you are in control), then call request_control. Your commands pass a safety layer: cutting the \
+burner or adding air is never limited; raising the burner is limited to 10 points per command \
+and one raise per 10 s, lowering the air to 20 points per 5 s. Act like an experienced roaster: \
+anticipate the thermal lag, make few deliberate moves (for example cut heat well before first \
+crack) instead of many small corrections. The person may turn the filter and the cooling while \
+you are in control; their command on burner, air or drum overrides you and suspends your \
+control. Keep calling wait or get_status at least every 60 s while in control, or control \
+returns to the person. Always give a short reason with each command; it is logged with the \
+roast. Use emergency_stop if anything looks unsafe.";
 
 struct Daemon {
     base: String,
@@ -188,12 +204,14 @@ fn milestones_schema() -> Value {
 
 /// Input of the profile tools: burner and air steps.
 fn recipe_schema() -> Value {
-    json!({"type": "array", "description": "The whole recipe: burner and air steps by roast time (or by bean temperature after the turning point). Include the settings at CHARGE (at_s 0); air at 0 is also the preheat air.",
+    json!({"type": "array", "description": "The whole recipe: burner and air steps by roast time, by bean temperature after the turning point, or a time after dry end or first crack (development steps belong to first crack, not the clock). Include the settings at CHARGE (at_s 0); air at 0 is also the preheat air.",
         "items": {"type": "object", "properties": {
             "actuator": {"type": "string", "enum": ["burner", "air"]},
             "value": {"type": "number", "description": "Percent, 0-100."},
             "at_s": {"type": "number", "description": "Roast time, seconds since CHARGE."},
-            "at_bt_c": {"type": "number", "description": "Or: when BT first reaches this after the turning point, °C."}},
+            "at_bt_c": {"type": "number", "description": "Or: when BT first reaches this after the turning point, °C."},
+            "after": {"type": "string", "enum": ["dry_end", "first_crack_start"], "description": "Or: after this event, marked or detected; the step waits for it."},
+            "offset_s": {"type": "number", "description": "With after: seconds after the event, 0-900 (default 0)."}},
           "required": ["actuator", "value"]}})
 }
 
@@ -235,6 +253,11 @@ fn recipe_json(actions: &[PlannedAction]) -> Value {
                     v["clock"] = json!(clock(roast_time_s));
                 }
                 ActionTrigger::Bt { bt_c } => v["at_bt_c"] = json!(bt_c),
+                ActionTrigger::Event { event, offset_s } => {
+                    v["after"] = json!(event);
+                    v["offset_s"] = json!(offset_s);
+                    v["clock"] = json!(format!("{} +{}", event.short(), clock(offset_s)));
+                }
             }
             v
         })
@@ -258,16 +281,37 @@ fn parse_recipe(v: &Value) -> anyhow::Result<Vec<PlannedAction>> {
                 .and_then(Value::as_f64)
                 .filter(|v| (0.0..=100.0).contains(v))
                 .context("recipe step: value must be 0-100 %")?;
+            let after = match i.get("after").and_then(Value::as_str) {
+                None => None,
+                Some("dry_end") => Some(RecipeAnchor::DryEnd),
+                Some("first_crack_start") => Some(RecipeAnchor::FirstCrackStart),
+                Some(other) => anyhow::bail!(
+                    "recipe step: after must be dry_end or first_crack_start, not {other:?}"
+                ),
+            };
             let trigger = match (
                 i.get("at_s").and_then(Value::as_f64),
                 i.get("at_bt_c").and_then(Value::as_f64),
+                after,
             ) {
-                (Some(t), _) if (0.0..=1800.0).contains(&t) => ActionTrigger::Time {
+                (Some(t), None, None) if (0.0..=1800.0).contains(&t) => ActionTrigger::Time {
                     roast_time_s: t.round(),
                 },
-                (None, Some(bt)) if (50.0..=300.0).contains(&bt) => ActionTrigger::Bt { bt_c: bt },
+                (None, Some(bt), None) if (50.0..=300.0).contains(&bt) => {
+                    ActionTrigger::Bt { bt_c: bt }
+                }
+                (None, None, Some(event)) => {
+                    let offset_s = i.get("offset_s").and_then(Value::as_f64).unwrap_or(0.0);
+                    if !(0.0..=MAX_EVENT_OFFSET_S).contains(&offset_s) {
+                        anyhow::bail!("recipe step: offset_s must be 0-900 s after the event");
+                    }
+                    ActionTrigger::Event {
+                        event,
+                        offset_s: offset_s.round(),
+                    }
+                }
                 _ => anyhow::bail!(
-                    "recipe step: give at_s (0-1800 s since CHARGE) or at_bt_c (50-300 °C)"
+                    "recipe step: give one of at_s (0-1800 s since CHARGE), at_bt_c (50-300 °C) or after (dry_end, first_crack_start) with offset_s"
                 ),
             };
             Ok(PlannedAction {
@@ -428,7 +472,7 @@ fn tools() -> Value {
          "inputSchema": {"type": "object", "properties": {
             "every_s": num("Spacing between points, seconds (default 10)."),
             "last_s": num("Only the last N seconds (default: all).")}}},
-        {"name": "wait", "description": "Waits up to 30 s, then returns a compact status: time, BT, RoR, actuators, the plan's deviation and next recipe step, the projection, lease and presence, and only the events and alarms that are new since your last get_status or wait. full: true returns the whole get_status instead. Keeps your control lease alive.",
+        {"name": "wait", "description": "Waits up to 30 s, then returns a compact status: time, BT, RoR, actuators, the plan's deviation and next recipe step, the recipe's open steps (and whether the daemon sets them), the projection, lease and presence, and only the events and alarms that are new since your last get_status or wait. full: true returns the whole get_status instead. Keeps your control lease alive.",
          "inputSchema": {"type": "object", "properties": {
             "seconds": num("1-30"),
             "full": {"type": "boolean", "description": "Return the whole status (default false)."}}, "required": ["seconds"]}},
@@ -436,12 +480,22 @@ fn tools() -> Value {
          "inputSchema": {"type": "object", "properties": {"kind": {"type": "string", "enum": kinds}}, "required": ["kind"]}},
         {"name": "add_note", "description": "Adds a note to the running roast.",
          "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
-        {"name": "request_control", "description": "Asks for control of the roaster. Needs a recent presence confirmation by a person in the app.",
+        {"name": "request_control", "description": "Asks for control of the roaster. Needs a recent presence confirmation by a person in the app: without one the app gongs and asks them, then call again. Ask while the preheat holds, before CHARGE: the preheat keeps holding under your control until CHARGE, then the daemon runs the profile's recipe.",
          "inputSchema": {"type": "object", "properties": {}}},
         {"name": "release_control", "description": "Gives control back to the person; actuators hold.",
          "inputSchema": {"type": "object", "properties": {}}},
-        {"name": "set_burner", "description": "Sets the burner (heater). Cuts are unlimited; raises at most 10 points per command, one raise per 10 s.", "inputSchema": set("Burner", "0-100")},
-        {"name": "set_air", "description": "Sets the airflow (fan). More air is unlimited; less air at most 20 points per 5 s.", "inputSchema": set("Air", "0-100")},
+        {"name": "set_burner", "description": "Sets the burner (heater). Cuts are unlimited; raises at most 10 points per command, one raise per 10 s. Replaces the recipe step due on the burner, not later ones.", "inputSchema": set("Burner", "0-100")},
+        {"name": "set_air", "description": "Sets the airflow (fan). More air is unlimited; less air at most 20 points per 5 s. Replaces the recipe step due on the air, not later ones.", "inputSchema": set("Air", "0-100")},
+        {"name": "adjust_recipe", "description": "Changes the rest of the running roast's recipe, for this roast only: move steps in time, change their value, skip them (or take a skip back). Steps are numbered as in get_status recipe.steps (step). A step at a bean temperature cannot move in time. All changes apply or none; the change is noted with the roast. Propose lasting changes after the roast with add_profile_version.",
+         "inputSchema": {"type": "object", "properties": {
+            "changes": {"type": "array", "items": {"type": "object", "properties": {
+                "step": {"type": "integer", "description": "The step's number."},
+                "shift_s": num("Move by this many seconds (later is positive)."),
+                "value": num("New value, percent 0-100."),
+                "skip": {"type": "boolean", "description": "true skips it, false takes a skip back."}},
+              "required": ["step"]}},
+            "reason": {"type": "string", "description": "Why - noted with the roast."}},
+          "required": ["changes", "reason"]}},
         {"name": "set_filter", "description": "Sets the smoke filter fan, percent (the Cubean+ steps by 20: 0, 20, 40, 60, 80, 100). Turn it up when the person reports smoke.", "inputSchema": set("Filter", "0-100")},
         {"name": "set_cooling", "description": "Switches the bean cooling (cooling tray stirrer and fan) on or off. The daemon switches it on by itself 30 s before the planned DROP and at DROP.",
          "inputSchema": {"type": "object", "properties": {
@@ -571,6 +625,43 @@ fn new_events(seen: &mut Seen, status: &Value) -> Vec<Value> {
     new
 }
 
+/// The recipe as a controlling AI follows it: whether the daemon sets the
+/// steps, and the steps still to come.
+fn recipe_compact(recipe: Option<&Value>) -> Value {
+    let Some(r) = recipe.filter(|r| !r.is_null()) else {
+        return Value::Null;
+    };
+    let open: Vec<Value> = r
+        .get("steps")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|s| {
+            matches!(
+                s.get("state").and_then(Value::as_str),
+                Some("waiting" | "due")
+            )
+        })
+        .map(|s| {
+            let at = s.get("at_s").and_then(Value::as_f64);
+            json!({
+                "step": s.get("step"),
+                "label": s.get("label"),
+                "actuator": s.get("actuator"),
+                "value": s.get("value"),
+                "at_s": at.map(f64::round),
+                "projected": s.get("projected"),
+                "state": s.get("state"),
+            })
+        })
+        .collect();
+    json!({
+        "automatic": r.get("automatic"),
+        "adjusted": r.get("adjusted"),
+        "open_steps": open,
+    })
+}
+
 /// The status a controlling AI needs every few seconds, without the parts
 /// that rarely change (machine, events and alarms already reported).
 fn compact_status(seen: &mut Seen, s: &Value) -> Value {
@@ -598,6 +689,7 @@ fn compact_status(seen: &mut Seen, s: &Value) -> Value {
         "actuators": safety.get("actuators"),
         "reference": reference,
         "projection": s.get("projection"),
+        "recipe": recipe_compact(s.get("recipe")),
         "preheat": s.get("preheat"),
         "safety": {
             "lease_holder": safety.get("lease_holder"),
@@ -684,6 +776,20 @@ fn call_tool(d: &mut Daemon, name: &str, args: &Value) -> anyhow::Result<Value> 
                 "/command",
                 Some(json!({"actuator": "cooling", "value": if on { 100.0 } else { 0.0 }, "source": "ai", "reason": arg_s("reason")})),
             )
+        }
+        "adjust_recipe" => {
+            let changes = args
+                .get("changes")
+                .filter(|c| c.is_array())
+                .cloned()
+                .context("changes is required: a list of {step, shift_s, value, skip}")?;
+            d.renew();
+            let s = d.call(
+                "POST",
+                "/recipe/adjust",
+                Some(json!({"changes": changes, "reason": arg_s("reason"), "origin": "ai"})),
+            )?;
+            Ok(json!({"recipe": recipe_compact(s.get("recipe"))}))
         }
         "set_burner" | "set_air" | "set_drum" | "set_filter" => {
             let actuator = name.trim_start_matches("set_");
@@ -1053,6 +1159,47 @@ mod tests {
         assert!(parse_recipe(&json!([{"actuator": "drum", "value": 80, "at_s": 0}])).is_err());
         assert!(parse_recipe(&json!([{"actuator": "burner", "value": 120, "at_s": 0}])).is_err());
         assert!(parse_recipe(&json!([{"actuator": "burner", "value": 50}])).is_err());
+
+        let fc = parse_recipe(&json!([{"actuator": "burner", "value": 55, "after": "first_crack_start", "offset_s": 30}])).unwrap();
+        assert_eq!(
+            fc[0].trigger,
+            ActionTrigger::Event {
+                event: RecipeAnchor::FirstCrackStart,
+                offset_s: 30.0
+            }
+        );
+        let back = recipe_json(&fc);
+        assert_eq!(back[0]["after"], "first_crack_start");
+        assert_eq!(back[0]["clock"], "FC +0:30");
+        assert!(
+            parse_recipe(&json!([{"actuator": "burner", "value": 55, "after": "drop"}])).is_err()
+        );
+        assert!(
+            parse_recipe(
+                &json!([{"actuator": "burner", "value": 55, "after": "dry_end", "offset_s": -5}])
+            )
+            .is_err()
+        );
+        assert!(
+            parse_recipe(
+                &json!([{"actuator": "burner", "value": 55, "at_s": 30, "after": "dry_end"}])
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn the_compact_recipe_shows_only_open_steps() {
+        let r = json!({"automatic": true, "adjusted": false, "steps": [
+            {"step": 0, "label": "0:00", "actuator": "burner", "value": 85.0, "at_s": 0.0, "projected": false, "state": "done"},
+            {"step": 1, "label": "FC +0:30", "actuator": "burner", "value": 60.0, "at_s": 551.6, "projected": true, "state": "waiting"}
+        ]});
+        let c = recipe_compact(Some(&r));
+        assert_eq!(c["automatic"], true);
+        let open = c["open_steps"].as_array().unwrap();
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0]["at_s"], 552.0);
+        assert!(recipe_compact(None).is_null());
     }
 
     #[test]

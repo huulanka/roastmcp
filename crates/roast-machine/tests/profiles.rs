@@ -283,6 +283,23 @@ fn numbers_are_in_sane_ranges() {
 }
 
 #[test]
+fn takeover_actuators_include_the_burner_and_exist() {
+    let p = cubean();
+    assert_eq!(
+        p.limits.takeover_actuators(),
+        [Actuator::Burner, Actuator::Air, Actuator::Drum]
+    );
+    let mut p = cubean();
+    p.limits.takeover_actuators = Some(vec![Actuator::Air]);
+    assert_eq!(issues(&p), ["limits.takeover_actuators"]);
+    let mut p = cubean();
+    p.limits.takeover_actuators = Some(vec![Actuator::Burner, Actuator::Filter]);
+    p.switches.retain(|s| s.actuator != Actuator::Filter);
+    p.actuators.retain(|a| a.actuator != Actuator::Filter);
+    assert_eq!(issues(&p), ["limits.takeover_actuators"]);
+}
+
+#[test]
 fn identity_is_checked() {
     let mut p = cubean();
     p.id = "Cubean Plus".into();

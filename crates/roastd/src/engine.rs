@@ -15,12 +15,15 @@ use chrono::{DateTime, Utc};
 use crate::inventory::InventoryStore;
 use crate::learned::LearnedStore;
 use crate::profiles::ProfileStore;
-use roast_control::{PreheatController, PreheatInput, PreheatPhase, PreheatReason, PreheatTuning};
+use roast_control::{
+    Outlook, PreheatController, PreheatInput, PreheatPhase, PreheatReason, PreheatTuning,
+    RecipeInput, RecipeRun, StepChange, StepState, StepView, trigger_label,
+};
 use roast_core::{
     Actuator, ActuatorValues, BatchInfo, CommandOutcome, CommandRequest, CommandSource,
-    ControlLogEntry, EventDetector, EventKind, EventOrigin, Note, Phases, Projection,
-    ReferenceCurve, ReferenceKind, RejectReason, Roast, RoastEvent, RoastOrigin, RoastPlan,
-    RoastState, RorConfig, RorTracker, Sample, phases, project,
+    ControlLogEntry, EventDetector, EventKind, EventOrigin, Note, Phases, PlannedAction,
+    Projection, ReferenceCurve, ReferenceKind, RejectReason, Roast, RoastEvent, RoastOrigin,
+    RoastPlan, RoastState, RorConfig, RorTracker, Sample, phases, project,
 };
 use roast_driver::{RoasterDriver, SimulatedMachine, simulator_profile};
 use roast_machine::MachineProfile;
@@ -152,6 +155,8 @@ pub struct MachineInfo {
     link_loss_tested: bool,
     /// What the machine does when the link breaks, for people; only once tested.
     link_lost: Option<String>,
+    /// Actuators on which a person's command ends AI control (ADR 0019).
+    takeover_actuators: Vec<Actuator>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -183,6 +188,9 @@ struct Preheat {
     /// Recording time of the reading it last looked at.
     last_seen_t: Option<f64>,
     last_raise: Option<f64>,
+    /// The AI that took over before CHARGE; the preheat holds under its
+    /// lease until CHARGE (ADR 0019).
+    ai_holder: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -251,6 +259,18 @@ pub struct Snapshot {
     /// An AI that asked for control but needs a presence confirmation first;
     /// the app offers "I'm at the roaster" while this is set.
     control_request: Option<String>,
+    /// The profile's recipe in this roast (ADR 0019).
+    recipe: Option<RecipeStatus>,
+}
+
+/// The recipe of the running roast.
+#[derive(Debug, Clone, Serialize)]
+struct RecipeStatus {
+    /// The daemon sets the steps itself: an AI holds the lease.
+    automatic: bool,
+    /// Some step was changed for this roast.
+    adjusted: bool,
+    steps: Vec<StepView>,
 }
 
 /// How long an AI's refused control request keeps the presence prompt up.
@@ -282,26 +302,37 @@ struct ReferenceStatus {
 /// The next step of a profile's recipe.
 #[derive(Debug, Clone, Serialize)]
 struct NextStep {
-    /// Roast time it is planned for, s since CHARGE.
-    at_s: f64,
+    /// Roast time it is due, s since CHARGE; `None` while the event it
+    /// follows has neither come nor is expected.
+    at_s: Option<f64>,
     /// Seconds until then (negative: due since); `None` before CHARGE.
     in_s: Option<f64>,
+    /// `at_s` is an estimate: the event or temperature has not come yet.
+    projected: bool,
+    /// "1:30", "FC +0:30", "185 °C".
+    label: String,
+    /// The daemon sets it itself (an AI holds the lease); otherwise it is a
+    /// cue for the person.
+    automatic: bool,
     /// What changes then, and to which value, %.
     set: Vec<StepValue>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct StepValue {
+    /// The step's number in the recipe (for `adjust_recipe`).
+    step: usize,
     actuator: Actuator,
     value: f64,
     /// The value now, %.
     current: Option<f64>,
 }
 
-/// A recipe step stays due this long after its time, s (as in the app).
 /// The bean cooling goes on this long before the planned DROP, s.
 const COOL_BEFORE_DROP_S: f64 = 30.0;
-const RECIPE_GRACE_S: f64 = 30.0;
+/// After the safety layer refused a recipe step, the runner tries again
+/// this much later, s.
+const RECIPE_RETRY_S: f64 = 5.0;
 
 /// The curve so far.
 #[derive(Debug, Clone, Serialize)]
@@ -407,6 +438,8 @@ pub struct Engine {
     /// Holder and time of a control request refused for a missing presence
     /// confirmation.
     control_request: Option<(String, Instant)>,
+    /// The profile's recipe in this roast (ADR 0019).
+    recipe: Option<RecipeRun>,
 }
 
 /// Starts the engine task and its safety ticker.
@@ -451,6 +484,7 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
         audit,
         reference: None,
         preheat: None,
+        recipe: None,
         learned,
         inventory,
         profiles,
@@ -546,6 +580,7 @@ impl Engine {
                 .as_ref()
                 .and_then(|r| phases(r, t.unwrap_or(0.0))),
             reference: self.reference_status(t, charge_t, now),
+            recipe: self.recipe_status(now),
             projection: self.projection(&events, charge_t),
             control_request: self
                 .control_request
@@ -575,26 +610,7 @@ impl Engine {
         let r = self.reference.as_ref()?;
         let since = t.zip(charge_t).map(|(t, c)| t - c);
         let (bt_now, ror_now) = since.map_or((None, None), |s| r.at(s));
-        let current = self.safety.status(now).actuators;
-        let next_step = roast_core::design::next_recipe_cue(
-            &r.actions,
-            since.unwrap_or(0.0),
-            &current,
-            RECIPE_GRACE_S,
-        )
-        .map(|cue| NextStep {
-            at_s: cue.at,
-            in_s: since.map(|s| cue.at - s),
-            set: cue
-                .steps
-                .iter()
-                .map(|a| StepValue {
-                    actuator: a.actuator,
-                    value: a.value,
-                    current: current.get(&a.actuator).copied(),
-                })
-                .collect(),
-        });
+        let next_step = self.next_step(since, now);
         Some(ReferenceStatus {
             id: r.id,
             title: r.title.clone(),
@@ -627,6 +643,285 @@ impl Engine {
             .rev()
             .collect();
         project(&recent, events, self.reference.as_ref())
+    }
+
+    // ----------------------------------------------------------------- recipe
+
+    /// The roast's events, `t` in seconds since CHARGE.
+    fn recipe_events(&self) -> Vec<(EventKind, f64)> {
+        let Some(roast) = &self.roast else {
+            return Vec::new();
+        };
+        let Some(charge) = roast.charge_t() else {
+            return Vec::new();
+        };
+        roast
+            .events
+            .iter()
+            .map(|e| (e.kind, e.t - charge))
+            .collect()
+    }
+
+    /// The recipe of a profile plan, fresh for a new roast; none for a roast
+    /// as reference.
+    fn reset_recipe(&mut self) {
+        self.recipe = self
+            .reference
+            .as_ref()
+            .filter(|r| r.kind == ReferenceKind::Profile && !r.actions.is_empty())
+            .map(|r| RecipeRun::new(&r.actions));
+    }
+
+    /// Whether the daemon sets the recipe's steps itself: an AI holds the
+    /// lease (ADR 0019). Without one the steps are cues for the person.
+    fn recipe_automatic(&self, now: f64) -> bool {
+        self.recipe.is_some()
+            && self.safety.ai_in_control(now)
+            && self.safety.status(now).lease_holder.as_deref() != Some(PREHEAT_HOLDER)
+    }
+
+    /// Where the roast expects dry end and first crack, and when it reaches a
+    /// temperature: the projection for the next milestone, else the plan.
+    fn with_outlook<R>(&self, since: Option<f64>, f: impl FnOnce(&Outlook<'_>) -> R) -> R {
+        let events = self.roast.as_ref().map_or(&[][..], |r| r.events.as_slice());
+        let charge_t = self.roast.as_ref().and_then(Roast::charge_t);
+        let projection = self.projection(events, charge_t);
+        let planned = |kind| {
+            self.reference
+                .as_ref()
+                .and_then(|r| r.event(kind))
+                .map(|e| e.t)
+        };
+        let expected = |kind| {
+            projection
+                .and_then(|p| p.next)
+                .filter(|m| m.kind == kind)
+                .and_then(|m| m.eta_s)
+                .zip(since)
+                .map(|(eta, s)| s + eta)
+                .or_else(|| planned(kind))
+        };
+        let reaches_bt = |bt: f64| {
+            self.reference.as_ref().and_then(|r| {
+                r.points
+                    .iter()
+                    .find(|p| p.t > 60.0 && p.bt.is_some_and(|b| b >= bt))
+                    .map(|p| p.t)
+            })
+        };
+        f(&Outlook {
+            dry_end: expected(EventKind::DryEnd),
+            first_crack: expected(EventKind::FirstCrackStart),
+            reaches_bt: &reaches_bt,
+        })
+    }
+
+    fn since_charge(&self) -> Option<f64> {
+        let charge = self.roast.as_ref().and_then(Roast::charge_t)?;
+        Some(self.latest_t() - charge)
+    }
+
+    fn recipe_status(&self, now: f64) -> Option<RecipeStatus> {
+        let run = self.recipe.as_ref()?;
+        let events = self.recipe_events();
+        let steps = self.with_outlook(self.since_charge(), |o| run.view(&events, o));
+        Some(RecipeStatus {
+            automatic: self.recipe_automatic(now),
+            adjusted: run.adjusted(),
+            steps,
+        })
+    }
+
+    fn next_step(&self, since: Option<f64>, now: f64) -> Option<NextStep> {
+        let run = self.recipe.as_ref()?;
+        let events = self.recipe_events();
+        let current = self.safety.status(now).actuators;
+        let next = self.with_outlook(since, |o| run.next(&events, o, &current));
+        let first = next.first()?;
+        Some(NextStep {
+            at_s: first.at_s,
+            in_s: since.zip(first.at_s).map(|(s, at)| at - s),
+            projected: first.projected,
+            label: first.label.clone(),
+            automatic: self.recipe_automatic(now),
+            set: next
+                .iter()
+                .map(|v| StepValue {
+                    step: v.step,
+                    actuator: v.actuator,
+                    value: v.value,
+                    current: current.get(&v.actuator).copied(),
+                })
+                .collect(),
+        })
+    }
+
+    /// Follows the recipe after CHARGE: steps whose trigger came are set
+    /// while an AI holds the lease, through the safety layer as the
+    /// autopilot, paced by its limits (ADR 0019).
+    fn run_recipe(&mut self) {
+        let now = self.now();
+        let Some(since) = self.since_charge() else {
+            return;
+        };
+        if self.preheat.is_some() || self.recipe.is_none() {
+            return;
+        }
+        let events = self.recipe_events();
+        let current = self.safety.status(now).actuators;
+        let bt = self.last_bt;
+        let automatic = self.recipe_automatic(now);
+        let Some(run) = self.recipe.as_mut() else {
+            return;
+        };
+        run.update(&RecipeInput {
+            since_charge: since,
+            bt,
+            events: &events,
+            current: &current,
+        });
+        if !automatic {
+            return;
+        }
+        let todo: Vec<(usize, PlannedAction, bool)> = run
+            .to_apply(since)
+            .iter()
+            .map(|s| (s.step, s.action, s.sent))
+            .collect();
+        for (step, action, sent_before) in todo {
+            let a = action.actuator;
+            if self
+                .safety
+                .rate_limited(a, action.value, CommandSource::Autopilot, now)
+            {
+                continue;
+            }
+            let label = trigger_label(&action.trigger);
+            let previous = current.get(&a).copied();
+            let outcome = self.command(CommandRequest {
+                actuator: a,
+                value: action.value,
+                source: CommandSource::Autopilot,
+                reason: Some(format!("recipe {label}: {a} {:.0} %", action.value)),
+            });
+            match outcome {
+                CommandOutcome::Applied { value, .. } => {
+                    if let Some(run) = self.recipe.as_mut() {
+                        run.sent(step, previous, value);
+                    }
+                    if !sent_before {
+                        self.alarm(
+                            "info",
+                            "recipe",
+                            format!("Recipe {label}: {a} {:.0} %.", action.value),
+                        );
+                    }
+                }
+                CommandOutcome::Rejected { reason } => {
+                    tracing::debug!("recipe step {step} refused: {reason:?}");
+                    if let Some(run) = self.recipe.as_mut() {
+                        run.refused(step, since + RECIPE_RETRY_S);
+                    }
+                }
+                CommandOutcome::AwaitingConfirmation { .. } => {}
+            }
+        }
+    }
+
+    /// Changes the remaining recipe for this roast only (ADR 0019): move,
+    /// change or skip steps. All changes apply, or none.
+    pub fn adjust_recipe(
+        &mut self,
+        changes: &[StepChange],
+        reason: Option<String>,
+        origin: EventOrigin,
+    ) -> Result<Snapshot, Fail> {
+        let run = self
+            .recipe
+            .as_ref()
+            .ok_or_else(|| Fail::conflict("the plan has no recipe (set a profile)", None))?;
+        if changes.is_empty() {
+            return Err(Fail::bad("no changes"));
+        }
+        let mut next = run.clone();
+        for c in changes {
+            next.adjust(c).map_err(|e| Fail::bad(e.to_string()))?;
+        }
+        let describe = |c: &StepChange| {
+            let s = &next.steps()[c.step];
+            let what = if s.state == StepState::Skipped {
+                "skipped".to_owned()
+            } else {
+                format!(
+                    "{} {} {:.0} %",
+                    trigger_label(&s.action.trigger),
+                    s.action.actuator,
+                    s.action.value
+                )
+            };
+            format!(
+                "step {} ({}): {what}",
+                c.step,
+                trigger_label(&s.planned.trigger)
+            )
+        };
+        let summary = changes.iter().map(describe).collect::<Vec<_>>().join("; ");
+        self.recipe = Some(next);
+        let who = match origin {
+            EventOrigin::Ai => "AI",
+            _ => "person",
+        };
+        let text = match &reason {
+            Some(r) => format!("Recipe for this roast ({who}): {summary}. {r}"),
+            None => format!("Recipe for this roast ({who}): {summary}."),
+        };
+        self.audit(serde_json::json!({
+            "type": "recipe_adjusted",
+            "changes": summary,
+            "reason": reason,
+            "origin": origin,
+        }));
+        let t = self.points.last().map(|p| p.t);
+        if let Some(roast) = &mut self.roast {
+            roast.notes.push(Note {
+                t,
+                text: text.clone(),
+                origin,
+            });
+        }
+        self.alarm("info", "recipe", text);
+        self.run_recipe();
+        self.publish(None);
+        Ok(self.snapshot())
+    }
+
+    /// CHARGE, marked or detected: the preheat ends, the recipe's CHARGE
+    /// step may jump for 10 s, and a person who marked it in the app is at
+    /// the roaster - that confirms presence (ADR 0019).
+    fn on_charge(&mut self, origin: EventOrigin) {
+        let now = self.now();
+        if origin == EventOrigin::Human {
+            self.safety.confirm_presence(now);
+            self.control_request = None;
+            self.audit(serde_json::json!({"type": "presence", "why": "charge"}));
+        }
+        self.safety.allow_charge_jump(now);
+        if self.preheat.is_some() {
+            let ai = self
+                .safety
+                .status(now)
+                .lease_holder
+                .filter(|h| h != PREHEAT_HOLDER);
+            let message = match (&ai, &self.recipe) {
+                (Some(h), Some(_)) => {
+                    format!("CHARGE - preheat ended; AI ({h}) follows the recipe.")
+                }
+                (Some(h), None) => format!("CHARGE - preheat ended; AI ({h}) has control."),
+                (None, _) => "CHARGE - preheat ended, you have control.".to_owned(),
+            };
+            self.end_preheat(&message);
+        }
+        self.run_recipe();
     }
 
     // ---------------------------------------------------------------- preheat
@@ -687,6 +982,7 @@ impl Engine {
             air,
             last_seen_t: None,
             last_raise: None,
+            ai_holder: None,
         });
         self.audit(serde_json::json!({
             "type": "preheat_started",
@@ -745,23 +1041,62 @@ impl Engine {
             return;
         }
         let status = self.safety.status(now);
-        if status.lease_holder.as_deref() != Some(PREHEAT_HOLDER) {
-            // A manual command ended preheat; that suspends automation, but
-            // no AI was in control, so do not report the AI as paused.
-            if status.lease_holder.is_none() && status.ai_suspended {
-                self.safety.resume_ai();
+        let ai_before = p.ai_holder.clone();
+        match status.lease_holder.as_deref() {
+            Some(PREHEAT_HOLDER) => {}
+            // An AI took over before CHARGE: the preheat keeps holding under
+            // its lease, with its presence interval (ADR 0019).
+            Some(holder) => {
+                let holder = holder.to_owned();
+                if let Some(p) = self.preheat.as_mut() {
+                    p.ai_holder = Some(holder);
+                }
             }
-            self.end_preheat("Preheat ended - you have control.");
-            return;
+            None if status.ai_suspended => {
+                // A person took over (or presence was missed). Without an AI
+                // in control, do not report the AI as paused.
+                if ai_before.is_none() {
+                    self.safety.resume_ai();
+                }
+                self.end_preheat("Preheat ended - you have control.");
+                return;
+            }
+            // The AI released control or stopped renewing its lease before
+            // CHARGE: the preheat holds on under its own lease.
+            None => {
+                if let Some(p) = self.preheat.as_mut() {
+                    p.ai_holder = None;
+                }
+                if self.safety.acquire_lease(PREHEAT_HOLDER, now).is_err() {
+                    self.end_preheat(
+                        "Preheat ended: presence not confirmed or control not allowed.",
+                    );
+                    return;
+                }
+                if ai_before.is_some() {
+                    self.alarm(
+                        "info",
+                        "preheat",
+                        "The preheat holds on until CHARGE.".to_owned(),
+                    );
+                    self.publish(None);
+                }
+            }
         }
+        let own_lease = self.safety.status(now).lease_holder.as_deref() == Some(PREHEAT_HOLDER);
         // One decision per reading.
         let Some(t) = self.last_reading_t else {
+            return;
+        };
+        let Some(p) = self.preheat.as_ref() else {
             return;
         };
         if p.last_seen_t.is_some_and(|seen| seen >= t) {
             return;
         }
-        if self.safety.acquire_lease(PREHEAT_HOLDER, now).is_err() {
+        // Under its own lease the preheat renews it; under an AI's lease
+        // only the AI does (the lease is its sign of life).
+        if own_lease && self.safety.acquire_lease(PREHEAT_HOLDER, now).is_err() {
             self.end_preheat("Preheat ended: presence not confirmed or control not allowed.");
             return;
         }
@@ -824,6 +1159,7 @@ impl Engine {
                 Some(ReferenceCurve::from_roast(&roast, &RorConfig::default()))
             }
         };
+        self.reset_recipe();
         self.audit(serde_json::json!({"type": "reference", "id": id}));
         self.publish(None);
         Ok(self.snapshot())
@@ -845,6 +1181,7 @@ impl Engine {
     pub fn set_reference_profile(&mut self, version_id: uuid::Uuid) -> Result<Snapshot, Fail> {
         let (profile, version) = self.profiles.version(version_id)?;
         self.reference = Some(ReferenceCurve::from_profile(&profile, &version));
+        self.reset_recipe();
         self.audit(serde_json::json!({"type": "reference", "profile_version": version_id}));
         self.publish(None);
         Ok(self.snapshot())
@@ -1133,10 +1470,12 @@ impl Engine {
             }
         }
         let mut dropped = false;
+        let mut charged = false;
         for e in found {
             match e.kind {
                 EventKind::Charge if self.state == RoastState::Recording => {
                     self.state = RoastState::Charged;
+                    charged = true;
                     self.alarm("info", "auto_event", "CHARGE detected.".to_owned());
                 }
                 EventKind::Drop => {
@@ -1152,6 +1491,12 @@ impl Engine {
             self.audit(serde_json::json!({"type": "event", "event": e}));
         }
         self.points.push(point.clone());
+        if charged {
+            // A detected CHARGE does not confirm presence: nobody pressed anything.
+            self.on_charge(EventOrigin::Auto);
+        } else if !dropped {
+            self.run_recipe();
+        }
         self.cool_before_drop();
         self.publish(Some(&point));
         if dropped {
@@ -1262,6 +1607,14 @@ impl Engine {
         if let (Some(c), Some(d)) = (&cmd, &self.driver) {
             let _ = d.send(DriverCmd::Apply(*c));
         }
+        // The AI's own command takes the place of the recipe step due on that
+        // actuator; later steps still come (ADR 0019).
+        if req.source == CommandSource::Ai
+            && cmd.is_some()
+            && let Some(run) = self.recipe.as_mut()
+        {
+            run.overridden(req.actuator);
+        }
         let entry = ControlLogEntry {
             t: self.roast.as_ref().map(|_| self.latest_t()),
             at: Utc::now(),
@@ -1332,7 +1685,22 @@ impl Engine {
                 self.control_request = None;
                 if before.as_deref() != Some(holder) {
                     self.audit(serde_json::json!({"type": "lease", "holder": holder}));
-                    self.alarm("info", "ai_control", format!("AI ({holder}) has control."));
+                    let message = match (&self.preheat, &self.recipe) {
+                        (Some(p), Some(_)) => format!(
+                            "AI ({holder}) has control. The preheat holds {:.0} °C until CHARGE; then the recipe runs.",
+                            p.ctl.target_c()
+                        ),
+                        (Some(p), None) => format!(
+                            "AI ({holder}) has control. The preheat holds {:.0} °C until CHARGE.",
+                            p.ctl.target_c()
+                        ),
+                        (None, Some(_)) => {
+                            format!("AI ({holder}) has control and follows the recipe.")
+                        }
+                        (None, None) => format!("AI ({holder}) has control."),
+                    };
+                    self.alarm("info", "ai_control", message);
+                    self.run_recipe();
                     self.publish(None);
                 }
                 Ok(LeaseInfo {
@@ -1367,9 +1735,11 @@ impl Engine {
         self.publish(None);
     }
 
-    /// The AI gives up control; actuators hold.
+    /// The AI gives up control; actuators hold. The preheat's own lease is
+    /// not the AI's to release.
     pub fn release_lease(&mut self) -> Snapshot {
-        if self.safety.status(self.now()).lease_holder.is_some() {
+        let holder = self.safety.status(self.now()).lease_holder;
+        if holder.is_some() && holder.as_deref() != Some(PREHEAT_HOLDER) {
             self.safety.release_lease();
             self.audit(serde_json::json!({"type": "lease_released"}));
             self.alarm(
@@ -1377,6 +1747,8 @@ impl Engine {
                 "ai_released",
                 "AI released control - you have control.",
             );
+            // A running preheat takes its lease back and says so.
+            self.preheat_step(self.now());
             self.publish(None);
         }
         self.snapshot()
@@ -1459,6 +1831,7 @@ impl Engine {
             notes: Vec::new(),
         });
         self.reset_curve();
+        self.reset_recipe();
         self.state = RoastState::Recording;
         self.last_autosave = Instant::now();
         self.audit(serde_json::json!({"type": "recording_started"}));
@@ -1473,6 +1846,7 @@ impl Engine {
         let credited_g = self.inventory.remove_roast_debit(id)?;
         if self.reference.as_ref().is_some_and(|r| r.id == id) {
             self.reference = None;
+            self.reset_recipe();
         }
         self.audit(serde_json::json!({
             "type": "roast_deleted",
@@ -1559,6 +1933,8 @@ impl Engine {
             }
         };
         files::clear_autosave(&self.opts.roasts_dir);
+        // The next roast starts the recipe afresh.
+        self.reset_recipe();
         if let Err(e) = self.inventory.sync_roast_debit(&roast) {
             self.alarm(
                 "warning",
@@ -1606,6 +1982,8 @@ impl Engine {
         // A marked event replaces one of the same kind, a detected one
         // included: phases, DTR, the plan and the archive use the marked one.
         let mut replaced = None;
+        let first_charge = kind == EventKind::Charge
+            && self.roast.as_ref().is_some_and(|r| r.charge_t().is_none());
         if let Some(roast) = &mut self.roast {
             let detected = roast
                 .events
@@ -1642,6 +2020,15 @@ impl Engine {
             let _ = d.send(DriverCmd::Event(kind));
         }
         self.audit(serde_json::json!({"type": "event", "event": event}));
+        if first_charge {
+            self.on_charge(origin);
+        } else if kind == EventKind::Charge && origin == EventOrigin::Human {
+            // Marked over a detected CHARGE: the person is at the roaster.
+            self.safety.confirm_presence(self.now());
+        } else if kind != EventKind::Drop {
+            // Steps after dry end or first crack start from the marked event.
+            self.run_recipe();
+        }
         self.publish(None);
         if kind == EventKind::Drop {
             self.after_drop();
@@ -1832,6 +2219,7 @@ fn machine_info(p: &MachineProfile, simulated: bool, port: Option<String>) -> Ma
         max_bt_c: p.limits.max_bt_c,
         link_loss_tested: p.link_loss.tested,
         link_lost: p.link_loss.tested.then(|| p.link_loss.link_lost.clone()),
+        takeover_actuators: p.limits.takeover_actuators(),
     }
 }
 
@@ -2127,6 +2515,270 @@ mod tests {
                     && a.message.contains("replaces the one detected")),
             "{:?}",
             s.alarms
+        );
+    }
+
+    /// A profile whose recipe sets the burner to 85 % at CHARGE and to 60 %
+    /// 30 s after first crack; returns its version's id.
+    fn profile_with_recipe(e: &mut Engine) -> uuid::Uuid {
+        use roast_core::{ActionTrigger, RecipeAnchor};
+        let m = roast_core::design::TEMPLATE_MILESTONES;
+        let curve = roast_core::design::template_curve(&m);
+        let actions = [
+            PlannedAction {
+                trigger: ActionTrigger::Time { roast_time_s: 0.0 },
+                actuator: Actuator::Burner,
+                value: 85.0,
+            },
+            PlannedAction {
+                trigger: ActionTrigger::Event {
+                    event: RecipeAnchor::FirstCrackStart,
+                    offset_s: 30.0,
+                },
+                actuator: Actuator::Burner,
+                value: 60.0,
+            },
+        ];
+        let target = roast_core::design::to_target(&curve, &m, &actions);
+        let detail = e
+            .profiles
+            .create(
+                crate::profiles::NewProfile {
+                    name: "Test".into(),
+                    description: None,
+                    intended_beans: None,
+                    batch_size_g: None,
+                    target,
+                    change_note: None,
+                },
+                None,
+            )
+            .unwrap();
+        let v = serde_json::to_value(&detail).unwrap();
+        uuid::Uuid::parse_str(v["versions"][0]["id"].as_str().unwrap()).unwrap()
+    }
+
+    fn with_profile(e: &mut Engine) {
+        let version = profile_with_recipe(e);
+        e.start_recording(RecordingMeta {
+            plan: Some(RoastPlan {
+                profile_version_id: Some(version),
+                ..RoastPlan::default()
+            }),
+            ..RecordingMeta::default()
+        })
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_ai_takes_over_during_the_preheat_which_holds_until_charge() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| {
+                e.start_preheat(200.0, Some(20.0)).unwrap();
+                e.acquire_lease("mcp:claude").unwrap();
+                e.on_tick();
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert!(s.preheat.is_some(), "the preheat keeps holding");
+        assert_eq!(s.safety.lease_holder.as_deref(), Some("mcp:claude"));
+        assert!(
+            s.safety.presence_due_in_s.unwrap() < 181.0,
+            "the AI confirms every 3 min"
+        );
+        // The AI lets go before CHARGE: the preheat takes its lease back.
+        let s = h
+            .call(|e| {
+                e.release_lease();
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert!(s.preheat.is_some());
+        assert_eq!(s.safety.lease_holder.as_deref(), Some(PREHEAT_HOLDER));
+        // A person's filter does not end anything; their burner does.
+        let s = h
+            .call(|e| {
+                e.acquire_lease("mcp:claude").unwrap();
+                e.command(CommandRequest {
+                    actuator: Actuator::Filter,
+                    value: 60.0,
+                    source: CommandSource::Human,
+                    reason: None,
+                });
+                e.on_tick();
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert!(s.preheat.is_some());
+        assert_eq!(s.safety.lease_holder.as_deref(), Some("mcp:claude"));
+        let s = h
+            .call(|e| {
+                e.command(CommandRequest {
+                    actuator: Actuator::Burner,
+                    value: 30.0,
+                    source: CommandSource::Human,
+                    reason: None,
+                });
+                e.on_tick();
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert!(s.preheat.is_none());
+        assert!(s.safety.ai_suspended, "an AI was in control");
+    }
+
+    #[tokio::test]
+    async fn the_recipe_runs_under_the_ai_from_a_persons_charge() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| {
+                with_profile(e);
+                e.start_preheat(200.0, Some(20.0)).unwrap();
+                e.acquire_lease("mcp:claude").unwrap();
+                // Holding power, as the preheat would have it.
+                e.command(CommandRequest {
+                    actuator: Actuator::Burner,
+                    value: 36.0,
+                    source: CommandSource::Ai,
+                    reason: Some("test".into()),
+                });
+                e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert!(s.preheat.is_none());
+        assert_eq!(s.safety.lease_holder.as_deref(), Some("mcp:claude"));
+        // The CHARGE step jumps: no 10-point ramp in the first 10 s.
+        assert_eq!(actuator(&s, Actuator::Burner), Some(85.0));
+        let recipe = s.recipe.unwrap();
+        assert!(recipe.automatic);
+        assert_eq!(recipe.steps[0].state, StepState::Done);
+        let next = s.reference.unwrap().next_step.unwrap();
+        assert!(next.automatic && next.projected);
+        assert_eq!(next.label, "FC +0:30");
+
+        // First crack, marked 40 s ago: its step comes now.
+        let s = h
+            .call(|e| {
+                e.mark_event(EventKind::FirstCrackStart, EventOrigin::Ai)
+                    .unwrap();
+                let roast = e.roast.as_mut().unwrap();
+                for ev in &mut roast.events {
+                    if ev.kind == EventKind::FirstCrackStart {
+                        ev.t -= 40.0;
+                    }
+                }
+                e.run_recipe();
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert_eq!(actuator(&s, Actuator::Burner), Some(60.0));
+        assert!(
+            s.alarms
+                .iter()
+                .any(|a| a.message == "Recipe FC +0:30: burner 60 %."),
+            "{:?}",
+            s.alarms
+        );
+        let log = h
+            .call(|e| e.roast.as_ref().unwrap().control_log.clone())
+            .await
+            .unwrap();
+        assert!(
+            log.iter()
+                .any(|l| l.request.source == CommandSource::Autopilot
+                    && l.request.reason.as_deref() == Some("recipe 0:00: burner 85 %"))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_persons_charge_confirms_presence_a_detected_one_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let (detected, marked) = h
+            .call(|e| {
+                e.start_recording(RecordingMeta::default()).unwrap();
+                e.on_charge(EventOrigin::Auto);
+                let detected = e.snapshot().safety.presence_due_in_s;
+                e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+                (detected, e.snapshot().safety.presence_due_in_s)
+            })
+            .await
+            .unwrap();
+        assert_eq!(detected, None);
+        assert!(marked.is_some_and(|d| d > 170.0), "{marked:?}");
+    }
+
+    #[tokio::test]
+    async fn without_an_ai_the_recipe_is_a_cue_and_can_be_adjusted_for_this_roast() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| {
+                with_profile(e);
+                e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert_ne!(actuator(&s, Actuator::Burner), Some(85.0), "a cue only");
+        let recipe = s.recipe.unwrap();
+        assert!(!recipe.automatic);
+        assert!(!s.reference.unwrap().next_step.unwrap().automatic);
+
+        let unknown = h
+            .call(|e| {
+                e.adjust_recipe(
+                    &[StepChange {
+                        step: 7,
+                        skip: Some(true),
+                        ..StepChange::default()
+                    }],
+                    None,
+                    EventOrigin::Ai,
+                )
+                .map(|_| ())
+            })
+            .await
+            .unwrap();
+        assert_eq!(unknown.unwrap_err().status, 400);
+        let s = h
+            .call(|e| {
+                e.adjust_recipe(
+                    &[StepChange {
+                        step: 1,
+                        shift_s: Some(15.0),
+                        value: Some(55.0),
+                        skip: None,
+                    }],
+                    Some("first crack runs hot".into()),
+                    EventOrigin::Ai,
+                )
+                .unwrap()
+            })
+            .await
+            .unwrap();
+        let recipe = s.recipe.unwrap();
+        assert!(recipe.adjusted);
+        assert_eq!(recipe.steps[1].label, "FC +0:45");
+        assert_eq!(recipe.steps[1].planned_value, Some(60.0));
+        let notes = h
+            .call(|e| e.roast.as_ref().unwrap().notes.clone())
+            .await
+            .unwrap();
+        assert!(
+            notes.iter().any(|n| n.text.contains("FC +0:45 burner 55 %")
+                && n.text.contains("first crack runs hot")),
+            "{notes:?}"
         );
     }
 }

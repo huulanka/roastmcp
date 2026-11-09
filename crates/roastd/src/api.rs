@@ -64,6 +64,7 @@ pub fn router(state: AppState, ui_dir: Option<PathBuf>) -> Router {
         .route("/events", post(mark_event))
         .route("/events/{kind}", delete(unmark_event))
         .route("/notes", post(note))
+        .route("/recipe/adjust", post(recipe_adjust))
         .route("/roasts", get(roasts))
         .route(
             "/roasts/{id}",
@@ -375,6 +376,30 @@ async fn note(State(st): State<AppState>, Json(b): Json<NoteBody>) -> impl IntoR
         _ => EventOrigin::Human,
     };
     flat(st.engine.call(move |e| e.add_note(b.text, origin)).await)
+}
+
+#[derive(Deserialize)]
+struct RecipeAdjustBody {
+    changes: Vec<roast_control::StepChange>,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    origin: Option<EventOrigin>,
+}
+
+async fn recipe_adjust(
+    State(st): State<AppState>,
+    Json(b): Json<RecipeAdjustBody>,
+) -> impl IntoResponse {
+    let origin = match b.origin {
+        Some(EventOrigin::Ai) => EventOrigin::Ai,
+        _ => EventOrigin::Human,
+    };
+    flat(
+        st.engine
+            .call(move |e| e.adjust_recipe(&b.changes, b.reason, origin))
+            .await,
+    )
 }
 
 async fn roasts(State(st): State<AppState>) -> impl IntoResponse {

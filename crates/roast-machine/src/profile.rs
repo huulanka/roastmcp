@@ -533,6 +533,27 @@ pub struct Limits {
     /// 3 min interval (ADR 0018).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preheat_presence_interval_s: Option<f64>,
+    /// The actuators on which a person's command ends AI control: the heat
+    /// loop the AI steers (ADR 0019). Changes to the others (filter,
+    /// cooling) are applied and leave the AI in control. Must include the
+    /// burner; burner, air and drum if not set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub takeover_actuators: Option<Vec<Actuator>>,
+}
+
+/// The actuators on which a person's command ends AI control when the
+/// machine profile names none.
+pub const DEFAULT_TAKEOVER_ACTUATORS: [Actuator; 3] =
+    [Actuator::Burner, Actuator::Air, Actuator::Drum];
+
+impl Limits {
+    /// The actuators on which a person's command ends AI control.
+    #[must_use]
+    pub fn takeover_actuators(&self) -> Vec<Actuator> {
+        self.takeover_actuators
+            .clone()
+            .unwrap_or_else(|| DEFAULT_TAKEOVER_ACTUATORS.to_vec())
+    }
 }
 
 /// What the machine can do beyond its actuators.
