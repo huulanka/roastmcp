@@ -116,6 +116,32 @@ over MCP without sending commands. Background for
 - **Presence:** the confirmation was missed twice, each time 210 s (3 min
   plus 30 s grace) after the last one. The app sounded only with the alarm.
 
+## The third real preheat (air 20 %, ADR 0018 acceptance)
+
+2026-11-09 evening, Skywalker Cubean+, empty drum from 23 °C, target 200 °C,
+air 20 % throughout, the build of ADR 0018 (holding power estimate 39 %, no
+learned values for air 20 %). A read-only watcher polled the status every
+5 s.
+
+- **Ramp:** 10 points every 10 s to 90 % in 1:25.
+- **Step to hold:** at 8:36 and 191.5 °C (RoR 13.6 °C/min), 90 → 53 %:
+  39 % plus a boost of 14.
+- **Hold:** 53 → 50 % at 9:26 (196.1 °C, still rising at 3.2 °C/min), then
+  50 → 40 → 34 → 30 → 24 % between 11:21 and 13:41, every 45–50 s, at
+  202–203 °C. Peak 203.2 °C. Then 24 → 34 → 39 % at 14:51 and 15:36
+  (197.7 °C), and 39 → 29 % at 18:47. CHARGE at 20:37 at 198.1 °C.
+- **Acceptance:** 4 changes in the first 5 min of holding (at most 3
+  wanted), 58 % of the hold within ±2 °C. Two presence confirmations with
+  gong and Space; the passing driver error from before the start did not
+  stick.
+- **Response of the machine:** after the isolated cut 39 → 29 % the RoR
+  went 2.5 → −1.4 (15 s) → −2.9 (45 s) → −3.3 °C/min (90 s). A burner change
+  shows within 15–30 s, turns the curve after about 45 s and has its full
+  effect after about 90 s. The cuts at 12:06 and 12:51 came while the RoR
+  was already −0.2 and −0.5 °C/min.
+- **Learned (air 20 %):** 0.434 °C/min per burner percent, holding power
+  35.9 % for 200 °C.
+
 ## The roaster's Artisan preheats
 
 From the roaster's 23 Artisan files of the Cubean+ (June–November 2026):

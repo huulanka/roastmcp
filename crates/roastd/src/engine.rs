@@ -220,6 +220,8 @@ struct RecordingInfo {
     beans: Option<String>,
     lot_id: Option<uuid::Uuid>,
     plan: Option<RoastPlan>,
+    /// The batch number for the label (not in the simulator).
+    batch_no: Option<String>,
 }
 
 /// The state shown by the UI and the AI.
@@ -297,6 +299,8 @@ struct StepValue {
 }
 
 /// A recipe step stays due this long after its time, s (as in the app).
+/// The bean cooling goes on this long before the planned DROP, s.
+const COOL_BEFORE_DROP_S: f64 = 30.0;
 const RECIPE_GRACE_S: f64 = 30.0;
 
 /// The curve so far.
@@ -385,6 +389,8 @@ pub struct Engine {
     last_reading_t: Option<f64>,
     last_reading: Option<Instant>,
     stale_alarmed: bool,
+    /// The bean cooling went on ahead of DROP in this roast (once per roast).
+    cooled_before_drop: bool,
     last_autosave: Instant,
 
     alarms: VecDeque<Alarm>,
@@ -437,6 +443,7 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
         last_reading_t: None,
         last_reading: None,
         stale_alarmed: false,
+        cooled_before_drop: false,
         control_request: None,
         last_autosave: Instant::now(),
         alarms: VecDeque::new(),
@@ -527,6 +534,7 @@ impl Engine {
                 beans: r.batch.beans.clone(),
                 lot_id: r.green_lot_id,
                 plan: r.plan.clone(),
+                batch_no: r.batch.batch_no.clone(),
             }),
             t,
             charge_t,
@@ -1144,8 +1152,10 @@ impl Engine {
             self.audit(serde_json::json!({"type": "event", "event": e}));
         }
         self.points.push(point.clone());
+        self.cool_before_drop();
         self.publish(Some(&point));
         if dropped {
+            self.after_drop();
             // Same as the DROP button: the roast is saved at once. The event
             // is dated at the peak, where the beans left the drum.
             self.alarm(
@@ -1417,6 +1427,7 @@ impl Engine {
         if let (Some(l), Some(b)) = (lot.as_ref(), batch_no.as_deref()) {
             self.inventory.adopt_batch_code(l.id, b);
         }
+        self.cooled_before_drop = false;
         let profile = self.profile.as_ref();
         self.roast = Some(Roast {
             id: uuid::Uuid::new_v4(),
@@ -1592,10 +1603,34 @@ impl Engine {
             origin,
             bt: self.last_bt,
         };
+        // A marked event replaces one of the same kind, a detected one
+        // included: phases, DTR, the plan and the archive use the marked one.
+        let mut replaced = None;
         if let Some(roast) = &mut self.roast {
+            let detected = roast
+                .events
+                .iter()
+                .find(|e| e.kind == kind && e.origin == EventOrigin::Auto)
+                .map(|e| e.t);
+            replaced = detected.zip(roast.charge_t());
             roast.events.retain(|e| e.kind != kind);
             roast.events.push(event.clone());
             roast.events.sort_by(|a, b| a.t.total_cmp(&b.t));
+        }
+        if let Some((old, charge)) = replaced.filter(|_| kind != EventKind::Charge) {
+            let clock = |t: f64| {
+                let s = (t - charge).max(0.0).round() as i64;
+                format!("{}:{:02}", s / 60, s % 60)
+            };
+            self.alarm(
+                "info",
+                "event_replaced",
+                format!(
+                    "{kind} marked at {}; it replaces the one detected at {} (phases, DTR and the plan use the marked one).",
+                    clock(t),
+                    clock(old)
+                ),
+            );
         }
         match kind {
             EventKind::Charge => self.state = RoastState::Charged,
@@ -1609,12 +1644,113 @@ impl Engine {
         self.audit(serde_json::json!({"type": "event", "event": event}));
         self.publish(None);
         if kind == EventKind::Drop {
+            self.after_drop();
             // Nothing after the drop is measured usefully (the only probe sits
-            // in the drum), so the roast is saved right away. Cooling stays a
-            // switch under the controls; the safety layer keeps running.
+            // in the drum), so the roast is saved right away.
             self.stop_recording()?;
         }
         Ok(event)
+    }
+
+    /// At DROP the beans are out: the burner goes off and the bean cooling on,
+    /// whoever was in control, and an AI hands control back to the person.
+    /// Both commands come from the safety layer, so they work without a lease
+    /// and do not count as the person taking over.
+    fn after_drop(&mut self) {
+        let now = self.now();
+        let holder = self.safety.status(now).lease_holder;
+        self.command(CommandRequest {
+            actuator: Actuator::Burner,
+            value: 0.0,
+            source: CommandSource::Safety,
+            reason: Some("DROP: burner off".to_owned()),
+        });
+        let cooling_on = self
+            .safety
+            .status(now)
+            .actuators
+            .get(&Actuator::Cooling)
+            .is_some_and(|&v| v > 0.0);
+        if self.has_switch(Actuator::Cooling) && !cooling_on {
+            self.command(CommandRequest {
+                actuator: Actuator::Cooling,
+                value: 100.0,
+                source: CommandSource::Safety,
+                reason: Some("DROP: bean cooling on".to_owned()),
+            });
+        }
+        if let Some(h) = holder.filter(|h| h != PREHEAT_HOLDER) {
+            self.safety.release_lease();
+            self.audit(serde_json::json!({"type": "lease_released", "holder": h, "why": "drop"}));
+            self.alarm(
+                "info",
+                "ai_control",
+                format!("DROP: burner off, bean cooling on. AI ({h}) handed control back to you."),
+            );
+        } else {
+            self.alarm(
+                "info",
+                "drop",
+                "DROP: burner off, bean cooling on.".to_owned(),
+            );
+        }
+    }
+
+    /// Switches the bean cooling on once the bean temperature will reach the
+    /// planned DROP within 30 s, so the tray is turning when the beans
+    /// arrive. Once per roast: if the person switches it off again, it stays
+    /// off until DROP.
+    fn cool_before_drop(&mut self) {
+        if self.state != RoastState::Charged
+            || self.cooled_before_drop
+            || !self.has_switch(Actuator::Cooling)
+        {
+            return;
+        }
+        let Some(roast) = &self.roast else {
+            return;
+        };
+        let target = roast.plan.as_ref().and_then(|p| p.drop_bt_c).or_else(|| {
+            self.reference
+                .as_ref()
+                .and_then(|r| r.event(EventKind::Drop))
+                .and_then(|e| e.bt)
+        });
+        let (Some(target), Some(bt), Some(ror)) = (target, self.last_bt, self.last_ror) else {
+            return;
+        };
+        if bt + ror.max(0.0) * COOL_BEFORE_DROP_S / 60.0 < target {
+            return;
+        }
+        self.cooled_before_drop = true;
+        let now = self.now();
+        let on = self
+            .safety
+            .status(now)
+            .actuators
+            .get(&Actuator::Cooling)
+            .is_some_and(|&v| v > 0.0);
+        if !on {
+            self.command(CommandRequest {
+                actuator: Actuator::Cooling,
+                value: 100.0,
+                source: CommandSource::Safety,
+                reason: Some(format!(
+                    "DROP expected within {COOL_BEFORE_DROP_S:.0} s: bean cooling on"
+                )),
+            });
+            self.alarm(
+                "info",
+                "cooling",
+                format!("DROP at {target:.0} °C expected within {COOL_BEFORE_DROP_S:.0} s: bean cooling on."),
+            );
+        }
+    }
+
+    fn has_switch(&self, a: Actuator) -> bool {
+        self.machine
+            .as_ref()
+            .is_some_and(|m| m.switches.contains(&a))
     }
 
     /// Removes an event (undo).
@@ -1853,5 +1989,144 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         panic!("connection_error stuck after new readings");
+    }
+
+    fn actuator(s: &Snapshot, a: Actuator) -> Option<f64> {
+        s.safety.actuators.get(&a).copied()
+    }
+
+    #[tokio::test]
+    async fn drop_turns_the_burner_off_the_cooling_on_and_ends_ai_control() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        h.call(|e| e.mark_event(EventKind::Charge, EventOrigin::Human))
+            .await
+            .unwrap()
+            .unwrap();
+        h.call(|e| {
+            e.command(CommandRequest {
+                actuator: Actuator::Burner,
+                value: 60.0,
+                source: CommandSource::Human,
+                reason: None,
+            });
+            e.resume_ai();
+            e.confirm_presence();
+            e.acquire_lease("claude").map(|_| ())
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        let s = h
+            .call(|e| {
+                e.mark_event(EventKind::Drop, EventOrigin::Human).unwrap();
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert_eq!(actuator(&s, Actuator::Burner), Some(0.0));
+        assert_eq!(actuator(&s, Actuator::Cooling), Some(100.0));
+        assert_eq!(s.safety.lease_holder, None);
+        assert!(!s.safety.ai_suspended, "handing back is not a takeover");
+        assert!(
+            s.alarms
+                .iter()
+                .any(|a| a.message.contains("handed control back")),
+            "{:?}",
+            s.alarms
+        );
+    }
+
+    #[tokio::test]
+    async fn the_cooling_starts_once_30_s_before_the_planned_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        h.call(|e| {
+            e.start_recording(RecordingMeta {
+                plan: Some(RoastPlan {
+                    drop_bt_c: Some(205.0),
+                    ..RoastPlan::default()
+                }),
+                ..RecordingMeta::default()
+            })
+            .map(|_| ())
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        h.call(|e| {
+            e.mark_event(EventKind::Charge, EventOrigin::Human)
+                .map(|_| ())
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        let cooling_at = |bt: f64, ror: f64| {
+            h.call(move |e| {
+                e.last_bt = Some(bt);
+                e.last_ror = Some(ror);
+                e.cool_before_drop();
+                actuator(&e.snapshot(), Actuator::Cooling)
+            })
+        };
+        // 40 s away at 6 °C/min: not yet.
+        assert_ne!(cooling_at(201.0, 6.0).await.unwrap(), Some(100.0));
+        // 30 s away: on.
+        assert_eq!(cooling_at(202.0, 6.0).await.unwrap(), Some(100.0));
+        // Switched off by the person: it stays off until DROP.
+        h.call(|e| {
+            e.command(CommandRequest {
+                actuator: Actuator::Cooling,
+                value: 0.0,
+                source: CommandSource::Human,
+                reason: None,
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(cooling_at(203.0, 6.0).await.unwrap(), Some(0.0));
+    }
+
+    #[tokio::test]
+    async fn a_marked_dry_end_replaces_the_detected_one_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        h.call(|e| {
+            e.mark_event(EventKind::Charge, EventOrigin::Human)
+                .map(|_| ())
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        let s = h
+            .call(|e| {
+                let roast = e.roast.as_mut().unwrap();
+                let charge = roast.charge_t().unwrap();
+                roast.events.push(RoastEvent {
+                    t: charge - 45.0,
+                    kind: EventKind::DryEnd,
+                    origin: EventOrigin::Auto,
+                    bt: Some(150.0),
+                });
+                e.mark_event(EventKind::DryEnd, EventOrigin::Human).unwrap();
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        let dry: Vec<_> = s
+            .events
+            .iter()
+            .filter(|e| e.kind == EventKind::DryEnd)
+            .collect();
+        assert_eq!(dry.len(), 1);
+        assert_eq!(dry[0].origin, EventOrigin::Human);
+        assert!(
+            s.alarms
+                .iter()
+                .any(|a| a.kind == "event_replaced"
+                    && a.message.contains("replaces the one detected")),
+            "{:?}",
+            s.alarms
+        );
     }
 }

@@ -178,8 +178,9 @@ Initial tools:
 |---|---|
 | `get_status` | Machine, connection, roast state, latest values, alarms, who is in control |
 | `get_curve` | Current roast curve (downsampled), events, phases, deviation from reference |
-| `mark_event` | CHARGE, DRY END, FC/SC start/end, DROP (subject to safety rules) |
-| `set_burner` / `set_air` / `set_drum` | Actuator changes through the safety layer, with a reason |
+| `mark_event` | CHARGE, DRY END, FC/SC start/end, DROP (subject to safety rules); a marked event replaces a detected one |
+| `wait` | Waits up to 30 s, then a compact status with only new events and alarms |
+| `set_burner` / `set_air` / `set_drum` / `set_filter` / `set_cooling` | Actuator changes through the safety layer, with a reason |
 | `emergency_stop` | Immediate safe state |
 | `start_autopilot` / `adjust_autopilot` / `stop_autopilot` | Run a profile; change targets |
 | `list_roasts` / `get_roast` / `compare_roasts` | Archive access and analysis |

@@ -383,16 +383,56 @@ fn holding_corrects_only_when_measured_and_predicted_agree() {
         })
         .is_none()
     );
-    // Both out on the same side: one correction of at most 10 points.
+    // Both out on the same side, and the step to hold has had its full
+    // effect: one correction of at most 10 points.
     let d = ctl
         .step(PreheatInput {
-            t: 63.0,
+            t: 93.0,
             bt: 203.0,
             ror: Some(8.0),
             burner,
         })
         .expect("a correction");
     assert!(d.burner < burner && burner - d.burner <= 10.0, "{d:?}");
+}
+
+#[test]
+fn holding_waits_for_a_change_to_work_before_the_next() {
+    // The first real run at air 20 % (2026-11-09): the drum soaked up less
+    // than estimated, and the hold cut four times in 2.5 min (53, 50, 40,
+    // 34, 30, 24 %) while the curve was already turning.
+    let mut ctl = PreheatController::new(
+        200.0,
+        23.0,
+        PreheatTuning::default(),
+        PlantEstimate::default(),
+    );
+    let input = |t, bt, ror, burner| PreheatInput {
+        t,
+        bt,
+        ror: Some(ror),
+        burner,
+    };
+    let step = ctl
+        .step(input(0.0, 191.5, 13.6, 90.0))
+        .expect("the step to the holding power");
+    let burner = step.burner;
+    // Below the band but rising back into it at 3 °C/min: leave it.
+    assert!(ctl.step(input(50.0, 196.1, 3.2, burner)).is_none());
+    // Above the band and still rising: one cut.
+    let cut = ctl
+        .step(input(165.0, 202.2, 3.1, burner))
+        .expect("a cut above the band");
+    assert!(cut.burner < burner);
+    // 45 s later the curve has only just turned: no second cut yet.
+    assert!(ctl.step(input(210.0, 203.2, -0.2, cut.burner)).is_none());
+    // Falling back towards the band: the cut is working.
+    assert!(ctl.step(input(255.0, 202.6, -1.8, cut.burner)).is_none());
+    // After the full effect, still above the band and not coming back: cut again.
+    let again = ctl
+        .step(input(300.0, 202.5, -0.1, cut.burner))
+        .expect("a second cut after 90 s");
+    assert!(again.burner < cut.burner);
 }
 
 #[test]

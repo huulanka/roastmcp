@@ -23,7 +23,10 @@ with list_profiles and get_profile, develop them with the person through create_
 add_profile_version (every change is a new version they see at once in the app's Profile tab), \
 and roast one with start_recording(profile). When you control a roast that follows a profile, \
 make the recipe's moves yourself around their time, and correct only when the deviation from \
-the plan persists. The person does CHARGE and DROP by hand; announce them. \
+the plan persists. The person does CHARGE and DROP by hand; announce them. At DROP the daemon \
+turns the burner off, switches the bean cooling on (already 30 s before the planned DROP) and \
+gives control back to the person. set_filter turns up the smoke filter, set_cooling switches \
+the bean cooling. wait returns a compact status with only new events and alarms. \
 To control the roaster, a person must first confirm presence in the RoastMCP app, then \
 call request_control. Your commands pass a safety layer: cutting the burner or adding air is \
 never limited; raising the burner is limited to 10 points per command and one raise per 10 s, \
@@ -39,6 +42,14 @@ struct Daemon {
     agent: ureq::Agent,
     holder: String,
     holding: bool,
+    seen: Seen,
+}
+
+/// Alarms (by id) and events already reported, for the compact `wait`.
+#[derive(Default)]
+struct Seen {
+    alarm: u64,
+    events: Vec<Value>,
 }
 
 impl Daemon {
@@ -55,6 +66,7 @@ impl Daemon {
                 .into(),
             holder: "mcp".into(),
             holding: false,
+            seen: Seen::default(),
         })
     }
 
@@ -416,8 +428,10 @@ fn tools() -> Value {
          "inputSchema": {"type": "object", "properties": {
             "every_s": num("Spacing between points, seconds (default 10)."),
             "last_s": num("Only the last N seconds (default: all).")}}},
-        {"name": "wait", "description": "Waits up to 30 s, then returns get_status. Keeps your control lease alive.",
-         "inputSchema": {"type": "object", "properties": {"seconds": num("1-30")}, "required": ["seconds"]}},
+        {"name": "wait", "description": "Waits up to 30 s, then returns a compact status: time, BT, RoR, actuators, the plan's deviation and next recipe step, the projection, lease and presence, and only the events and alarms that are new since your last get_status or wait. full: true returns the whole get_status instead. Keeps your control lease alive.",
+         "inputSchema": {"type": "object", "properties": {
+            "seconds": num("1-30"),
+            "full": {"type": "boolean", "description": "Return the whole status (default false)."}}, "required": ["seconds"]}},
         {"name": "mark_event", "description": "Marks a roast event at the current time (e.g. first_crack_start when you hear it reported). charge needs a running recording: call start_recording first.",
          "inputSchema": {"type": "object", "properties": {"kind": {"type": "string", "enum": kinds}}, "required": ["kind"]}},
         {"name": "add_note", "description": "Adds a note to the running roast.",
@@ -428,6 +442,11 @@ fn tools() -> Value {
          "inputSchema": {"type": "object", "properties": {}}},
         {"name": "set_burner", "description": "Sets the burner (heater). Cuts are unlimited; raises at most 10 points per command, one raise per 10 s.", "inputSchema": set("Burner", "0-100")},
         {"name": "set_air", "description": "Sets the airflow (fan). More air is unlimited; less air at most 20 points per 5 s.", "inputSchema": set("Air", "0-100")},
+        {"name": "set_filter", "description": "Sets the smoke filter fan, percent (the Cubean+ steps by 20: 0, 20, 40, 60, 80, 100). Turn it up when the person reports smoke.", "inputSchema": set("Filter", "0-100")},
+        {"name": "set_cooling", "description": "Switches the bean cooling (cooling tray stirrer and fan) on or off. The daemon switches it on by itself 30 s before the planned DROP and at DROP.",
+         "inputSchema": {"type": "object", "properties": {
+            "on": {"type": "boolean"},
+            "reason": {"type": "string", "description": "Why, in one short sentence (shown to the person)."}}, "required": ["on", "reason"]}},
         {"name": "set_drum", "description": "Sets the drum speed, in percent of the machine's range. People think in rpm: get_status lists machine.actuators[].display where the machine knows it (rpm = percent × scale + offset; Cubean+: 80 % ≈ 55 rpm, 100 % ≈ 68 rpm), so convert before calling and speak rpm to the person.", "inputSchema": set("Drum", "machine range")},
         {"name": "emergency_stop", "description": "Emergency stop: burner off, air high, drum running; latched until a person resets it in the app.",
          "inputSchema": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"]}},
@@ -509,13 +528,106 @@ fn downsample(points: &[Value], every_s: f64, last_s: Option<f64>) -> Vec<Value>
     out
 }
 
+/// Remembers the alarms and events `status` shows as reported.
+fn mark_seen(seen: &mut Seen, status: &Value) {
+    let _ = new_alarms(seen, status);
+    let _ = new_events(seen, status);
+}
+
+/// Alarms newer than the last reported one.
+fn new_alarms(seen: &mut Seen, status: &Value) -> Vec<Value> {
+    let alarms = status
+        .get("alarms")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let new: Vec<Value> = alarms
+        .into_iter()
+        .filter(|a| a.get("id").and_then(Value::as_u64).unwrap_or(0) > seen.alarm)
+        .collect();
+    if let Some(max) = new
+        .iter()
+        .filter_map(|a| a.get("id").and_then(Value::as_u64))
+        .max()
+    {
+        seen.alarm = max;
+    }
+    new
+}
+
+/// Events not reported before (a new roast starts afresh).
+fn new_events(seen: &mut Seen, status: &Value) -> Vec<Value> {
+    let events = status
+        .get("events")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let new: Vec<Value> = events
+        .iter()
+        .filter(|e| !seen.events.contains(e))
+        .cloned()
+        .collect();
+    seen.events = events;
+    new
+}
+
+/// The status a controlling AI needs every few seconds, without the parts
+/// that rarely change (machine, events and alarms already reported).
+fn compact_status(seen: &mut Seen, s: &Value) -> Value {
+    let alarms = new_alarms(seen, s);
+    let events = new_events(seen, s);
+    let t = s.get("t").and_then(Value::as_f64);
+    let charge_t = s.get("charge_t").and_then(Value::as_f64);
+    let round = |v: Option<&Value>| v.and_then(Value::as_f64).map(|x| (x * 10.0).round() / 10.0);
+    let safety = s.get("safety").cloned().unwrap_or(Value::Null);
+    let reference = s.get("reference").filter(|r| !r.is_null()).map(|r| {
+        json!({
+            "kind": r.get("kind"),
+            "bt_now": round(r.get("bt_now")),
+            "delta_bt": round(r.get("delta_bt")),
+            "ror_now": round(r.get("ror_now")),
+            "delta_ror": round(r.get("delta_ror")),
+            "next_step": r.get("next_step"),
+        })
+    });
+    let mut out = json!({
+        "state": s.get("state"),
+        "roast_time_s": t.zip(charge_t).map(|(t, c)| (t - c).round()),
+        "bt": round(s.get("bt")),
+        "ror": round(s.get("ror")),
+        "actuators": safety.get("actuators"),
+        "reference": reference,
+        "projection": s.get("projection"),
+        "preheat": s.get("preheat"),
+        "safety": {
+            "lease_holder": safety.get("lease_holder"),
+            "lease_remaining_s": round(safety.get("lease_remaining_s")),
+            "presence_due_in_s": round(safety.get("presence_due_in_s")),
+            "ai_suspended": safety.get("ai_suspended"),
+            "emergency_stop": safety.get("emergency_stop"),
+            "overheat": safety.get("overheat"),
+        },
+        "new_events": events,
+        "new_alarms": alarms,
+    });
+    if let Some(e) = s.get("connection_error").filter(|e| !e.is_null()) {
+        out["connection_error"] = e.clone();
+    }
+    if let Some(r) = s.get("control_request").filter(|r| !r.is_null()) {
+        out["control_request"] = r.clone();
+    }
+    out
+}
+
 fn call_tool(d: &mut Daemon, name: &str, args: &Value) -> anyhow::Result<Value> {
     let arg_f = |k: &str| args.get(k).and_then(Value::as_f64);
     let arg_s = |k: &str| args.get(k).and_then(Value::as_str).map(str::to_owned);
     match name {
         "get_status" => {
             d.renew();
-            d.call("GET", "/status", None)
+            let s = d.call("GET", "/status", None)?;
+            mark_seen(&mut d.seen, &s);
+            Ok(s)
         }
         "get_curve" => {
             d.renew();
@@ -536,7 +648,12 @@ fn call_tool(d: &mut Daemon, name: &str, args: &Value) -> anyhow::Result<Value> 
             let s = arg_f("seconds").unwrap_or(10.0).clamp(1.0, 30.0);
             std::thread::sleep(Duration::from_secs_f64(s));
             d.renew();
-            d.call("GET", "/status", None)
+            let s = d.call("GET", "/status", None)?;
+            if args.get("full").and_then(Value::as_bool) == Some(true) {
+                mark_seen(&mut d.seen, &s);
+                return Ok(s);
+            }
+            Ok(compact_status(&mut d.seen, &s))
         }
         "mark_event" => d.call(
             "POST",
@@ -557,7 +674,18 @@ fn call_tool(d: &mut Daemon, name: &str, args: &Value) -> anyhow::Result<Value> 
             d.holding = false;
             d.call("DELETE", "/ai/lease", None)
         }
-        "set_burner" | "set_air" | "set_drum" => {
+        "set_cooling" => {
+            let on = args
+                .get("on")
+                .and_then(Value::as_bool)
+                .context("on is required")?;
+            d.call(
+                "POST",
+                "/command",
+                Some(json!({"actuator": "cooling", "value": if on { 100.0 } else { 0.0 }, "source": "ai", "reason": arg_s("reason")})),
+            )
+        }
+        "set_burner" | "set_air" | "set_drum" | "set_filter" => {
             let actuator = name.trim_start_matches("set_");
             let value = arg_f("value").context("value is required")?;
             d.call(
@@ -949,5 +1077,29 @@ mod tests {
         assert_eq!(d.len(), 10);
         let d = downsample(&points, 10.0, Some(30.0));
         assert_eq!(d.len(), 4);
+    }
+
+    #[test]
+    fn the_compact_status_reports_events_and_alarms_once() {
+        let status = json!({
+            "state": "charged", "t": 130.0, "charge_t": 10.0, "bt": 151.23, "ror": 12.04,
+            "events": [{"t": 10.0, "kind": "charge"}],
+            "alarms": [{"id": 3, "message": "CHARGE detected."}],
+            "safety": {"actuators": {"burner": 80.0}, "lease_holder": "mcp", "presence_due_in_s": 120.4},
+            "reference": {"kind": "profile", "delta_bt": -1.26, "events": [1, 2, 3], "next_step": null},
+            "machine": {"id": "skywalker-cubean-plus"}
+        });
+        let mut seen = Seen::default();
+        let c = compact_status(&mut seen, &status);
+        assert_eq!(c["roast_time_s"], json!(120.0));
+        assert_eq!(c["bt"], json!(151.2));
+        assert_eq!(c["reference"]["delta_bt"], json!(-1.3));
+        assert!(c.get("machine").is_none() && c["reference"].get("events").is_none());
+        assert_eq!(c["new_events"].as_array().unwrap().len(), 1);
+        assert_eq!(c["new_alarms"].as_array().unwrap().len(), 1);
+        // The same status again: nothing new.
+        let again = compact_status(&mut seen, &status);
+        assert!(again["new_events"].as_array().unwrap().is_empty());
+        assert!(again["new_alarms"].as_array().unwrap().is_empty());
     }
 }
