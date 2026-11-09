@@ -1,3 +1,11 @@
+# [1.15.0](https://github.com/huulanka/roastmcp/compare/v1.14.0...v1.15.0) (2026-11-09)
+
+
+### Features
+
+* an AI can write profiles and follow their recipe, and the preheat runs at the roast's start air with a presence gong (ADR 0018) ([#35](https://github.com/huulanka/roastmcp/issues/35)) ([4d71369](https://github.com/huulanka/roastmcp/commit/4d71369695b5655a20484374f3ee2befe30bbbbe))
+* the burner goes off and the cooling on at DROP, the AI sets filter and cooling ([#36](https://github.com/huulanka/roastmcp/issues/36)) ([3174c72](https://github.com/huulanka/roastmcp/commit/3174c72b20247b4bee20715caca9dd7b1817ed69))
+
 # [1.14.0](https://github.com/huulanka/roastmcp/compare/v1.13.1...v1.14.0) (2026-11-09)
 
 
