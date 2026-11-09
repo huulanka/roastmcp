@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Copy } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { api, ApiError } from "@/api/client.ts";
@@ -21,6 +22,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog.tsx";
+import type { RoastGoal } from "@/api/types.ts";
+import { labelText } from "@/lib/batch.ts";
 import { bluetoothName, lastPort, preferredPort, rememberPort, usefulPorts } from "@/lib/ports.ts";
 import { formatNumber, weightLossPct } from "@/lib/units.ts";
 import { cn } from "@/lib/utils.ts";
@@ -209,10 +212,18 @@ export function StopDialog({
 }
 
 /** Shown right after the drop: the roast is saved; the roasted weight is the one thing still to add. */
+const GOAL_LABEL: Record<RoastGoal, string> = {
+  espresso: "Espresso",
+  filter: "Filter",
+  omni: "Omni",
+  other: "Own",
+};
+
 export function SavedDialog({ roastId, onClose }: { roastId: string | null; onClose: () => void }) {
   const { t } = useTranslation();
   const [title, setTitle] = useState("");
   const [green, setGreen] = useState<number | null>(null);
+  const [label, setLabel] = useState<string | null>(null);
   const [weight, setWeight] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -225,12 +236,27 @@ export function SavedDialog({ roastId, onClose }: { roastId: string | null; onCl
         if (cancelled) return;
         setTitle(r.title ?? "");
         setGreen(r.batch?.green_weight_g ?? null);
+        // The text for the bag's label, when the roast has a batch number.
+        setLabel(
+          r.batch?.batch_no
+            ? labelText(
+                {
+                  batchNo: r.batch.batch_no,
+                  beans: r.batch.beans ?? r.title,
+                  goal: r.plan?.goal ?? null,
+                  roastedAt: r.roasted_at ?? new Date().toISOString(),
+                },
+                t,
+                (g) => t(GOAL_LABEL[g]),
+              )
+            : null,
+        );
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [roastId]);
+  }, [roastId, t]);
 
   const value = parseFloat(weight.replace(",", "."));
   const valid = Number.isFinite(value) && value > 0;
@@ -281,6 +307,28 @@ export function SavedDialog({ roastId, onClose }: { roastId: string | null; onCl
             <p className="tabular text-[15px] text-muted-foreground">
               {t("Weight loss")}: {formatNumber(loss, 1)} %
             </p>
+          )}
+          {label && (
+            <div className="flex items-start justify-between gap-3 rounded-lg bg-surface-raised px-3.5 py-3">
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="text-[13px] text-muted-foreground">{t("Label")}</span>
+                <span className="tabular text-[15px] whitespace-pre-line">{label}</span>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  void navigator.clipboard
+                    .writeText(label)
+                    .then(() => toast("success", t("Label copied")))
+                    .catch((e) => toast("critical", errText(e)))
+                }
+              >
+                <Copy />
+                {t("Copy")}
+              </Button>
+            </div>
           )}
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose}>

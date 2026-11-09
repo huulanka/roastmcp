@@ -255,10 +255,22 @@ fn batch(alog: &PyValue) -> BatchInfo {
             .filter(|w| w.is_finite() && *w > 0.0)
             .map(|w| w * factor)
     };
+    // Artisan's batch counter: a prefix and a number, 0 when unused.
+    let batch_no = alog
+        .get("roastbatchnr")
+        .and_then(PyValue::as_i64)
+        .filter(|n| *n > 0)
+        .map(|n| {
+            format!(
+                "{}{n:03}",
+                text(alog, "roastbatchprefix").unwrap_or_default()
+            )
+        });
     BatchInfo {
         green_weight_g: grams(0),
         roasted_weight_g: grams(1),
         beans: text(alog, "beans"),
+        batch_no,
     }
 }
 

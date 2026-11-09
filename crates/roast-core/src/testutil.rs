@@ -126,6 +126,7 @@ pub(crate) fn roast() -> Roast {
             green_weight_g: Some(200.0),
             roasted_weight_g: Some(170.0),
             beans: None,
+            batch_no: None,
         },
         ambient: None,
         roast_degree: None,

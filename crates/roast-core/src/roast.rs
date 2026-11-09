@@ -82,6 +82,10 @@ pub struct BatchInfo {
     /// Free-text bean name, for roasts without a linked green lot (for example imports).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub beans: Option<String>,
+    /// The roaster's batch number, as on the bag's label (for example
+    /// `BRYB-002`: the lot's code and its running number).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch_no: Option<String>,
 }
 
 impl BatchInfo {
@@ -194,6 +198,7 @@ mod tests {
                 green_weight_g: Some(200.0),
                 roasted_weight_g: Some(170.0),
                 beans: None,
+                batch_no: None,
             },
             ambient: None,
             roast_degree: None,

@@ -20,6 +20,7 @@ import {
   PROCESSES,
   SPECIES,
 } from "@/lib/lot.ts";
+import { batchCodeOf } from "@/lib/batch.ts";
 import { kg, parseNumber } from "@/lib/plan.ts";
 import { formatNumber } from "@/lib/units.ts";
 import { cn } from "@/lib/utils.ts";
@@ -143,7 +144,7 @@ function LotDetail({
     };
   }, [lot.id, lot.stock_g]);
 
-  const titles = useMemo(() => new Map(roasts.map((r) => [r.id, r.title])), [roasts]);
+  const byId = useMemo(() => new Map(roasts.map((r) => [r.id, r])), [roasts]);
   const ofLot = roasts.filter((r) => r.lot_id === lot.id && !r.simulated);
   const usual = ofLot.find((r) => r.green_weight_g)?.green_weight_g ?? null;
   const weighedG = parseNumber(weighed);
@@ -171,11 +172,14 @@ function LotDetail({
     }
   };
 
+  // "BRYB-002 · Roast": the batch number says which bag it is.
+  const roastLabel = (r: RoastSummary | undefined) =>
+    r?.batch_no ? `${r.batch_no} · ${t("Roast")}` : r?.title || t("Roast");
   const kindLabel = (m: StockMovement) =>
     m.kind === "purchase"
       ? t("Purchase")
       : m.kind === "roast_debit"
-        ? (m.roast_id && titles.get(m.roast_id)) || t("Roast")
+        ? roastLabel(m.roast_id ? byId.get(m.roast_id) : undefined)
         : t("Correction");
 
   return (
@@ -183,7 +187,11 @@ function LotDetail({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 flex-col gap-1">
           <h2 className="text-xl font-semibold">{lot.name}</h2>
-          <p className="text-[14px] text-muted-foreground">{lotSummary(lot, t)}</p>
+          <p className="text-[14px] text-muted-foreground">
+            {[lotSummary(lot, t), `${t("Batch code")} ${batchCodeOf(lot)}`]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" onClick={() => onWizard({ kind: "restock", lotId: lot.id })}>

@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { api, ApiError } from "@/api/client.ts";
 import type { Lot, RoastGoal, RoastPlan, RoastSummary } from "@/api/types.ts";
-import { Field, UnitInput } from "@/components/Dialogs.tsx";
+import { Field, inputCls, UnitInput } from "@/components/Dialogs.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Kbd } from "@/components/ui/kbd.tsx";
 import {
@@ -31,6 +31,7 @@ import {
   pickableLots,
   suggestedTargets,
 } from "@/lib/plan.ts";
+import { nextBatchNo } from "@/lib/batch.ts";
 import { bluetoothName } from "@/lib/ports.ts";
 import { formatClock, formatNumber, weightLossPct } from "@/lib/units.ts";
 import { cn } from "@/lib/utils.ts";
@@ -73,6 +74,8 @@ function shortDate(iso: string): string {
 interface Form {
   lotId: string;
   weight: string;
+  /** Batch number for the label, suggested from the lot (none in the simulator). */
+  batchNo: string;
   goal: RoastGoal | null;
   refId: string;
   drop: string;
@@ -111,6 +114,7 @@ export function StartDialog({
   const [form, setForm] = useState<Form>({
     lotId: "",
     weight: "",
+    batchNo: "",
     goal: null,
     refId: "",
     drop: "",
@@ -135,9 +139,11 @@ export function StartDialog({
         const last = lastRoastOfLot(r, lotId, sim);
         // The amount of the last roast of this bean, else of the last roast.
         const grams = last?.green_weight_g ?? newest?.green_weight_g ?? null;
+        const chosen = pickable.find((x) => x.id === lotId);
         setForm({
           lotId,
           weight: grams ? String(grams) : "",
+          batchNo: chosen && !sim ? nextBatchNo(chosen, r) : "",
           ...fromReference(last),
         });
       })
@@ -172,6 +178,7 @@ export function StartDialog({
           lot_id: form.lotId || undefined,
           green_weight_g: weight ?? undefined,
           plan: Object.keys(plan).length ? plan : undefined,
+          batch_no: !sim && form.batchNo.trim() ? form.batchNo.trim() : undefined,
         }),
       );
       if (form.lotId) remember(LAST_LOT_KEY, form.lotId);
@@ -199,7 +206,7 @@ export function StartDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-0 sm:max-w-xl">
+      <DialogContent className="gap-0 sm:max-w-[38rem]">
         <form
           className="flex flex-col gap-5"
           onSubmit={(e) => {
@@ -229,15 +236,24 @@ export function StartDialog({
           )}
 
           <div className="flex flex-col gap-2">
-            <div className="grid grid-cols-[minmax(0,1fr)_8.5rem] gap-3">
+            <div
+              className={cn(
+                "grid gap-3",
+                sim
+                  ? "grid-cols-[minmax(0,1fr)_8.5rem]"
+                  : "grid-cols-[minmax(0,1fr)_7.5rem_8.5rem]",
+              )}
+            >
               <Field label={t("Bean")}>
                 <Select
                   value={form.lotId || NONE}
                   onValueChange={(v) => {
                     const id = v === NONE ? "" : v;
                     const last = lastRoastOfLot(roasts, id || null, sim);
+                    const chosen = lots.find((l) => l.id === id);
                     set({
                       lotId: id,
+                      batchNo: chosen && !sim ? nextBatchNo(chosen, roasts) : "",
                       ...(last?.green_weight_g ? { weight: String(last.green_weight_g) } : {}),
                       ...fromReference(last),
                     });
@@ -274,6 +290,18 @@ export function StartDialog({
                   onChange={(e) => set({ weight: e.target.value })}
                 />
               </Field>
+              {!sim && (
+                <Field label={t("Batch")}>
+                  <input
+                    className={cn(inputCls, "tabular uppercase")}
+                    value={form.batchNo}
+                    placeholder="BRYB-001"
+                    spellCheck={false}
+                    autoComplete="off"
+                    onChange={(e) => set({ batchNo: e.target.value.toUpperCase() })}
+                  />
+                </Field>
+              )}
             </div>
             <p className="min-h-5 text-[13px] text-muted-foreground">
               {lots.length === 0
@@ -289,7 +317,8 @@ export function StartDialog({
                           : "",
                     })
                   : null}
-              {lot && weight !== null && (
+              {lot && sim && <> {t("Simulator: nothing is debited from stock.")}</>}
+              {lot && !sim && weight !== null && (
                 <>
                   {" "}
                   {lot.stock_g < weight

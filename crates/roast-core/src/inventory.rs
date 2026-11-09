@@ -278,6 +278,10 @@ pub struct GreenLot {
     /// Hidden from pickers and lists by default (used up or no longer relevant).
     #[serde(default)]
     pub archived: bool,
+    /// The roaster's short code for this lot, the start of its roasts' batch
+    /// numbers (`BRYB` → `BRYB-001`, `BRYB-002`, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch_code: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -291,6 +295,7 @@ impl GreenLot {
             details: LotDetails::default(),
             purchase_date: None,
             archived: false,
+            batch_code: None,
             created_at,
         }
     }

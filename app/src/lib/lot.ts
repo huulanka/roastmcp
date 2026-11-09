@@ -203,6 +203,7 @@ export function detailsOf(lot: Lot): LotDetails {
     created_at: _c,
     purchase_date: _p,
     stock_g: _s,
+    batch_code: _b,
     ...d
   } = lot;
   return d;

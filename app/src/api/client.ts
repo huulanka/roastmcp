@@ -121,14 +121,23 @@ export const api = {
     beans?: string;
     lot_id?: string;
     plan?: RoastPlan;
+    batch_no?: string;
   }) => request<Snapshot>("POST", "/api/recording/start", body),
   lots: (archived = false) => request<Lot[]>("GET", `/api/lots${archived ? "?archived=true" : ""}`),
   lotMovements: (id: string) =>
     request<StockMovement[]>("GET", `/api/lots/${encodeURIComponent(id)}/movements`),
-  addLot: (body: LotDetails & { name: string; purchase_g?: number; purchase_date?: string }) =>
-    request<Lot>("POST", "/api/lots", body),
-  patchLot: (id: string, body: { name?: string; details?: LotDetails; archived?: boolean }) =>
-    request<Lot>("PATCH", `/api/lots/${encodeURIComponent(id)}`, body),
+  addLot: (
+    body: LotDetails & {
+      name: string;
+      purchase_g?: number;
+      purchase_date?: string;
+      batch_code?: string;
+    },
+  ) => request<Lot>("POST", "/api/lots", body),
+  patchLot: (
+    id: string,
+    body: { name?: string; details?: LotDetails; archived?: boolean; batch_code?: string },
+  ) => request<Lot>("PATCH", `/api/lots/${encodeURIComponent(id)}`, body),
   addPurchase: (id: string, body: { grams: number; date?: string; note?: string }) =>
     request<Lot>("POST", `/api/lots/${encodeURIComponent(id)}/purchases`, body),
   adjustLot: (id: string, body: { grams: number; note?: string }) =>
@@ -146,6 +155,12 @@ export const api = {
   roast: (id: string) => request<Roast>("GET", `/api/roasts/${encodeURIComponent(id)}`),
   patchRoast: (id: string, body: { title?: string; roasted_weight_g?: number }) =>
     request<Roast>("PATCH", `/api/roasts/${encodeURIComponent(id)}`, body),
+  /** Moves a roast to the trash folder and credits its green coffee back. */
+  deleteRoast: (id: string) =>
+    request<{ credited_g: number; trash_path: string }>(
+      "DELETE",
+      `/api/roasts/${encodeURIComponent(id)}`,
+    ),
   /** Authenticated download of text content, saved through a temporary link. */
   async download(path: string, filename: string, type = "application/json"): Promise<void> {
     let res: Response;
