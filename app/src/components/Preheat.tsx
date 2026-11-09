@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "@/api/client.ts";
 import type { Preheat } from "@/api/types.ts";
 import { Button } from "@/components/ui/button.tsx";
-import { inputCls } from "@/components/Dialogs.tsx";
+import { UnitInput } from "@/components/Dialogs.tsx";
 import { cn } from "@/lib/utils.ts";
 import { formatNumber } from "@/lib/units.ts";
 import { attempt } from "@/state/actions.ts";
@@ -22,7 +22,11 @@ function storedTarget(): string {
   }
 }
 
-/** Pre-roast: bring the drum to a target temperature and hold it there until CHARGE. */
+/**
+ * Pre-roast, at the top of the controls: bring the drum to a target and hold
+ * it until CHARGE (ADR 0015). Laid out like the burner below it: name and
+ * state, then the target and the switch.
+ */
 export function PreheatCard({
   preheat,
   bt,
@@ -53,51 +57,56 @@ export function PreheatCard({
     void run(() => api.preheat(value));
   };
 
-  const status = preheat
-    ? preheat.state === "heating"
-      ? t("heating · {{bt}} → {{target}} °C", {
-          bt: formatNumber(bt, 0),
-          target: formatNumber(preheat.target_c, 0),
-        })
-      : t("holding {{target}} °C", { target: formatNumber(preheat.target_c, 0) })
-    : t("off");
+  // Short: the target is in the field beside it, the temperature above.
+  const status = preheat ? (preheat.state === "heating" ? t("heating") : t("holding")) : t("off");
+  const title = preheat
+    ? t("heating · {{bt}} → {{target}} °C", {
+        bt: formatNumber(bt, 0),
+        target: formatNumber(preheat.target_c, 0),
+      })
+    : undefined;
 
   return (
     <form
       aria-label={t("Preheat")}
-      className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-card-border bg-surface py-2 pr-2 pl-4"
+      className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-b border-border pb-3"
       onSubmit={(e) => {
         e.preventDefault();
         if (preheat) void run(() => api.stopPreheat());
         else start();
       }}
     >
-      <span className="text-[15px] font-medium">{t("Preheat")}</span>
-      <label className="flex items-center gap-2 text-sm text-muted-foreground">
+      <div className="flex min-w-0 flex-col" title={title}>
+        <span className="text-[15px] font-medium">{t("Preheat")}</span>
+        <span
+          className={cn(
+            "truncate text-[13px] leading-tight",
+            preheat ? "text-brand-text" : "text-muted-foreground",
+          )}
+          aria-live="polite"
+        >
+          {status}
+        </span>
+      </div>
+      <label>
         <span className="sr-only">{t("Target temperature")}</span>
-        <input
-          className={cn(inputCls, "w-20 text-right tabular")}
+        <UnitInput
+          unit="°C"
           inputMode="numeric"
           value={target}
           disabled={!!preheat}
           aria-invalid={!valid}
           onChange={(e) => setTarget(e.target.value)}
         />
-        °C
       </label>
       <Button
         type="submit"
         variant={preheat ? "outline" : "secondary"}
+        className="w-22"
         disabled={busy || disabled || (!preheat && !valid)}
       >
         {preheat ? t("Stop") : t("Start")}
       </Button>
-      <span
-        className={cn("tabular text-[13px]", preheat ? "text-brand-text" : "text-muted-foreground")}
-        aria-live="polite"
-      >
-        {status}
-      </span>
     </form>
   );
 }

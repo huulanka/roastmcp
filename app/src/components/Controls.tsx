@@ -6,6 +6,7 @@ import type { Actuator, ActuatorSpec, MachineInfo, SafetyStatus } from "@/api/ty
 import { Button } from "@/components/ui/button.tsx";
 import { Slider } from "@/components/ui/slider.tsx";
 import { Switch } from "@/components/ui/switch.tsx";
+import { PREHEAT_HOLDER } from "@/lib/roast.ts";
 import { actuatorShown } from "@/lib/units.ts";
 import { cn } from "@/lib/utils.ts";
 import { nudge, setActuator, useDesired } from "@/state/controls.ts";
@@ -82,10 +83,13 @@ function MainControl({
   spec,
   current,
   disabled,
+  automatic = false,
 }: {
   spec: ActuatorSpec;
   current: number;
   disabled: boolean;
+  /** An automation (preheat) is moving it; touching it hands control back. */
+  automatic?: boolean;
 }) {
   const { t } = useTranslation();
   const { shown, slider } = useShown(spec, current);
@@ -93,7 +97,12 @@ function MainControl({
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-baseline justify-between">
-        <span className="text-[15px] font-medium">{name}</span>
+        <span className="flex items-baseline gap-2 text-[15px] font-medium">
+          {name}
+          {automatic && (
+            <span className="text-[13px] font-normal text-brand-text">{t("automatic")}</span>
+          )}
+        </span>
         <span className="tabular text-value leading-none font-medium">
           {Math.round(shown)}
           <span className="ml-1 text-[15px] font-normal text-muted-foreground">%</span>
@@ -172,9 +181,12 @@ function SwitchControl({ a, on, disabled }: { a: Actuator; on: boolean; disabled
 export function Controls({
   machine,
   safety,
+  top,
 }: {
   machine: MachineInfo | null;
   safety: SafetyStatus;
+  /** Shown above burner and air: the preheat before a roast. */
+  top?: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const desired = useDesired();
@@ -191,14 +203,16 @@ export function Controls({
   return (
     <section
       aria-label={t("Controls")}
-      className="flex flex-col gap-4 rounded-card border border-card-border bg-surface p-card"
+      className="flex flex-col gap-3 rounded-card border border-card-border bg-surface p-card"
     >
+      {top}
       {main.map((spec) => (
         <MainControl
           key={spec.actuator}
           spec={spec}
           current={commanded(safety, spec.actuator)}
           disabled={disabled}
+          automatic={spec.actuator === "burner" && safety.lease_holder === PREHEAT_HOLDER}
         />
       ))}
       {(rest.length > 0 || switches.length > 0) && (

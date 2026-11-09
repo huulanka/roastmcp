@@ -2,6 +2,7 @@ import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import type { Phases } from "@/api/types.ts";
+import type { ChartView } from "@/components/RoastChart.tsx";
 import { rangeAt, rangeSpans, scaleGradient, scalePos, scaleTicks } from "@/lib/roastScale.ts";
 import { cn } from "@/lib/utils.ts";
 import { formatClock, formatNumber } from "@/lib/units.ts";
@@ -15,15 +16,52 @@ export function CurveLegend({
   reference,
   projection,
   onClearReference,
+  view,
+  onView,
 }: {
   reference: string | null;
   projection: boolean;
   onClearReference: () => void;
+  /** The time axis: whole roast or following; omitted, no switch. */
+  view?: ChartView;
+  onView?: (v: ChartView) => void;
 }) {
   const { t } = useTranslation();
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1">
-      <h2 className="text-[15px] font-medium text-muted-foreground">{t("Curve")}</h2>
+      <div className="flex items-center gap-4">
+        <h2 className="text-[15px] font-medium text-muted-foreground">{t("Curve")}</h2>
+        {view && onView && (
+          <div
+            role="radiogroup"
+            aria-label={t("Time axis")}
+            className="flex rounded-lg bg-surface-raised p-0.5 text-[13px]"
+          >
+            {(
+              [
+                ["whole", t("Whole roast")],
+                ["follow", t("Follow")],
+              ] as const
+            ).map(([v, name]) => (
+              <button
+                key={v}
+                type="button"
+                role="radio"
+                aria-checked={view === v}
+                onClick={() => onView(v)}
+                className={cn(
+                  "rounded-md px-3 py-1 transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
+                  view === v
+                    ? "bg-background font-medium text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       <ul className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[13px] text-muted-foreground">
         <li className="flex items-center gap-2">
           <Swatch className="h-[3px] rounded-pill bg-brand" />
