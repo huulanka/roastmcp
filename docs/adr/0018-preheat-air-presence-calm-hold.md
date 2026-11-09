@@ -1,7 +1,7 @@
 # ADR 0018: Preheat at the roast's start air, a presence warning, a calmer hold
 
 ## Status
-Accepted (2026-11-09), not built yet. Amends
+Accepted (2026-11-09), built the same day (see "As built" below). Amends
 [ADR 0015](0015-preheat-step-wait-learn.md) (the preheat controller) and the
 presence rules in [safety.md](../safety.md).
 
@@ -115,3 +115,41 @@ safer than a faster path for one of them.
 - Acceptance on the machine: a preheat at air 20 % to about 200 °C that
   steps to about 39 %, makes at most 3 changes while holding and needs one
   presence confirmation.
+
+## As built
+- **Holding power:** `hold(ΔT) = hold_pct_200 × (ΔT / 178 °C)^1.8`, with
+  `hold_pct_200` = 39 % by default for every air setting. 1.8 fits both
+  real points: 21 % for 150 °C at air 30 % and about 39 % for 200 °C at
+  air 20 % (the air 100 % run learned the equivalent of 41 %).
+  `control.json` keeps `hold_pct_200`; an older entry with
+  `hold_pct_per_c` is read as that factor × 178 °C.
+- **Learning the holding power:** with the new band rule the curve tends to
+  turn only at the band's edges, where the old rule (rate of rise below
+  1 °C/min, inside the band) never learned. It now learns from every
+  settled reading inside the band: the burner that would give a rate of
+  rise of zero, `burner − RoR / burner strength`.
+- **The step to hold:** its boost above the holding power (to close the
+  remaining error within 2 min) is capped at 15 points. At a high rate of
+  rise the measured error is large when the prediction reaches the band,
+  and with corrections of 10 points the old uncapped boost (up to 39
+  points) overshot by 11 °C in the simulator.
+- **Learned values of a far-off air setting** are not used: a preheat takes
+  the values of its own air setting, else the nearest within 20 points,
+  else the built-in estimate. So the `air_100` entry no longer reaches a
+  preheat at air 20 %.
+- **Presence:** the safety layer gives the longer interval
+  (`limits.preheat_presence_interval_s`, 600 s on the Cubean+) only to the
+  lease holder the daemon names for the preheat. An AI that takes over
+  mid-preheat needs a confirmation within the normal 3 min.
+- **Test model:** the Cubean+ model of ADR 0015 is linear and would hold
+  200 °C at 24 %. Its losses now grow with the temperature so that it holds
+  as the machine does (39 % at 200 °C), with the burner acting as fitted. On
+  it the preheat reaches 200 °C after about 10.5 min, peaks at 203.1 °C and
+  makes 3 changes in the first 5 min of holding; the step is about 53 %
+  (39 % plus the boost) and the hold settles at about 42 % and then lower as
+  the drum soaks up heat. A machine 40 % stronger than the estimate peaks at
+  205.3 °C: the 10-point corrections trade a few degrees for calm.
+- **App:** the preheat card is one row: target (°C), air (%), and a
+  start/stop icon button like the burner's −/+ (the column has no room for a
+  second row without scrolling at 1280×800). The plan fills in target and
+  air; the status then reads "per plan".

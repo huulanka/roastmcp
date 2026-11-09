@@ -183,7 +183,8 @@ Initial tools:
 | `emergency_stop` | Immediate safe state |
 | `start_autopilot` / `adjust_autopilot` / `stop_autopilot` | Run a profile; change targets |
 | `list_roasts` / `get_roast` / `compare_roasts` | Archive access and analysis |
-| `list_profiles` / `get_profile` / `save_profile_version` | Profile development |
+| `list_profiles` / `get_profile` / `create_profile` / `add_profile_version` | Profile development: milestones, recipe, a new version per change |
+| `set_reference` | A roast or a profile as the plan line; `get_status` then shows the deviation and the next recipe step |
 | `record_experiment` / `add_roast_note` | Hypotheses and observations |
 | `list_lots` / `add_lot` / `add_purchase` | Green coffee inventory (ADR 0014) |
 | `start_recording` | The start dialog: lot, green weight, goal, reference, targets |

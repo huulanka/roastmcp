@@ -14,8 +14,10 @@ use serde::{Deserialize, Serialize};
 pub struct PreheatTuning {
     /// Highest burner value it asks for, %.
     pub max_burner: f64,
-    /// No correction while the predicted temperature is within this of the
-    /// target, °C (the dead band).
+    /// While holding, no correction unless both the measured and the
+    /// predicted temperature are this far from the target on the same side,
+    /// °C (the dead band, ADR 0018). Before the target, the step to the
+    /// holding power comes when the prediction enters it.
     pub band_c: f64,
     /// How far ahead the temperature is predicted from the rate of rise, s:
     /// the lag of the 20 s rate of rise plus the machine's own delay.
@@ -29,6 +31,8 @@ pub struct PreheatTuning {
     pub urgent_after_s: f64,
     /// A correction aims to close the error within this time, s.
     pub horizon_s: f64,
+    /// Largest boost above the holding power at the step to hold, burner %.
+    pub max_boost: f64,
     /// Smallest change worth making, burner %.
     pub min_step: f64,
     /// Largest single correction while holding, burner %.
@@ -49,30 +53,76 @@ impl Default for PreheatTuning {
             urgent_c: 8.0,
             urgent_after_s: 20.0,
             horizon_s: 120.0,
+            max_boost: 15.0,
             min_step: 3.0,
-            max_step: 20.0,
+            max_step: 10.0,
             cut_above_c: 10.0,
         }
     }
 }
 
+/// Temperature above ambient the holding power is given for: 200 °C at
+/// 22 °C ambient, °C.
+pub const HOLD_REF_ABOVE_C: f64 = 178.0;
+
+/// How the holding power grows with the temperature above ambient: with its
+/// power `HOLD_EXPONENT`, because the losses grow faster than linearly.
+/// Fitted to the Cubean+: about 21 % held 150 °C (128 °C above ambient) and
+/// about 39 % held 200 °C (ADR 0018, `docs/research/preheat-control.md`).
+pub const HOLD_EXPONENT: f64 = 1.8;
+
 /// What the controller knows about the machine, refined by every preheat and
 /// kept between runs.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(from = "StoredEstimate")]
 pub struct PlantEstimate {
     /// How much the rate of rise changes per burner percent, °C/min per %.
     pub ror_per_pct: f64,
-    /// Burner needed to hold a temperature, % per °C above ambient.
-    pub hold_pct_per_c: f64,
+    /// Burner needed to hold 200 °C ([`HOLD_REF_ABOVE_C`] above ambient), %.
+    /// Other temperatures scale with [`HOLD_EXPONENT`].
+    pub hold_pct_200: f64,
+}
+
+/// `control.json` before ADR 0018 kept the holding power as a linear factor
+/// (`hold_pct_per_c`, % per °C above ambient); it is read as the same power
+/// at 200 °C.
+#[derive(Deserialize)]
+struct StoredEstimate {
+    ror_per_pct: f64,
+    #[serde(default)]
+    hold_pct_200: Option<f64>,
+    #[serde(default)]
+    hold_pct_per_c: Option<f64>,
+}
+
+impl From<StoredEstimate> for PlantEstimate {
+    fn from(s: StoredEstimate) -> Self {
+        PlantEstimate {
+            ror_per_pct: s.ror_per_pct,
+            hold_pct_200: s
+                .hold_pct_200
+                .or(s.hold_pct_per_c.map(|k| k * HOLD_REF_ABOVE_C))
+                .unwrap_or(PlantEstimate::default().hold_pct_200),
+        }
+    }
+}
+
+impl PlantEstimate {
+    /// The burner that holds `above_c` °C above ambient, %.
+    #[must_use]
+    pub fn hold_burner(&self, above_c: f64) -> f64 {
+        self.hold_pct_200 * (above_c.max(0.0) / HOLD_REF_ABOVE_C).powf(HOLD_EXPONENT)
+    }
 }
 
 impl Default for PlantEstimate {
-    /// The Cubean+ with an empty drum at air 30 %: 0.22 °C/min per % from the
-    /// fitted model, about 21 % to hold 150 °C.
+    /// The Cubean+ with an empty drum: 0.22 °C/min per % from the model
+    /// fitted to its first preheat (air 30 %), and about 39 % to hold 200 °C
+    /// at air 20 % from the roaster's Artisan preheats (ADR 0018).
     fn default() -> Self {
         PlantEstimate {
             ror_per_pct: 0.22,
-            hold_pct_per_c: 0.165,
+            hold_pct_200: 39.0,
         }
     }
 }
@@ -175,7 +225,7 @@ impl PreheatController {
 
     /// The burner that should hold the target, %.
     fn hold_burner(&self) -> f64 {
-        self.plant.hold_pct_per_c * (self.target_c - self.ambient_c).max(0.0)
+        self.plant.hold_burner(self.target_c - self.ambient_c)
     }
 
     /// Burner change for a wanted change of the rate of rise (°C/s).
@@ -212,7 +262,11 @@ impl PreheatController {
                     // One deliberate step to the holding power, plus what it
                     // takes to close the remaining error within the horizon.
                     self.phase = PreheatPhase::Holding;
-                    let wanted = self.hold_burner() - self.burner_for(error / tu.horizon_s);
+                    // The boost is capped: at a high rate of rise the
+                    // measured error is large when the prediction arrives,
+                    // and the momentum closes most of it on its own.
+                    let boost = (-self.burner_for(error / tu.horizon_s)).min(tu.max_boost);
+                    let wanted = self.hold_burner() + boost;
                     let burner = wanted.clamp(0.0, tu.max_burner).round();
                     return Some(self.change(r, burner, PreheatReason::StepToHold));
                 }
@@ -224,7 +278,14 @@ impl PreheatController {
                 })
             }
             PreheatPhase::Holding => {
-                if (predicted - self.target_c).abs() <= tu.band_c {
+                // Correct only when the measured and the predicted temperature
+                // are both outside the band, on the same side: a swing of the
+                // rate of rise alone moves the prediction by ±2 °C (ADR 0018).
+                let predicted_error = predicted - self.target_c;
+                let outside = error.abs() > tu.band_c
+                    && predicted_error.abs() > tu.band_c
+                    && error.signum() == predicted_error.signum();
+                if !outside {
                     self.learn_hold(r, error);
                     return None;
                 }
@@ -277,15 +338,19 @@ impl PreheatController {
         }
     }
 
-    /// Steady at the target: the burner now is the holding power.
+    /// Settled near the target: the burner that would keep the rate of rise
+    /// at zero is the holding power. Learned from every such reading, since
+    /// with the band rule the curve tends to turn only at the band's edges.
     fn learn_hold(&mut self, r: PreheatInput, error: f64) {
         let above = self.target_c - self.ambient_c;
         if above < 20.0 || error.abs() > self.tuning.band_c {
             return;
         }
-        if r.ror.is_some_and(|ror| ror.abs() < 1.0) {
-            let seen = r.burner / above;
-            self.plant.hold_pct_per_c = 0.95 * self.plant.hold_pct_per_c + 0.05 * seen;
-        }
+        let Some(ror) = r.ror.filter(|ror| ror.abs() < 4.0) else {
+            return;
+        };
+        let hold_now = r.burner - ror / self.plant.ror_per_pct.max(0.01);
+        let seen = hold_now.max(0.0) / (above / HOLD_REF_ABOVE_C).powf(HOLD_EXPONENT);
+        self.plant.hold_pct_200 = 0.98 * self.plant.hold_pct_200 + 0.02 * seen;
     }
 }

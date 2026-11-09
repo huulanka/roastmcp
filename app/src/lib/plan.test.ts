@@ -1,7 +1,28 @@
 import { describe, expect, it } from "vitest";
 
 import type { RoastSummary } from "@/api/types.ts";
-import { kg, lastRoastOfLot, parseNumber, planProgress, suggestedTargets } from "./plan.ts";
+import {
+  kg,
+  lastRoastOfLot,
+  parseNumber,
+  planPreheat,
+  planProgress,
+  suggestedTargets,
+} from "./plan.ts";
+
+describe("preheat from the plan", () => {
+  it("takes the CHARGE temperature and the recipe's air at CHARGE", () => {
+    const at = (t: number, actuator: "burner" | "air", value: number) => ({
+      trigger: { at: "time" as const, roast_time_s: t },
+      actuator,
+      value,
+    });
+    const recipe = [at(1, "burner", 80), at(1, "air", 20), at(300, "air", 40)];
+    expect(planPreheat(199.6, recipe)).toEqual({ target: 200, air: 20 });
+    expect(planPreheat(null, [at(300, "air", 40)])).toEqual({ target: null, air: null });
+    expect(planPreheat(undefined, undefined)).toEqual({ target: null, air: null });
+  });
+});
 
 const live = { t: 600, bt: 198.7, ror: 5, chargeT: 30, firstCrackT: 548 };
 

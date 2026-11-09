@@ -59,8 +59,10 @@ impl LearnedStore {
     }
 
     /// What is known about preheating `machine` at this air setting: the
-    /// value for this setting, else the nearest one learned, else the
-    /// built-in estimate.
+    /// value for this setting, else the nearest one learned within 20 points
+    /// of air, else the built-in estimate. A far-off air setting tells little
+    /// (air 100 % needs about as much heat at 200 °C as air 20 %, but the
+    /// burner acts differently; ADR 0018).
     #[must_use]
     pub fn preheat(&self, machine: &str, air: f64) -> PlantEstimate {
         let Some(m) = self.data.machines.get(machine) else {
@@ -75,6 +77,7 @@ impl LearnedStore {
                 let step: i64 = k.strip_prefix("air_")?.parse().ok()?;
                 Some(((step - air_step(air)).abs(), *e))
             })
+            .filter(|(d, _)| *d <= 20)
             .min_by_key(|(d, _)| *d)
             .map_or_else(PlantEstimate::default, |(_, e)| e)
     }
@@ -113,7 +116,7 @@ mod tests {
         let path = dir.path().join("control.json");
         let learned = PlantEstimate {
             ror_per_pct: 0.3,
-            hold_pct_per_c: 0.2,
+            hold_pct_200: 36.0,
         };
         let mut s = LearnedStore::load(path.clone());
         assert_eq!(s.preheat("cubean", 30.0), PlantEstimate::default());
@@ -122,6 +125,11 @@ mod tests {
         let s = LearnedStore::load(path);
         assert_eq!(s.preheat("cubean", 29.0), learned);
         assert_eq!(s.preheat("cubean", 50.0), learned, "nearest air setting");
+        assert_eq!(
+            s.preheat("cubean", 100.0),
+            PlantEstimate::default(),
+            "too far off"
+        );
         assert_eq!(s.preheat("simulator", 30.0), PlantEstimate::default());
     }
 }

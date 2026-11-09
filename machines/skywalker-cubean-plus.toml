@@ -202,6 +202,10 @@ ai_burner_min_interval_s = 10
 # Largest air reduction per command, and the shortest time between two.
 ai_air_max_step = 20
 ai_air_min_interval_s = 5
+# How often a person confirms being at the roaster while the preheat runs
+# before CHARGE, seconds (ADR 0018). Everything else - an AI in control, the
+# roast itself - keeps the 3 min interval. A gong sounds 60 s and 20 s before.
+preheat_presence_interval_s = 600
 
 [capabilities]
 # Beans are dropped by hand; the app shows a "drop now" cue instead.

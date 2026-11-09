@@ -6,8 +6,10 @@ import {
   latestAiNote,
   liveDtr,
   nextAction,
+  presenceGong,
   presenceView,
   primaryLabel,
+  spaceConfirms,
   rorAlert,
   rorDelta,
 } from "./roast.ts";
@@ -108,6 +110,29 @@ describe("notes and presence", () => {
     expect(presenceView(safety(300, "claude"))).toMatchObject({ urgent: false, ask: false });
     expect(presenceView(safety(45, null)).ask).toBe(true);
     expect(presenceView(safety(null, null))).toMatchObject({ due: null, ask: false });
+  });
+
+  it("gongs 60 s and 20 s before presence is due, only for a lease holder", () => {
+    expect(presenceGong(61, 59.5, "preheat")).toBe(60);
+    expect(presenceGong(59.5, 58, "preheat")).toBeNull();
+    expect(presenceGong(21, 19, "claude")).toBe(20);
+    expect(presenceGong(61, 59, null)).toBeNull();
+    // A confirmation resets the countdown: no gong on the way up.
+    expect(presenceGong(19, 600, "preheat")).toBeNull();
+    // Control taken while already overdue: no late warning.
+    expect(presenceGong(90, -5, "claude")).toBeNull();
+  });
+
+  it("lets the space bar confirm only when presence matters", () => {
+    const snap = (due: number | null, holder: string | null, request: string | null = null) => ({
+      safety: safety(due, holder),
+      control_request: request,
+    });
+    expect(spaceConfirms(snap(500, "preheat"))).toBe(true);
+    expect(spaceConfirms(snap(null, null, "mcp:claude"))).toBe(true);
+    expect(spaceConfirms(snap(45, null))).toBe(true);
+    expect(spaceConfirms(snap(500, null))).toBe(false);
+    expect(spaceConfirms(snap(null, null))).toBe(false);
   });
 });
 

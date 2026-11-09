@@ -13,6 +13,7 @@ pub mod actuator;
 pub mod analysis;
 pub mod command;
 pub mod cupping;
+pub mod design;
 pub mod event;
 pub mod experiment;
 pub mod inventory;
@@ -48,7 +49,7 @@ pub use profile::{
     ActionTrigger, DropRule, EventTarget, EventTargets, PlannedAction, Profile, ProfileTarget,
     ProfileVersion, TargetPoint, ToleranceBand,
 };
-pub use reference::{Milestone, Projection, RefPoint, ReferenceCurve, project};
+pub use reference::{Milestone, Projection, RefPoint, ReferenceCurve, ReferenceKind, project};
 pub use roast::{
     Ambient, BatchInfo, ColorScale, ROAST_FILE_SCHEMA_VERSION, Roast, RoastDegree, RoastGoal,
     RoastOrigin, RoastPlan,

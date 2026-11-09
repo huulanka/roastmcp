@@ -102,10 +102,18 @@ interface Snapshot {
   control_seq: number;                   // length of control_log; reload /api/live when it changes
   reference: null | {                    // see PUT /api/reference
     id: string; title: string;
+    kind: "roast" | "profile";           // an earlier roast, or a profile version's plan
+    charge_bt: number | null;            // its BT at CHARGE (0:00): the preheat target
     bt_now: number | null;               // reference BT at the same time since CHARGE
     delta_bt: number | null;             // bt - bt_now
     ror_now: number | null;
+    delta_ror: number | null;            // ror - ror_now
     events: RoastEvent[];                // t relative to the reference's CHARGE
+    next_step?: {                        // a profile's next recipe step not yet applied
+      at_s: number;                      // roast time it is planned for
+      in_s: number | null;               // seconds until then (negative: due since; null before CHARGE)
+      set: { actuator: Actuator; value: number; current: number | null }[];
+    };                                   // due for 30 s after its time, like the app's cue
   };
   projection: null | {                   // between CHARGE and DROP, once the RoR is positive
     bt_60s: number | null;
@@ -159,9 +167,9 @@ CHARGE (not when stopped before). The inventory lives in `inventory.json`
 (previous version in `inventory.json.bak`); if the file cannot be read, every
 change is refused with 409 and nothing is overwritten.
 | `GET /api/roasts/{id}/alog` | | Artisan `.alog` text (download) |
-| `GET /api/reference` | | `null` or `{ id, title, points: {t, bt, ror}[], events }` — `t` in seconds since the reference's CHARGE |
-| `PUT /api/reference` | `{ id: string \| null }` | `Snapshot` (sets or clears the reference curve; 404 for an unknown id) |
-| `POST /api/preheat` | `{ target_c }` | `Snapshot` — preheat to `target_c` (bean probe) and hold it; 400 outside 50 … `max_bt_c - 10`, 409 after CHARGE or when automation is not allowed (`reason`) |
+| `GET /api/reference` | | `null` or `{ id, title, kind, points: {t, bt, ror}[], events, actions? }` — `t` in seconds since the reference's CHARGE; `actions` is a profile's recipe |
+| `PUT /api/reference` | `{ id?: string, profile_version_id?: string }` | `Snapshot` (a saved roast, or a profile version with its recipe; neither clears it; 404 for an unknown id) |
+| `POST /api/preheat` | `{ target_c, air? }` | `Snapshot` — sets `air` (%) first as the person's command, then preheats to `target_c` (bean probe) and holds it (ADR 0018); without `air` the applied air stays; 400 outside 50 … `max_bt_c - 10` or air outside 0–100, 409 after CHARGE or when automation is not allowed (`reason`) |
 | `DELETE /api/preheat` | | `Snapshot` — stop preheating; the burner holds |
 | `POST /api/shutdown` | | 202; the daemon exits as on Ctrl-C (safe state if the burner is on, recording saved) |
 
@@ -182,7 +190,16 @@ The server sends JSON text messages:
 `daemon.json`. Tools: `get_status`, `get_curve`, `wait` (up to 30 s, then
 status), `mark_event`, `add_note`, `request_control`, `release_control`,
 `set_burner`, `set_air`, `set_drum`, `emergency_stop`, `list_roasts`,
-`get_roast`, `set_reference`, and the inventory and start dialog of the app
-(ADR 0014): `list_lots`, `add_lot`, `add_purchase`, `start_recording` (lot by
-id or name, green weight, goal, reference, drop temperature, DTR). Presence
-can only be confirmed in the app.
+`get_roast`, `set_reference` (a roast or a profile), the inventory and start
+dialog of the app (ADR 0014): `list_lots`, `add_lot`, `add_purchase`,
+`start_recording` (lot by id or name, green weight, goal, reference or
+profile, drop temperature, DTR), and the profiles (ADR 0017):
+`list_profiles`, `get_profile` (milestones, phase shares, recipe and the
+curve every 15 s per version), `create_profile` and `add_profile_version`.
+The last two build the plan in the MCP server with `roast-core::design`, as
+the app's profile designer does: a starting curve (a saved roast via
+`from_roast`, the newest version, or a typical Cubean+ espresso roast) moved
+to the milestones given, plus the recipe, and save it through `POST
+/api/profiles` and `POST /api/profiles/{id}/versions`. `mark_event charge`
+from the AI needs a running recording. Presence can only be confirmed in the
+app, and there is no preheat tool, because starting it confirms presence.

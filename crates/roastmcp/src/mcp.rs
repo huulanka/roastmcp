@@ -7,15 +7,23 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::Context as _;
+use roast_core::design::{self, CurvePoint, Milestones};
+use roast_core::{ActionTrigger, Actuator, PlannedAction, ProfileTarget, Roast};
 use serde_json::{Value, json};
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
 const INSTRUCTIONS: &str = "RoastMCP connects you to a coffee roaster. Temperatures are °C, \
 times seconds, actuator values percent. Read with get_status and get_curve; use wait to follow \
-a roast. get_status also shows the reference curve (an earlier roast: its BT at the same time \
-since CHARGE and the difference to now) and a projection (BT in 60 s, the next milestone from the \
-reference and when it is reached); set_reference picks the reference from list_roasts. \
+a roast. get_status also shows the reference (an earlier roast, or a profile's plan): its BT and \
+RoR at the same time since CHARGE and the difference to now, and for a profile the next recipe \
+step and when it is due; plus a projection (BT in 60 s, the next milestone and when it is \
+reached). set_reference picks a roast or a profile. Profiles are the roaster's plans: read them \
+with list_profiles and get_profile, develop them with the person through create_profile and \
+add_profile_version (every change is a new version they see at once in the app's Profile tab), \
+and roast one with start_recording(profile). When you control a roast that follows a profile, \
+make the recipe's moves yourself around their time, and correct only when the deviation from \
+the plan persists. The person does CHARGE and DROP by hand; announce them. \
 To control the roaster, a person must first confirm presence in the RoastMCP app, then \
 call request_control. Your commands pass a safety layer: cutting the burner or adding air is \
 never limited; raising the burner is limited to 10 points per command and one raise per 10 s, \
@@ -70,6 +78,16 @@ impl Daemon {
                 .post(&url)
                 .header("Authorization", &auth)
                 .send_empty(),
+            ("PUT", Some(b)) => self
+                .agent
+                .put(&url)
+                .header("Authorization", &auth)
+                .send_json(b),
+            ("PATCH", Some(b)) => self
+                .agent
+                .patch(&url)
+                .header("Authorization", &auth)
+                .send_json(b),
             (m, _) => anyhow::bail!("unsupported request method {m}"),
         };
         let mut r = res.context("the RoastMCP daemon is not reachable")?;
@@ -142,6 +160,234 @@ fn add_lot_schema() -> Value {
           "required": ["name"]})
 }
 
+/// Input of the profile tools: where the roast should be when.
+fn milestones_schema() -> Value {
+    let point = |what: &str| {
+        json!({"type": "object", "description": what, "properties": {
+            "time_s": {"type": "number", "description": "Roast time, seconds since CHARGE."},
+            "bt_c": {"type": "number", "description": "Bean temperature, °C."}}})
+    };
+    json!({"type": "object", "description": "Any of these; the rest stay as in the starting curve.", "properties": {
+        "charge_bt_c": {"type": "number", "description": "Bean temperature at CHARGE, °C (also the preheat target)."},
+        "dry_end": point("Dry end."),
+        "first_crack": point("First crack start."),
+        "drop": point("Drop.")}})
+}
+
+/// Input of the profile tools: burner and air steps.
+fn recipe_schema() -> Value {
+    json!({"type": "array", "description": "The whole recipe: burner and air steps by roast time (or by bean temperature after the turning point). Include the settings at CHARGE (at_s 0); air at 0 is also the preheat air.",
+        "items": {"type": "object", "properties": {
+            "actuator": {"type": "string", "enum": ["burner", "air"]},
+            "value": {"type": "number", "description": "Percent, 0-100."},
+            "at_s": {"type": "number", "description": "Roast time, seconds since CHARGE."},
+            "at_bt_c": {"type": "number", "description": "Or: when BT first reaches this after the turning point, °C."}},
+          "required": ["actuator", "value"]}})
+}
+
+/// m:ss for people.
+fn clock(s: f64) -> String {
+    // Roast times are minutes, not years.
+    #[allow(clippy::cast_possible_truncation)]
+    let s = s.round().max(0.0) as i64;
+    format!("{}:{:02}", s / 60, s % 60)
+}
+
+/// The milestones as an AI reads them.
+fn milestones_json(m: &Milestones) -> Value {
+    let p = |c: CurvePoint| json!({"time_s": c.t.round(), "clock": clock(c.t), "bt_c": (c.bt * 10.0).round() / 10.0});
+    let total = m.drop.t.max(1.0);
+    let pct = |v: f64| (v / total * 1000.0).round() / 10.0;
+    json!({
+        "charge_bt_c": (m.charge * 10.0).round() / 10.0,
+        "dry_end": p(m.dry_end),
+        "first_crack": p(m.first_crack),
+        "drop": p(m.drop),
+        "phases_pct": {
+            "drying": pct(m.dry_end.t),
+            "maillard": pct(m.first_crack.t - m.dry_end.t),
+            "development": pct(m.drop.t - m.first_crack.t),
+        },
+    })
+}
+
+/// A recipe as an AI reads and writes it.
+fn recipe_json(actions: &[PlannedAction]) -> Value {
+    actions
+        .iter()
+        .map(|a| {
+            let mut v = json!({"actuator": a.actuator, "value": a.value});
+            match a.trigger {
+                ActionTrigger::Time { roast_time_s } => {
+                    v["at_s"] = json!(roast_time_s);
+                    v["clock"] = json!(clock(roast_time_s));
+                }
+                ActionTrigger::Bt { bt_c } => v["at_bt_c"] = json!(bt_c),
+            }
+            v
+        })
+        .collect()
+}
+
+fn parse_recipe(v: &Value) -> anyhow::Result<Vec<PlannedAction>> {
+    let items = v.as_array().context("recipe must be a list of steps")?;
+    items
+        .iter()
+        .map(|i| {
+            let actuator = match i.get("actuator").and_then(Value::as_str) {
+                Some("burner") => Actuator::Burner,
+                Some("air") => Actuator::Air,
+                other => {
+                    anyhow::bail!("recipe step: actuator must be burner or air, not {other:?}")
+                }
+            };
+            let value = i
+                .get("value")
+                .and_then(Value::as_f64)
+                .filter(|v| (0.0..=100.0).contains(v))
+                .context("recipe step: value must be 0-100 %")?;
+            let trigger = match (
+                i.get("at_s").and_then(Value::as_f64),
+                i.get("at_bt_c").and_then(Value::as_f64),
+            ) {
+                (Some(t), _) if (0.0..=1800.0).contains(&t) => ActionTrigger::Time {
+                    roast_time_s: t.round(),
+                },
+                (None, Some(bt)) if (50.0..=300.0).contains(&bt) => ActionTrigger::Bt { bt_c: bt },
+                _ => anyhow::bail!(
+                    "recipe step: give at_s (0-1800 s since CHARGE) or at_bt_c (50-300 °C)"
+                ),
+            };
+            Ok(PlannedAction {
+                trigger,
+                actuator,
+                value,
+            })
+        })
+        .collect()
+}
+
+/// Milestones changed by what the AI passed.
+fn apply_milestones(mut m: Milestones, v: Option<&Value>) -> anyhow::Result<Milestones> {
+    let Some(v) = v.filter(|v| !v.is_null()) else {
+        return Ok(m);
+    };
+    if let Some(c) = v.get("charge_bt_c").and_then(Value::as_f64) {
+        m.charge = c;
+    }
+    for (key, point) in [
+        ("dry_end", &mut m.dry_end),
+        ("first_crack", &mut m.first_crack),
+        ("drop", &mut m.drop),
+    ] {
+        if let Some(p) = v.get(key) {
+            if let Some(t) = p.get("time_s").and_then(Value::as_f64) {
+                point.t = t;
+            }
+            if let Some(bt) = p.get("bt_c").and_then(Value::as_f64) {
+                point.bt = bt;
+            }
+        }
+    }
+    if let Some(problem) = design::milestones_problem(&m) {
+        anyhow::bail!("{problem}");
+    }
+    Ok(m)
+}
+
+/// A saved roast's curve, milestones and recipe.
+fn roast_plan(
+    d: &Daemon,
+    id: &str,
+) -> anyhow::Result<(Vec<CurvePoint>, Milestones, Vec<PlannedAction>)> {
+    let v = d.call("GET", &format!("/roasts/{}", id.trim()), None)?;
+    let roast: Roast = serde_json::from_value(v).context("the roast could not be read")?;
+    let (curve, m) = design::from_roast(&roast)
+        .with_context(|| format!("roast {id} has no CHARGE or too few readings to start from"))?;
+    Ok((curve, m, design::recipe_from_roast(&roast, 8.0)))
+}
+
+/// The plan to save: a starting curve moved to the milestones, and the recipe.
+fn build_plan(
+    d: &Daemon,
+    base: Option<&ProfileTarget>,
+    args: &Value,
+) -> anyhow::Result<ProfileTarget> {
+    let from_roast = args.get("from_roast").and_then(Value::as_str);
+    let (curve, m, actions) = match (from_roast, base) {
+        (Some(id), _) => roast_plan(d, id)?,
+        (None, Some(t)) => {
+            let (curve, m) = design::from_target(t);
+            (curve, m, t.actions.clone())
+        }
+        (None, None) => {
+            let m = design::TEMPLATE_MILESTONES;
+            (design::template_curve(&m), m, Vec::new())
+        }
+    };
+    let to = apply_milestones(m, args.get("milestones"))?;
+    let curve = if to == m {
+        curve
+    } else {
+        design::warp(&curve, &m, &to)
+    };
+    let actions = match args.get("recipe").filter(|v| !v.is_null()) {
+        Some(r) => parse_recipe(r)?,
+        None => actions,
+    };
+    let mut target = design::to_target(&curve, &to, &actions);
+    if let Some(b) = base.filter(|_| from_roast.is_none()) {
+        target.tolerance = b.tolerance;
+    }
+    Ok(target)
+}
+
+/// A profile as an AI reads it: milestones, recipe and a coarse curve per version.
+fn profile_json(detail: &Value, versions: usize) -> anyhow::Result<Value> {
+    let mut out = detail.clone();
+    let list = detail
+        .get("versions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let compact: Vec<Value> = list
+        .iter()
+        .take(versions)
+        .map(|v| {
+            let target: ProfileTarget = serde_json::from_value(v["target"].clone())
+                .context("a profile version could not be read")?;
+            let (_, m) = design::from_target(&target);
+            let mut next = f64::MIN;
+            let curve: Vec<Value> = target
+                .points
+                .iter()
+                .filter(|p| {
+                    let keep = p.roast_time_s >= next
+                        || Some(p.roast_time_s) == target.points.last().map(|l| l.roast_time_s);
+                    if keep {
+                        next = p.roast_time_s + 15.0;
+                    }
+                    keep
+                })
+                .map(|p| json!({"t": p.roast_time_s, "bt": p.bt_c, "ror": p.ror_c_per_min}))
+                .collect();
+            Ok(json!({
+                "id": v["id"],
+                "version": v["version"],
+                "parent_version": v["parent_version"],
+                "created_at": v["created_at"],
+                "change_note": v["change_note"],
+                "milestones": milestones_json(&m),
+                "recipe": recipe_json(&target.actions),
+                "curve_every_15s": curve,
+            }))
+        })
+        .collect::<anyhow::Result<_>>()?;
+    out["versions_total"] = json!(list.len());
+    out["versions"] = Value::Array(compact);
+    Ok(out)
+}
+
 fn tools() -> Value {
     let num = |desc: &str| json!({"type": "number", "description": desc});
     let reason = json!({"type": "string", "description": "Why - logged with the roast."});
@@ -172,7 +418,7 @@ fn tools() -> Value {
             "last_s": num("Only the last N seconds (default: all).")}}},
         {"name": "wait", "description": "Waits up to 30 s, then returns get_status. Keeps your control lease alive.",
          "inputSchema": {"type": "object", "properties": {"seconds": num("1-30")}, "required": ["seconds"]}},
-        {"name": "mark_event", "description": "Marks a roast event at the current time (e.g. first_crack_start when you hear it reported).",
+        {"name": "mark_event", "description": "Marks a roast event at the current time (e.g. first_crack_start when you hear it reported). charge needs a running recording: call start_recording first.",
          "inputSchema": {"type": "object", "properties": {"kind": {"type": "string", "enum": kinds}}, "required": ["kind"]}},
         {"name": "add_note", "description": "Adds a note to the running roast.",
          "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
@@ -187,8 +433,29 @@ fn tools() -> Value {
          "inputSchema": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"]}},
         {"name": "list_roasts", "description": "Saved roasts, newest first.", "inputSchema": {"type": "object", "properties": {}}},
         {"name": "list_profiles", "description": "Roast profiles the roaster developed: name, intended beans, batch size and the newest version (id, number, change note). A version's curve, milestones and recipe come with get_profile.", "inputSchema": {"type": "object", "properties": {}}},
-        {"name": "get_profile", "description": "One profile with all its versions, newest first: each with its target curve (roast time, BT, RoR), dry end / first crack / drop targets and its recipe (burner and air steps).",
-         "inputSchema": {"type": "object", "properties": {"id": {"type": "string", "description": "Profile id or exact name (see list_profiles)."}}, "required": ["id"]}},
+        {"name": "get_profile", "description": "One profile with its versions, newest first: each with its milestones (charge BT; dry end, first crack and drop as roast time and BT), phase shares, recipe (burner and air steps) and target curve every 15 s (roast time, BT, RoR).",
+         "inputSchema": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "Profile id or exact name (see list_profiles)."},
+            "all_versions": {"type": "boolean", "description": "All versions instead of the newest three."}}, "required": ["id"]}},
+        {"name": "create_profile", "description": "Creates a profile (version 1) with the person: a target curve shaped by milestones, and a recipe. The curve starts from a saved roast (from_roast: its curve and recipe) or from a typical 200 g Cubean+ espresso roast, then moves to the milestones you give (the curve between them is stretched, keeping its natural shape). Agree name, milestones and recipe with the person first; it appears at once in the app's Profile tab.",
+         "inputSchema": {"type": "object", "properties": {
+            "name": {"type": "string"},
+            "description": {"type": "string"},
+            "intended_beans": {"type": "string", "description": "The coffee it is for, e.g. a lot name."},
+            "batch_size_g": num("Green weight it is made for, grams."),
+            "from_roast": {"type": "string", "description": "Id of a saved roast to start from (see list_roasts)."},
+            "milestones": milestones_schema(),
+            "recipe": recipe_schema(),
+            "change_note": {"type": "string", "description": "Why it looks like this; shown with version 1."}},
+          "required": ["name"]}},
+        {"name": "add_profile_version", "description": "Saves a changed plan as the profile's next version: it starts from the newest version (or from_roast) and changes only what you pass. Milestones you leave out stay where they are; a recipe you pass replaces the whole recipe. Always give the reason as change_note.",
+         "inputSchema": {"type": "object", "properties": {
+            "profile": {"type": "string", "description": "Profile id or exact name (see list_profiles)."},
+            "from_roast": {"type": "string", "description": "Start from this saved roast's curve and recipe instead of the newest version."},
+            "milestones": milestones_schema(),
+            "recipe": recipe_schema(),
+            "change_note": {"type": "string", "description": "What changed and why, e.g. \"FC 15 s later: BR011 developed too fast\"."}},
+          "required": ["profile", "change_note"]}},
         {"name": "get_roast", "description": "A saved roast with its curve downsampled to every 10 s.",
          "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
         {"name": "list_lots", "description": "The green coffee in stock: lots with name, origin, process, supplier, purchase date and stock_g (grams; negative if more was roasted than recorded as bought). Archived lots only when asked.",
@@ -213,8 +480,10 @@ fn tools() -> Value {
             "dtr_pct": num("Development time ratio to drop at, percent."),
             "batch_no": {"type": "string", "description": "Batch number for the bag's label, the lot's code and its next running number, e.g. BRYB-002 (list_roasts shows the numbers used). Ignored in the simulator."},
             "title": {"type": "string", "description": "Default: the lot's name."}}}},
-        {"name": "set_reference", "description": "Shows a saved roast (id from list_roasts) as the reference curve behind the live roast, or clears it (id omitted). The person sees it in the app.",
-         "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}}}
+        {"name": "set_reference", "description": "Shows a saved roast (id from list_roasts) or a profile (its newest version) as the reference behind the live roast, or clears it (both omitted). A profile brings its recipe: get_status then names the next step. The person sees it in the app.",
+         "inputSchema": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "A saved roast's id."},
+            "profile": {"type": "string", "description": "Profile id or exact name, instead of a roast."}}}}
     ])
 }
 
@@ -310,7 +579,44 @@ fn call_tool(d: &mut Daemon, name: &str, args: &Value) -> anyhow::Result<Value> 
         "list_profiles" => d.call("GET", "/profiles", None),
         "get_profile" => {
             let id = resolve_profile(d, &arg_s("id").context("id is required")?)?;
-            d.call("GET", &format!("/profiles/{id}"), None)
+            let detail = d.call("GET", &format!("/profiles/{id}"), None)?;
+            let all = args.get("all_versions").and_then(Value::as_bool) == Some(true);
+            profile_json(&detail, if all { usize::MAX } else { 3 })
+        }
+        "create_profile" => {
+            let target = build_plan(d, None, args)?;
+            let detail = d.call(
+                "POST",
+                "/profiles",
+                Some(json!({
+                    "name": arg_s("name").context("name is required")?,
+                    "description": arg_s("description"),
+                    "intended_beans": arg_s("intended_beans"),
+                    "batch_size_g": arg_f("batch_size_g"),
+                    "change_note": arg_s("change_note"),
+                    "target": target,
+                })),
+            )?;
+            profile_json(&detail, 1)
+        }
+        "add_profile_version" => {
+            let id = resolve_profile(d, &arg_s("profile").context("profile is required")?)?;
+            let detail = d.call("GET", &format!("/profiles/{id}"), None)?;
+            let newest: Option<ProfileTarget> = detail
+                .pointer("/versions/0/target")
+                .map(|t| serde_json::from_value(t.clone()))
+                .transpose()
+                .context("the newest version could not be read")?;
+            let target = build_plan(d, newest.as_ref(), args)?;
+            let detail = d.call(
+                "POST",
+                &format!("/profiles/{id}/versions"),
+                Some(json!({
+                    "target": target,
+                    "change_note": arg_s("change_note").context("change_note is required")?,
+                })),
+            )?;
+            profile_json(&detail, 2)
         }
         "list_lots" => {
             let all = args.get("include_archived").and_then(Value::as_bool) == Some(true);
@@ -414,11 +720,22 @@ fn call_tool(d: &mut Daemon, name: &str, args: &Value) -> anyhow::Result<Value> 
                 })),
             )
         }
-        "set_reference" => d.call(
-            "PUT",
-            "/reference",
-            Some(serde_json::json!({ "id": arg_s("id") })),
-        ),
+        "set_reference" => {
+            let body = match arg_s("profile") {
+                Some(p) => {
+                    let id = resolve_profile(d, &p)?;
+                    let detail = d.call("GET", &format!("/profiles/{id}"), None)?;
+                    let version = detail
+                        .pointer("/versions/0/id")
+                        .and_then(Value::as_str)
+                        .context("the profile has no version")?
+                        .to_owned();
+                    json!({ "profile_version_id": version })
+                }
+                None => json!({ "id": arg_s("id") }),
+            };
+            d.call("PUT", "/reference", Some(body))
+        }
         "get_roast" => {
             let id = arg_s("id").context("id is required")?;
             let mut r = d.call("GET", &format!("/roasts/{id}"), None)?;
@@ -585,6 +902,42 @@ mod tests {
         assert!(list.len() >= 10);
         assert!(list.iter().all(|t| t["inputSchema"]["type"] == "object"));
         assert!(!list.iter().any(|t| t["name"] == "confirm_presence"));
+        // Starting a preheat confirms presence: only a person may (ADR 0018).
+        assert!(
+            !list
+                .iter()
+                .any(|t| t["name"].as_str().unwrap().contains("preheat"))
+        );
+    }
+
+    #[test]
+    fn a_recipe_is_read_and_written_back_alike() {
+        let input = json!([
+            {"actuator": "burner", "value": 80, "at_s": 0},
+            {"actuator": "air", "value": 20, "at_s": 0},
+            {"actuator": "burner", "value": 60, "at_bt_c": 185}
+        ]);
+        let recipe = parse_recipe(&input).unwrap();
+        assert_eq!(recipe.len(), 3);
+        let back = recipe_json(&recipe);
+        assert_eq!(back[2]["at_bt_c"], 185.0);
+        assert_eq!(back[0]["clock"], "0:00");
+        assert!(parse_recipe(&json!([{"actuator": "drum", "value": 80, "at_s": 0}])).is_err());
+        assert!(parse_recipe(&json!([{"actuator": "burner", "value": 120, "at_s": 0}])).is_err());
+        assert!(parse_recipe(&json!([{"actuator": "burner", "value": 50}])).is_err());
+    }
+
+    #[test]
+    fn milestones_change_only_what_is_given_and_are_checked() {
+        let m = design::TEMPLATE_MILESTONES;
+        let moved = apply_milestones(m, Some(&json!({"first_crack": {"time_s": 540}}))).unwrap();
+        assert_eq!(moved.first_crack.t, 540.0);
+        assert_eq!(moved.first_crack.bt, m.first_crack.bt);
+        assert_eq!(moved.drop, m.drop);
+        let err = apply_milestones(m, Some(&json!({"drop": {"time_s": 500}}))).unwrap_err();
+        assert!(err.to_string().contains("30 s"), "{err}");
+        let shown = milestones_json(&m);
+        assert_eq!(shown["first_crack"]["clock"], "8:45");
     }
 
     #[test]
