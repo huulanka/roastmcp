@@ -120,15 +120,20 @@ latched the safe state.
    the first run closely; its control gains are untested on the machine.
    Optionally pick an earlier roast as the reference (archive → "Als
    Referenz"; your imported Artisan roasts are there).
-2. Press **Start recording** (title, green weight), then **CHARGE** as the
-   beans go in. Turning point and DRY END are detected automatically; correct
-   them by clicking the button again.
+2. Press **Start recording** (title, green weight) and charge the beans.
+   CHARGE, turning point, DRY END and DROP are detected from the bean
+   temperature, as Artisan's auto CHARGE/DROP: CHARGE when it falls at least
+   5 °C within 8 s from above 100 °C, DROP when, after DRY END and at least
+   3 min into the roast, the median of the last five readings is 5 °C below
+   the peak of the last 25 s (dated at that peak, found 10-15 s after the
+   beans left). On 23 of your Artisan roasts this matched Artisan's marks
+   within 4.5 s, with no false DROP. The big button marks any of them by hand
+   at once and wins over the detection.
 3. Roast by hand with the sliders or the keys (Q/A burner, W/S air). Mark
-   **FC start** when you hear first crack, **DROP** when the beans leave the
-   drum.
-4. **Stop recording** saves the roast as `.roast.json` and `.alog` (open it in
-   Artisan or upload it wherever you use `.alog`). Enter the roasted weight in
-   the archive.
+   **FC start** when you hear first crack.
+4. DROP, marked or detected, saves the roast as `.roast.json` and `.alog`
+   (open it in Artisan or upload it wherever you use `.alog`) and asks for the
+   roasted weight.
 
 ## 4. Letting Claude watch, then help
 

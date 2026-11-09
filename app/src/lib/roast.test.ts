@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { EventKind, SafetyStatus } from "@/api/types.ts";
 import {
+  endedRoast,
   latestAiNote,
   liveDtr,
   nextAction,
@@ -107,5 +108,18 @@ describe("notes and presence", () => {
     expect(presenceView(safety(300, "claude"))).toMatchObject({ urgent: false, ask: false });
     expect(presenceView(safety(45, null)).ask).toBe(true);
     expect(presenceView(safety(null, null))).toMatchObject({ due: null, ask: false });
+  });
+});
+
+describe("weight dialog after a roast", () => {
+  const rec = { id: "r1", title: "", started_at: "", green_weight_g: null, beans: null };
+  it("opens when a charged roast ends, however it ended", () => {
+    expect(endedRoast({ recording: rec, state: "charged" }, { recording: null })).toBe("r1");
+    expect(endedRoast({ recording: rec, state: "dropped" }, { recording: null })).toBe("r1");
+  });
+  it("stays shut for a recording without CHARGE or one still running", () => {
+    expect(endedRoast({ recording: rec, state: "recording" }, { recording: null })).toBeNull();
+    expect(endedRoast({ recording: rec, state: "charged" }, { recording: rec })).toBeNull();
+    expect(endedRoast(null, { recording: null })).toBeNull();
   });
 });

@@ -6,6 +6,7 @@ import { TopBar } from "@/components/TopBar.tsx";
 import type { Screen } from "@/state/helpers.ts";
 import { ArchiveScreen } from "@/screens/ArchiveScreen.tsx";
 import { RoastScreen } from "@/screens/RoastScreen.tsx";
+import { SaveWatcher } from "@/state/actions.ts";
 import { startLive, useLive } from "@/state/live.ts";
 
 export function App() {
@@ -31,6 +32,7 @@ export function App() {
       )}
       <ConnectDialog open={connectOpen} onOpenChange={setConnectOpen} />
       <AlarmWatcher />
+      <SaveWatcher />
       <Toasts />
     </div>
   );

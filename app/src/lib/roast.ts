@@ -1,4 +1,11 @@
-import type { EventKind, Note, RoastEvent, RoastState, SafetyStatus } from "@/api/types.ts";
+import type {
+  EventKind,
+  Note,
+  RoastEvent,
+  RoastState,
+  SafetyStatus,
+  Snapshot,
+} from "@/api/types.ts";
 import { EVENT_NAME, type Series } from "./chartData.ts";
 
 /** States in which a recording runs. */
@@ -144,4 +151,14 @@ export function presenceView(safety: SafetyStatus): PresenceView {
     urgent: aiInControl && due !== null && due < 30,
     ask: due !== null && (due < 60 || (aiInControl && due < 120)),
   };
+}
+
+/** The id of a roast that just ended after its CHARGE, given two snapshots in a row. */
+export function endedRoast(
+  prev: Pick<Snapshot, "recording" | "state"> | null,
+  next: Pick<Snapshot, "recording">,
+): string | null {
+  const was = prev?.recording;
+  if (!was || next.recording) return null;
+  return prev.state === "charged" || prev.state === "dropped" ? was.id : null;
 }

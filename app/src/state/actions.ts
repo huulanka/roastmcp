@@ -1,8 +1,9 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 
 import { api, ApiError } from "@/api/client.ts";
-import type { EventKind } from "@/api/types.ts";
-import { applySnapshot } from "./live.ts";
+import type { EventKind, Snapshot } from "@/api/types.ts";
+import { endedRoast } from "@/lib/roast.ts";
+import { applySnapshot, useLive } from "./live.ts";
 import { toast } from "./toasts.ts";
 
 export async function emergencyStop(): Promise<void> {
@@ -52,20 +53,27 @@ export function clearJustSaved(): void {
   setJustSaved(null);
 }
 
-/** Marks an event. The drop ends and saves the recording, so it also opens the weight dialog. */
+/** Marks an event. The drop ends and saves the recording (see `SaveWatcher`). */
 export async function markEvent(kind: EventKind): Promise<void> {
   try {
     await api.markEvent(kind);
   } catch (e) {
     toast("critical", e instanceof ApiError ? e.message : String(e));
-    return;
   }
-  if (kind !== "drop") return;
-  try {
-    const list = await api.roasts();
-    const newest = [...list].sort((a, b) => b.roasted_at.localeCompare(a.roasted_at))[0];
-    if (newest) setJustSaved(newest.id);
-  } catch {
-    /* the roast is saved either way */
-  }
+}
+
+/**
+ * Opens the weight dialog whenever a roast that had its CHARGE ends: a DROP
+ * marked or detected by the daemon (which saves at once), or "End recording".
+ */
+export function SaveWatcher(): null {
+  const { snapshot } = useLive();
+  const prev = useRef<Snapshot | null>(null);
+  useEffect(() => {
+    if (!snapshot) return;
+    const ended = endedRoast(prev.current, snapshot);
+    if (ended) setJustSaved(ended);
+    prev.current = snapshot;
+  }, [snapshot]);
+  return null;
 }

@@ -1,4 +1,5 @@
-//! Live event detection (CHARGE, turning point, DRY END) and roast phases.
+//! Live event detection (CHARGE, turning point, DRY END, DROP) and roast
+//! phases.
 //!
 //! The detector is causal: it sees one reading at a time, as the daemon does
 //! while recording, and never moves an event that was already emitted. Events
@@ -30,6 +31,14 @@ pub struct DetectorConfig {
     pub tp_max_after_charge_s: f64,
     /// Bean temperature that ends the drying phase, °C.
     pub dry_end_c: f64,
+    /// DROP is detected when the bean temperature falls this far below its
+    /// recent peak, °C. The level is the median of the last five readings,
+    /// so up to two bad readings never end a roast …
+    pub drop_fall_c: f64,
+    /// … within this many seconds of that peak.
+    pub drop_window_s: f64,
+    /// DROP is only searched for after DRY END and this long after CHARGE, s.
+    pub drop_min_after_charge_s: f64,
 }
 
 impl Default for DetectorConfig {
@@ -41,11 +50,18 @@ impl Default for DetectorConfig {
             tp_confirm_rise_c: 2.0,
             tp_max_after_charge_s: 240.0,
             dry_end_c: 150.0,
+            // In 23 real Cubean+ roasts the probe peaked at the drop and then
+            // fell 1.5-2 °C/s once the beans had left: 5 °C below the peak
+            // within about 10 s. With beans in the drum the bean temperature
+            // never falls that fast (a hard heat cut gives about 1 °C in 10 s).
+            drop_fall_c: 5.0,
+            drop_window_s: 25.0,
+            drop_min_after_charge_s: 180.0,
         }
     }
 }
 
-/// Detects CHARGE, the turning point and DRY END from a live curve.
+/// Detects CHARGE, the turning point, DRY END and DROP from a live curve.
 #[derive(Debug, Clone)]
 pub struct EventDetector {
     cfg: DetectorConfig,
@@ -92,17 +108,13 @@ impl EventDetector {
         }
 
         self.recent.push_back((t, bt));
-        let from = t - self.cfg.charge_window_s;
-        while self.recent.front().is_some_and(|&(t0, _)| t0 < from) {
+        let keep_from = t - self.cfg.charge_window_s.max(self.cfg.drop_window_s);
+        while self.recent.front().is_some_and(|&(t0, _)| t0 < keep_from) {
             self.recent.pop_front();
         }
 
         if !has(EventKind::Charge, &out) {
-            let peak = self
-                .recent
-                .iter()
-                .copied()
-                .max_by(|a, b| a.1.total_cmp(&b.1));
+            let peak = self.peak_since(t - self.cfg.charge_window_s);
             if let Some((pt, pbt)) = peak
                 && pbt >= self.cfg.charge_min_bt_c
                 && pbt - bt >= self.cfg.charge_drop_c
@@ -136,7 +148,37 @@ impl EventDetector {
         {
             out.push(detected(t, EventKind::DryEnd, bt));
         }
+
+        if has(EventKind::DryEnd, &out) && t - charge_t >= self.cfg.drop_min_after_charge_s {
+            let peak = self.peak_since(t - self.cfg.drop_window_s);
+            if let (Some((pt, pbt)), Some(level)) = (peak, self.recent_median())
+                && pbt - level >= self.cfg.drop_fall_c
+            {
+                out.push(detected(pt, EventKind::Drop, pbt));
+            }
+        }
         out
+    }
+
+    /// The highest reading at or after `from`.
+    fn peak_since(&self, from: f64) -> Option<(f64, f64)> {
+        self.recent
+            .iter()
+            .copied()
+            .filter(|&(t0, _)| t0 >= from)
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+    }
+
+    /// The median of the last five readings (needs five): two bad readings
+    /// cannot move it, as in the rate-of-rise spike filter.
+    fn recent_median(&self) -> Option<f64> {
+        let n = self.recent.len();
+        if n < 5 {
+            return None;
+        }
+        let mut last: Vec<f64> = self.recent.iter().skip(n - 5).map(|r| r.1).collect();
+        last.sort_by(f64::total_cmp);
+        Some(last[2])
     }
 }
 
@@ -229,7 +271,10 @@ mod tests {
         assert!((50.0..80.0).contains(&tp), "tp {tp}");
         let dry = t(EventKind::DryEnd).unwrap() - charge;
         assert!((240.0..262.0).contains(&dry), "dry end {dry}");
-        assert_eq!(events.len(), 3);
+        // DROP is dated at the peak, i.e. where the beans left the drum.
+        let drop = t(EventKind::Drop).unwrap();
+        assert!((drop - testutil::DROP_T).abs() <= 1.0, "drop at {drop}");
+        assert_eq!(events.len(), 4);
         assert!(events.iter().all(|e| e.origin == EventOrigin::Auto));
     }
 
@@ -253,6 +298,109 @@ mod tests {
             .collect();
         assert_eq!(charges.len(), 1);
         assert_eq!(charges[0].origin, EventOrigin::Human);
+    }
+
+    #[test]
+    fn drop_is_found_within_seconds_and_dated_at_the_peak() {
+        // The probe as measured on the Cubean+: the peak lingers a few
+        // seconds, then falls about 2 °C/s once the beans are out.
+        let mut samples = Vec::new();
+        let mut events = vec![
+            RoastEvent {
+                t: 30.0,
+                kind: EventKind::Charge,
+                origin: EventOrigin::Human,
+                bt: None,
+            },
+            RoastEvent {
+                t: 280.0,
+                kind: EventKind::DryEnd,
+                origin: EventOrigin::Auto,
+                bt: None,
+            },
+        ];
+        for i in 0..=1200 {
+            let t = 30.0 + f64::from(i) * 0.5;
+            let drop_t = 620.0;
+            let bt = if t <= drop_t {
+                195.0 + (t - 560.0).max(0.0) * 0.15
+            } else if t <= drop_t + 5.0 {
+                204.0
+            } else {
+                204.0 - 2.0 * (t - drop_t - 5.0)
+            };
+            samples.push((t, bt));
+        }
+        let mut d = EventDetector::default();
+        let mut found_at = None;
+        for &(t, bt) in &samples {
+            let new = d.push(t, bt, &events);
+            if new.iter().any(|e| e.kind == EventKind::Drop) && found_at.is_none() {
+                found_at = Some(t);
+            }
+            events.extend(new);
+        }
+        let drop = events.iter().find(|e| e.kind == EventKind::Drop).unwrap();
+        assert_eq!(drop.origin, EventOrigin::Auto);
+        assert!((619.0..=626.0).contains(&drop.t), "dated at {}", drop.t);
+        let found_at = found_at.unwrap();
+        assert!(found_at <= 620.0 + 10.0, "found only at {found_at}");
+    }
+
+    #[test]
+    fn one_bad_reading_never_drops() {
+        let mut events = vec![
+            RoastEvent {
+                t: 0.0,
+                kind: EventKind::Charge,
+                origin: EventOrigin::Human,
+                bt: None,
+            },
+            RoastEvent {
+                t: 250.0,
+                kind: EventKind::DryEnd,
+                origin: EventOrigin::Auto,
+                bt: None,
+            },
+        ];
+        let mut d = EventDetector::default();
+        for i in 0..400 {
+            let t = 300.0 + f64::from(i);
+            // A steady rise with one reading 20 °C low and, later, two
+            // readings 8 °C low among five.
+            let mut bt = 170.0 + f64::from(i) * 0.1;
+            if i == 100 {
+                bt -= 20.0;
+            }
+            if i == 200 || i == 202 {
+                bt -= 8.0;
+            }
+            let new = d.push(t, bt, &events);
+            events.extend(new);
+        }
+        assert!(
+            events.iter().all(|e| e.kind != EventKind::Drop),
+            "{events:?}"
+        );
+    }
+
+    #[test]
+    fn no_drop_before_dry_end_or_early_after_charge() {
+        // CHARGE-like fall early in the roast: not a DROP.
+        let mut events = vec![RoastEvent {
+            t: 0.0,
+            kind: EventKind::Charge,
+            origin: EventOrigin::Human,
+            bt: None,
+        }];
+        let mut d = EventDetector::default();
+        for i in 0..120 {
+            let t = f64::from(i);
+            let bt = 180.0 - f64::from(i) * 1.5;
+            let new = d.push(t, bt.max(90.0), &events);
+            events.extend(new);
+        }
+        assert!(events.iter().all(|e| e.kind != EventKind::Drop));
     }
 
     #[test]
