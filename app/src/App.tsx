@@ -6,6 +6,7 @@ import { TopBar } from "@/components/TopBar.tsx";
 import type { Screen } from "@/state/helpers.ts";
 import { ArchiveScreen } from "@/screens/ArchiveScreen.tsx";
 import { InventoryView } from "@/screens/InventoryView.tsx";
+import { ProfilesScreen } from "@/screens/ProfilesScreen.tsx";
 import { RoastScreen } from "@/screens/RoastScreen.tsx";
 import { SaveWatcher } from "@/state/actions.ts";
 import { startLive, useLive } from "@/state/live.ts";
@@ -32,8 +33,10 @@ export function App() {
         <main className="flex min-h-0 flex-1 flex-col overflow-y-auto p-gutter lg:overflow-hidden">
           <InventoryView />
         </main>
-      ) : (
+      ) : screen === "archive" ? (
         <ArchiveScreen />
+      ) : (
+        <ProfilesScreen />
       )}
       <ConnectDialog open={connectOpen} onOpenChange={setConnectOpen} />
       <AlarmWatcher />

@@ -156,6 +156,10 @@ pub struct RoastPlan {
     /// percent of the time from CHARGE to DROP.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dtr_pct: Option<f64>,
+    /// The profile version followed; its target curve is the plan line and
+    /// its recipe is announced during the roast. Wins over `reference_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_version_id: Option<Uuid>,
 }
 
 impl RoastPlan {

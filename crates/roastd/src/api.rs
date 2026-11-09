@@ -74,6 +74,10 @@ pub fn router(state: AppState, ui_dir: Option<PathBuf>) -> Router {
         .route("/shutdown", post(shutdown))
         .route("/reference", get(reference).put(set_reference))
         .route("/preheat", post(preheat_start).delete(preheat_stop))
+        .route("/profiles", get(profiles_list).post(profile_add))
+        .route("/profiles/{id}", get(profile_get).patch(profile_patch))
+        .route("/profiles/{id}/versions", post(profile_version_add))
+        .route("/profile-versions/{id}", get(profile_version_get))
         .route("/lots", get(lots).post(lot_add))
         .route("/lots/{id}", get(lot).patch(lot_patch))
         .route("/lots/{id}/movements", get(lot_movements))
@@ -467,6 +471,97 @@ async fn roast_patch(
             .map_err(|e| engine_gone(&e))??;
     }
     with_ror(&r).map(Json)
+}
+
+// ------------------------------------------------------------- profiles
+
+fn profile_id(id: &str) -> Result<uuid::Uuid, Fail> {
+    id.parse().map_err(|_| Fail::not_found("no such profile"))
+}
+
+#[derive(Deserialize)]
+struct ArchivedQuery {
+    #[serde(default)]
+    archived: bool,
+}
+
+async fn profiles_list(
+    State(st): State<AppState>,
+    Query(q): Query<ArchivedQuery>,
+) -> ApiResult<Vec<crate::profiles::ProfileSummary>> {
+    st.engine
+        .call(move |e| e.profiles.list(q.archived))
+        .await
+        .map(Json)
+        .map_err(|e| engine_gone(&e))
+}
+
+async fn profile_add(
+    State(st): State<AppState>,
+    Json(req): Json<crate::profiles::NewProfile>,
+) -> ApiResult<crate::profiles::ProfileDetail> {
+    st.engine
+        .call(move |e| {
+            let machine = e.machine_id();
+            e.profiles.create(req, machine)
+        })
+        .await
+        .map_err(|e| engine_gone(&e))?
+        .map(Json)
+}
+
+async fn profile_get(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<crate::profiles::ProfileDetail> {
+    let id = profile_id(&id)?;
+    st.engine
+        .call(move |e| e.profiles.get(id))
+        .await
+        .map_err(|e| engine_gone(&e))?
+        .map(Json)
+}
+
+async fn profile_patch(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Json(p): Json<crate::profiles::ProfilePatch>,
+) -> ApiResult<crate::profiles::ProfileDetail> {
+    let id = profile_id(&id)?;
+    st.engine
+        .call(move |e| e.profiles.update(id, p))
+        .await
+        .map_err(|e| engine_gone(&e))?
+        .map(Json)
+}
+
+/// One version with its profile, by the version's id (a roast's plan names it).
+async fn profile_version_get(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    let id = profile_id(&id)?;
+    let (profile, version) = st
+        .engine
+        .call(move |e| e.profiles.version(id))
+        .await
+        .map_err(|e| engine_gone(&e))??;
+    Ok(Json(
+        serde_json::json!({ "profile": profile, "version": version }),
+    ))
+}
+
+async fn profile_version_add(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<crate::profiles::NewVersion>,
+) -> ApiResult<crate::profiles::ProfileDetail> {
+    let id = profile_id(&id)?;
+    st.engine
+        .call(move |e| e.profiles.add_version(id, req))
+        .await
+        .map_err(|e| engine_gone(&e))?
+        .map(Json)
 }
 
 // ------------------------------------------------------------- inventory

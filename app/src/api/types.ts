@@ -113,6 +113,72 @@ export interface RoastPlan {
   reference_id?: string;
   drop_bt_c?: number;
   dtr_pct?: number;
+  /** A profile version as the plan; wins over reference_id. */
+  profile_version_id?: string;
+}
+
+/** One point of a profile's target curve; times are seconds since CHARGE. */
+export interface TargetPoint {
+  roast_time_s: number;
+  bt_c: number;
+  ror_c_per_min?: number | null;
+}
+export type ActionTrigger = { at: "time"; roast_time_s: number } | { at: "bt"; bt_c: number };
+/** A recipe step: an actuator to a value at a time or temperature. */
+export interface PlannedAction {
+  trigger: ActionTrigger;
+  actuator: Actuator;
+  value: number;
+}
+export interface EventTarget {
+  bt_c?: number | null;
+  roast_time_s?: number | null;
+}
+export type DropRule =
+  | { rule: "at_bt"; bt_c: number }
+  | { rule: "at_dtr"; dtr_pct: number }
+  | { rule: "at_time"; roast_time_s: number };
+export interface ProfileTarget {
+  points: TargetPoint[];
+  actions: PlannedAction[];
+  events: {
+    dry_end?: EventTarget | null;
+    first_crack?: EventTarget | null;
+    drop?: DropRule | null;
+  };
+  tolerance?: { bt_c: number; ror_c_per_min?: number | null };
+}
+export interface ProfileVersion {
+  id: string;
+  profile_id: string;
+  version: number;
+  parent_version?: number | null;
+  created_at: string;
+  change_note?: string | null;
+  target: ProfileTarget;
+}
+export interface ProfileInfo {
+  id: string;
+  name: string;
+  description?: string | null;
+  machine_id?: string | null;
+  intended_beans?: string | null;
+  batch_size_g?: number | null;
+  archived: boolean;
+  created_at: string;
+}
+export interface ProfileSummary extends ProfileInfo {
+  latest: {
+    id: string;
+    version: number;
+    created_at: string;
+    change_note?: string | null;
+  } | null;
+  versions: number;
+}
+export interface ProfileDetail extends ProfileInfo {
+  /** Newest first. */
+  versions: ProfileVersion[];
 }
 export type Process =
   "washed" | "natural" | "honey" | "pulped_natural" | "semi_washed" | "wet_hulled" | "other";

@@ -5,6 +5,11 @@ import type {
   Live,
   Lot,
   LotDetails,
+  ProfileDetail,
+  ProfileInfo,
+  ProfileSummary,
+  ProfileTarget,
+  ProfileVersion,
   ReferenceCurve,
   Roast,
   RoastEvent,
@@ -155,6 +160,27 @@ export const api = {
   roast: (id: string) => request<Roast>("GET", `/api/roasts/${encodeURIComponent(id)}`),
   patchRoast: (id: string, body: { title?: string; roasted_weight_g?: number }) =>
     request<Roast>("PATCH", `/api/roasts/${encodeURIComponent(id)}`, body),
+  profiles: (archived = false) =>
+    request<ProfileSummary[]>("GET", `/api/profiles${archived ? "?archived=true" : ""}`),
+  profile: (id: string) => request<ProfileDetail>("GET", `/api/profiles/${encodeURIComponent(id)}`),
+  addProfile: (body: {
+    name: string;
+    intended_beans?: string;
+    batch_size_g?: number;
+    target: ProfileTarget;
+    change_note?: string;
+  }) => request<ProfileDetail>("POST", "/api/profiles", body),
+  profileVersion: (id: string) =>
+    request<{ profile: ProfileInfo; version: ProfileVersion }>(
+      "GET",
+      `/api/profile-versions/${encodeURIComponent(id)}`,
+    ),
+  addProfileVersion: (id: string, body: { target: ProfileTarget; change_note?: string }) =>
+    request<ProfileDetail>("POST", `/api/profiles/${encodeURIComponent(id)}/versions`, body),
+  patchProfile: (
+    id: string,
+    body: { name?: string; intended_beans?: string; batch_size_g?: number; archived?: boolean },
+  ) => request<ProfileDetail>("PATCH", `/api/profiles/${encodeURIComponent(id)}`, body),
   /** Moves a roast to the trash folder and credits its green coffee back. */
   deleteRoast: (id: string) =>
     request<{ credited_g: number; trash_path: string }>(

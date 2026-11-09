@@ -20,6 +20,7 @@ import { StartDialog } from "@/components/StartDialog.tsx";
 import { EventSegments, PrimaryButton } from "@/components/EventRow.tsx";
 import { PreheatCard } from "@/components/Preheat.tsx";
 import { Readouts } from "@/components/Readouts.tsx";
+import { RecipeCue } from "@/components/RecipeCue.tsx";
 import { RoastChart, type ChartOverlay, type ChartView } from "@/components/RoastChart.tsx";
 import { BeanMark } from "@/components/TopBar.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -51,6 +52,7 @@ import {
 } from "@/state/actions.ts";
 import { nudge } from "@/state/controls.ts";
 import { applySnapshot, useLive } from "@/state/live.ts";
+import { useRecipe } from "@/state/recipe.ts";
 import { useReferenceCurve } from "@/state/reference.ts";
 
 /** Enter belongs to text fields, dialogs and menus; everywhere else it is the next event. */
@@ -141,6 +143,10 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
   const refCurve = useReferenceCurve(refStatus?.id ?? null);
   const connected = snapshot?.connection === "connected";
   const recording = snapshot ? isRecording(snapshot.state) : false;
+  // A profile as the plan brings its recipe (ADR 0017).
+  const recipe = useRecipe(
+    recording ? (snapshot?.recording?.plan?.profile_version_id ?? null) : null,
+  );
 
   const live = useMemo(
     () => buildChartData(points, base, rorStart(events ?? [], base)),
@@ -383,6 +389,13 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
               <PreheatCard
                 preheat={snapshot.preheat ?? null}
                 bt={snapshot.bt}
+                disabled={!snapshot.safety.connected || snapshot.safety.emergency_stop}
+              />
+            ) : recipe && base !== null && typeof snapshot.t === "number" ? (
+              <RecipeCue
+                recipe={recipe}
+                sinceCharge={snapshot.t - base}
+                current={snapshot.safety.actuators}
                 disabled={!snapshot.safety.connected || snapshot.safety.emergency_stop}
               />
             ) : null
