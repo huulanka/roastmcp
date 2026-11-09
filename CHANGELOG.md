@@ -1,3 +1,10 @@
+## [1.9.1](https://github.com/huulanka/roastmcp/compare/v1.9.0...v1.9.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **daemon:** revalidate the app page so an update never shows the old UI ([#27](https://github.com/huulanka/roastmcp/issues/27)) ([e3ca3a7](https://github.com/huulanka/roastmcp/commit/e3ca3a7b3591762025118fc00e69b8a703041ad1))
+
 # [1.9.0](https://github.com/huulanka/roastmcp/compare/v1.8.0...v1.9.0) (2026-11-09)
 
 
