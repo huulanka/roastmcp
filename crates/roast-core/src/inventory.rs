@@ -10,61 +10,145 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// How the coffee cherries were processed.
-///
-/// Fine distinctions ("red honey", "anaerobic natural, 72 h") go into
-/// [`GreenLot::process_detail`]; the enum keeps the broad family filterable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Process {
-    /// Fruit removed before drying (fully washed).
-    Washed,
-    /// Dried in the whole cherry (dry process).
-    Natural,
-    /// Skin removed, some mucilage left on while drying (also "pulped natural").
-    Honey,
-    /// Fermented without oxygen before drying.
-    Anaerobic,
-    /// Hulled while still wet (Giling Basah, typical for Sumatra).
-    WetHulled,
-    /// Anything else; describe it in [`GreenLot::process_detail`].
-    Other,
-}
-
-impl Process {
-    /// Every process, in display order.
-    pub const ALL: [Process; 6] = [
-        Process::Washed,
-        Process::Natural,
-        Process::Honey,
-        Process::Anaerobic,
-        Process::WetHulled,
-        Process::Other,
-    ];
-
-    /// Stable identifier, identical to the serialized form.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Process::Washed => "washed",
-            Process::Natural => "natural",
-            Process::Honey => "honey",
-            Process::Anaerobic => "anaerobic",
-            Process::WetHulled => "wet_hulled",
-            Process::Other => "other",
+/// Declares a plain enum stored as `snake_case` text, with `ALL` and `as_str`.
+macro_rules! text_enum {
+    ($(#[$meta:meta])* $name:ident { $($(#[$vmeta:meta])* $variant:ident => $text:literal),+ $(,)? }) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        pub enum $name {
+            $($(#[$vmeta])* #[serde(rename = $text)] $variant),+
         }
-    }
 
-    /// Parses the serialized form produced by [`Process::as_str`].
-    #[must_use]
-    pub fn parse(s: &str) -> Option<Self> {
-        Process::ALL.into_iter().find(|p| p.as_str() == s)
+        impl $name {
+            /// Every value, in display order.
+            pub const ALL: &'static [$name] = &[$($name::$variant),+];
+
+            /// Stable identifier, identical to the serialized form.
+            #[must_use]
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $($name::$variant => $text),+
+                }
+            }
+
+            /// Parses the serialized form produced by `as_str`.
+            #[must_use]
+            pub fn parse(s: &str) -> Option<Self> {
+                Self::ALL.iter().copied().find(|v| v.as_str() == s)
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(self.as_str())
+            }
+        }
+    };
+}
+
+text_enum! {
+    /// The base processing method: how fruit and mucilage come off the seed.
+    /// Fermentation techniques (anaerobic, carbonic maceration …) combine with
+    /// any of these and are recorded separately in [`LotDetails::fermentation`].
+    Process {
+        /// Fruit and mucilage removed before drying (fully washed).
+        Washed => "washed",
+        /// Dried in the whole cherry (dry process).
+        Natural => "natural",
+        /// Skin removed, mucilage left on while drying; grade in
+        /// [`LotDetails::honey`].
+        Honey => "honey",
+        /// Skin removed, mucilage left on (the Brazilian term).
+        PulpedNatural => "pulped_natural",
+        /// Mucilage partly removed mechanically.
+        SemiWashed => "semi_washed",
+        /// Hulled while still wet (Giling Basah, typical for Sumatra).
+        WetHulled => "wet_hulled",
+        /// Anything else; describe it in [`LotDetails::process_detail`].
+        Other => "other",
     }
 }
 
-impl std::fmt::Display for Process {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
+text_enum! {
+    /// How much mucilage a honey process leaves on: white (least) to black.
+    HoneyGrade {
+        White => "white",
+        Yellow => "yellow",
+        Red => "red",
+        Black => "black",
+    }
+}
+
+text_enum! {
+    /// A fermentation technique; several can apply to one lot.
+    Fermentation {
+        /// In sealed tanks without oxygen.
+        Anaerobic => "anaerobic",
+        /// Whole cherries under carbon dioxide.
+        CarbonicMaceration => "carbonic_maceration",
+        /// Alternating hot and cold water after fermentation.
+        ThermalShock => "thermal_shock",
+        /// Extended or double (two-stage) fermentation.
+        Extended => "extended",
+        /// Inoculated with chosen yeasts, koji or bacteria.
+        Inoculated => "inoculated",
+        /// Fermented with added fruit, spices or the like.
+        Infused => "infused",
+    }
+}
+
+text_enum! {
+    /// How the coffee was dried.
+    Drying {
+        RaisedBeds => "raised_beds",
+        Patio => "patio",
+        /// Greenhouse or solar dryer.
+        Greenhouse => "greenhouse",
+        Mechanical => "mechanical",
+    }
+}
+
+text_enum! {
+    /// How the caffeine was removed.
+    Decaf {
+        SwissWater => "swiss_water",
+        MountainWater => "mountain_water",
+        /// Ethyl acetate, usually from sugar cane.
+        EthylAcetate => "ethyl_acetate",
+        /// Supercritical carbon dioxide.
+        Co2 => "co2",
+        MethyleneChloride => "methylene_chloride",
+    }
+}
+
+text_enum! {
+    /// The coffee species.
+    Species {
+        Arabica => "arabica",
+        /// Coffea canephora.
+        Robusta => "robusta",
+        Liberica => "liberica",
+        Excelsa => "excelsa",
+    }
+}
+
+text_enum! {
+    /// How the green coffee was packed.
+    Packaging {
+        GrainPro => "grainpro",
+        Vacuum => "vacuum",
+        Jute => "jute",
+        Ecotact => "ecotact",
+        Other => "other",
+    }
+}
+
+text_enum! {
+    /// A certification printed on the offer.
+    Certification {
+        Organic => "organic",
+        Fairtrade => "fairtrade",
+        RainforestAlliance => "rainforest_alliance",
     }
 }
 
@@ -90,12 +174,11 @@ pub struct Price {
     pub currency: String,
 }
 
-/// A lot of green coffee as bought from a supplier.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GreenLot {
-    pub id: Uuid,
-    /// Short name used everywhere in the app, for example "Ethiopia Guji Hambela".
-    pub name: String,
+/// Everything a green coffee offer sheet states about a lot. All optional:
+/// a lot needs only a name. Grouped as on the purchase form (ADR 0014).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LotDetails {
+    // Origin.
     /// Country of origin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin_country: Option<String>,
@@ -104,37 +187,94 @@ pub struct GreenLot {
     /// Producer, farm, washing station or cooperative.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub producer: Option<String>,
-    /// Botanical variety, for example "Heirloom" or "Caturra, Castillo".
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub variety: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub process: Option<Process>,
-    /// Free-text detail of the process.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub process_detail: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub altitude: Option<Altitude>,
-    /// Harvest as stated by the supplier, for example "2025/26" or "Oct–Jan 2025".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub species: Option<Species>,
+    /// Botanical varieties, for example `["Caturra", "Castillo"]` or `["74110"]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub varieties: Vec<String>,
+
+    // Processing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process: Option<Process>,
+    /// Only for [`Process::Honey`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub honey: Option<HoneyGrade>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fermentation: Vec<Fermentation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fermentation_hours: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drying: Option<Drying>,
+    /// `None` for coffee with its caffeine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decaf: Option<Decaf>,
+    /// Free text as on the offer sheet, for example "72 h anaerobic in the
+    /// cherry, then 18 days on raised beds".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_detail: Option<String>,
+
+    // Quality and measurements.
+    /// Harvest or crop year as stated, for example "2025/26".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harvest: Option<String>,
+    /// Day the coffee arrived (its age as green coffee starts here).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub supplier: Option<String>,
-    /// Calendar date of the purchase (a date, not an instant).
+    pub arrival_date: Option<NaiveDate>,
+    /// Grade as stated by the origin, for example "Excelso EP", "SHB", "AA",
+    /// "G1" or "NY2/3".
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub purchase_date: Option<NaiveDate>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub price_per_kg: Option<Price>,
-    /// Moisture content, percent of the green weight.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub moisture_pct: Option<f64>,
-    /// Bulk (free-settled) density, grams per litre.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub density_g_per_l: Option<f64>,
+    pub grade: Option<String>,
     /// Screen size as stated, for example "15+" or "17/18".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screen_size: Option<String>,
+    /// Moisture content, percent of the green weight.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moisture_pct: Option<f64>,
+    /// Water activity (aw), 0 to 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub water_activity: Option<f64>,
+    /// Bulk (free-settled) density, grams per litre.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub density_g_per_l: Option<f64>,
+    /// The supplier's cupping score, SCA points.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cupping_score: Option<f64>,
+    /// The supplier's tasting notes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flavor_notes: Option<String>,
+
+    // Purchase and storage.
+    /// Importer or shop the coffee was bought from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supplier: Option<String>,
+    /// The supplier's lot number or code, for example "GL-BR-001".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supplier_lot: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_per_kg: Option<Price>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub packaging: Option<Packaging>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_location: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub certifications: Vec<Certification>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+}
+
+/// A lot of green coffee as bought from a supplier.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GreenLot {
+    pub id: Uuid,
+    /// Short name used everywhere in the app, for example "Ethiopia Guji Hambela".
+    pub name: String,
+    #[serde(flatten)]
+    pub details: LotDetails,
+    /// Calendar date of the (first) purchase.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purchase_date: Option<NaiveDate>,
     /// Hidden from pickers and lists by default (used up or no longer relevant).
     #[serde(default)]
     pub archived: bool,
@@ -142,27 +282,14 @@ pub struct GreenLot {
 }
 
 impl GreenLot {
-    /// A new, empty lot with a fresh id.
+    /// A new lot without details and with a fresh id.
     #[must_use]
     pub fn new(name: impl Into<String>, created_at: DateTime<Utc>) -> Self {
         GreenLot {
             id: Uuid::new_v4(),
             name: name.into(),
-            origin_country: None,
-            region: None,
-            producer: None,
-            variety: None,
-            process: None,
-            process_detail: None,
-            altitude: None,
-            harvest: None,
-            supplier: None,
+            details: LotDetails::default(),
             purchase_date: None,
-            price_per_kg: None,
-            moisture_pct: None,
-            density_g_per_l: None,
-            screen_size: None,
-            notes: None,
             archived: false,
             created_at,
         }
@@ -519,10 +646,42 @@ mod tests {
 
     #[test]
     fn process_round_trips_through_its_identifier() {
-        for p in Process::ALL {
+        for &p in Process::ALL {
             assert_eq!(Process::parse(p.as_str()), Some(p));
             let json = serde_json::to_string(&p).unwrap();
             assert_eq!(json, format!("\"{}\"", p.as_str()));
         }
+        for &f in Fermentation::ALL {
+            assert_eq!(Fermentation::parse(f.as_str()), Some(f));
+        }
+    }
+
+    #[test]
+    fn a_lot_serializes_flat_and_reads_back() {
+        let at = DateTime::<Utc>::UNIX_EPOCH;
+        let mut lot = GreenLot::new("88graines Castillo Washed", at);
+        lot.details.origin_country = Some("Kolumbien".into());
+        lot.details.altitude = Some(Altitude {
+            min_m: 1950,
+            max_m: Some(2080),
+        });
+        lot.details.varieties = vec!["Castillo".into()];
+        lot.details.process = Some(Process::Washed);
+        lot.details.fermentation = vec![Fermentation::Anaerobic, Fermentation::ThermalShock];
+        lot.details.certifications = vec![Certification::Organic];
+        let json = serde_json::to_value(&lot).unwrap();
+        // Details sit next to the name, as in an offer sheet; empty ones are left out.
+        assert_eq!(json["origin_country"], "Kolumbien");
+        assert_eq!(json["fermentation"][1], "thermal_shock");
+        assert!(json.get("decaf").is_none());
+        assert!(json.get("details").is_none());
+        let back: GreenLot = serde_json::from_value(json).unwrap();
+        assert_eq!(back, lot);
+        // A lot with only a name reads too.
+        let bare: GreenLot = serde_json::from_value(serde_json::json!({
+            "id": Uuid::nil(), "name": "A", "created_at": at
+        }))
+        .unwrap();
+        assert_eq!(bare.details, LotDetails::default());
     }
 }

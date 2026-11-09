@@ -43,6 +43,21 @@ JSON files, and SQLite (ADR 0003) is not built yet.
 - **Safety:** targets are guidance. The safety layer never reads them, and
   nothing is roasted automatically because a target exists.
 
+## The lot's details
+Reviewed with the roaster (2026-11-09): a lot records what an importer's offer
+sheet states, all optional except the name. Origin: country, region, producer
+(farm, cooperative or washing station), altitude range, species, varieties.
+Processing, kept apart because the trade combines them freely: the base method
+(washed, natural, honey with its white/yellow/red/black grade, pulped natural,
+semi-washed, wet-hulled), fermentation techniques (anaerobic, carbonic
+maceration, thermal shock, extended or double, inoculated, infused; several at
+once) with their duration, drying, decaffeination and free text. Quality:
+crop year, arrival, grade, screen size, moisture, water activity, density, the
+supplier's score and tasting notes. Purchase and storage: supplier, the
+supplier's lot code, price per kg, packaging, storage location,
+certifications, notes. The app enters them as a short wizard (name and amount
+first, then one page per group, no scrolling); MCP takes the same fields.
+
 ## Consequences
 - The start dialog lists the lots that are not archived, with their stock. The
   archive gains an inventory view (built after a mockup).

@@ -39,7 +39,8 @@ pub use cupping::{
 pub use event::{EventKind, EventOrigin, Note, RoastEvent};
 pub use experiment::{ChangedVariable, Experiment, ExperimentStatus, VariableChange};
 pub use inventory::{
-    Altitude, GreenLot, Inventory, InventoryError, Price, Process, StockMovement,
+    Altitude, Certification, Decaf, Drying, Fermentation, GreenLot, HoneyGrade, Inventory,
+    InventoryError, LotDetails, Packaging, Price, Process, Species, StockMovement,
     StockMovementKind, stock_g,
 };
 pub use maintenance::{DueReason, MaintenanceLogEntry, MaintenanceTask};

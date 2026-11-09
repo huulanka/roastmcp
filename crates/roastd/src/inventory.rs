@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, Utc};
-use roast_core::{GreenLot, Inventory, InventoryError, Price, Process, Roast, StockMovement};
+use roast_core::{GreenLot, Inventory, InventoryError, LotDetails, Roast, StockMovement};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -24,29 +24,13 @@ pub struct LotView {
     pub stock_g: f64,
 }
 
-/// A new lot, optionally with its opening purchase.
+/// A new lot, optionally with its opening purchase. The offer-sheet details
+/// sit next to the name, as in the stored lot.
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct NewLot {
     pub name: String,
-    #[serde(default)]
-    pub origin_country: Option<String>,
-    #[serde(default)]
-    pub region: Option<String>,
-    #[serde(default)]
-    pub producer: Option<String>,
-    #[serde(default)]
-    pub variety: Option<String>,
-    #[serde(default)]
-    pub process: Option<Process>,
-    #[serde(default)]
-    pub process_detail: Option<String>,
-    #[serde(default)]
-    pub supplier: Option<String>,
-    #[serde(default)]
-    pub price_per_kg: Option<Price>,
-    #[serde(default)]
-    pub notes: Option<String>,
+    #[serde(flatten)]
+    pub details: LotDetails,
     /// Grams bought now; recorded as the opening purchase.
     #[serde(default)]
     pub purchase_g: Option<f64>,
@@ -55,30 +39,15 @@ pub struct NewLot {
     pub purchase_date: Option<NaiveDate>,
 }
 
-/// Changes to a lot; fields left out stay as they are.
+/// Changes to a lot. `details`, when given, replaces all offer-sheet details
+/// (the edit form sends them whole); fields left out stay as they are.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LotPatch {
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
-    pub origin_country: Option<String>,
-    #[serde(default)]
-    pub region: Option<String>,
-    #[serde(default)]
-    pub producer: Option<String>,
-    #[serde(default)]
-    pub variety: Option<String>,
-    #[serde(default)]
-    pub process: Option<Process>,
-    #[serde(default)]
-    pub process_detail: Option<String>,
-    #[serde(default)]
-    pub supplier: Option<String>,
-    #[serde(default)]
-    pub price_per_kg: Option<Price>,
-    #[serde(default)]
-    pub notes: Option<String>,
+    pub details: Option<LotDetails>,
     #[serde(default)]
     pub archived: Option<bool>,
 }
@@ -247,15 +216,7 @@ impl InventoryStore {
     pub fn add_lot(&mut self, req: NewLot) -> Result<LotView, Fail> {
         let at = day_to_instant(req.purchase_date);
         let mut lot = GreenLot::new(req.name.trim(), Utc::now());
-        lot.origin_country = req.origin_country;
-        lot.region = req.region;
-        lot.producer = req.producer;
-        lot.variety = req.variety;
-        lot.process = req.process;
-        lot.process_detail = req.process_detail;
-        lot.supplier = req.supplier;
-        lot.price_per_kg = req.price_per_kg;
-        lot.notes = req.notes;
+        lot.details = clean(req.details);
         lot.purchase_date = req
             .purchase_g
             .map(|_| req.purchase_date.unwrap_or_else(|| Utc::now().date_naive()));
@@ -276,23 +237,8 @@ impl InventoryStore {
                 }
                 lot.name = n.trim().to_owned();
             }
-            let set = |slot: &mut Option<String>, v: Option<String>| {
-                if let Some(v) = v {
-                    *slot = Some(v).filter(|s| !s.trim().is_empty());
-                }
-            };
-            set(&mut lot.origin_country, p.origin_country);
-            set(&mut lot.region, p.region);
-            set(&mut lot.producer, p.producer);
-            set(&mut lot.variety, p.variety);
-            set(&mut lot.process_detail, p.process_detail);
-            set(&mut lot.supplier, p.supplier);
-            set(&mut lot.notes, p.notes);
-            if p.process.is_some() {
-                lot.process = p.process;
-            }
-            if p.price_per_kg.is_some() {
-                lot.price_per_kg = p.price_per_kg;
+            if let Some(d) = p.details {
+                lot.details = clean(d);
             }
             if let Some(a) = p.archived {
                 lot.archived = a;
@@ -338,6 +284,40 @@ impl InventoryStore {
         let grams = roast.batch.green_weight_g;
         self.change(|inv| inv.set_roast_debit(roast.id, lot, grams, roast.roasted_at))
     }
+}
+
+/// Trims text fields and drops empty ones, so a cleared field is gone rather
+/// than an empty string.
+fn clean(mut d: LotDetails) -> LotDetails {
+    for slot in [
+        &mut d.origin_country,
+        &mut d.region,
+        &mut d.producer,
+        &mut d.process_detail,
+        &mut d.harvest,
+        &mut d.grade,
+        &mut d.screen_size,
+        &mut d.flavor_notes,
+        &mut d.supplier,
+        &mut d.supplier_lot,
+        &mut d.storage_location,
+        &mut d.notes,
+    ] {
+        *slot = slot
+            .take()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty());
+    }
+    d.varieties = d
+        .varieties
+        .into_iter()
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty())
+        .collect();
+    if d.process != Some(roast_core::Process::Honey) {
+        d.honey = None;
+    }
+    d
 }
 
 fn save(path: &Path, inv: &Inventory) -> std::io::Result<()> {
@@ -430,6 +410,54 @@ mod tests {
         let mut bak = path.as_os_str().to_owned();
         bak.push(".bak");
         assert!(PathBuf::from(bak).exists());
+    }
+
+    #[test]
+    fn details_are_stored_cleaned_and_replaced_whole() {
+        use roast_core::{Fermentation, HoneyGrade, Process};
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = InventoryStore::load(dir.path().join("inventory.json"));
+        let req: NewLot = serde_json::from_value(serde_json::json!({
+            "name": " 88graines Castillo Washed ",
+            "purchase_g": 2000,
+            "origin_country": "Kolumbien",
+            "region": "  ",
+            "altitude": {"min_m": 1950, "max_m": 2080},
+            "varieties": ["Castillo", " "],
+            "process": "washed",
+            "honey": "red",
+            "fermentation": ["anaerobic"],
+            "supplier": "88graines",
+            "certifications": ["organic"]
+        }))
+        .unwrap();
+        let lot = store.add_lot(req).unwrap();
+        assert_eq!(lot.lot.name, "88graines Castillo Washed");
+        let d = &lot.lot.details;
+        assert_eq!(d.region, None, "blank text is dropped");
+        assert_eq!(d.varieties, ["Castillo"]);
+        assert_eq!(
+            d.honey, None,
+            "a honey grade only goes with a honey process"
+        );
+        assert_eq!(d.fermentation, [Fermentation::Anaerobic]);
+        assert!((lot.stock_g - 2000.0).abs() < 1e-9);
+
+        let mut details = lot.lot.details.clone();
+        details.process = Some(Process::Honey);
+        details.honey = Some(HoneyGrade::Red);
+        details.supplier = None;
+        let lot = store
+            .update_lot(
+                lot.lot.id,
+                LotPatch {
+                    details: Some(details),
+                    ..LotPatch::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(lot.lot.details.honey, Some(HoneyGrade::Red));
+        assert_eq!(lot.lot.details.supplier, None);
     }
 
     #[test]

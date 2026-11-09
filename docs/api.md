@@ -40,11 +40,29 @@ interface RoastEvent { t: number; kind: EventKind; origin: EventOrigin; bt: numb
 interface RoastPlan { goal?: "espresso" | "filter" | "omni" | "other"; reference_id?: string;
                       drop_bt_c?: number; dtr_pct?: number }
 // A green coffee lot (roast-core GreenLot) with its stock: the sum of its movements.
-interface Lot { id: string; name: string; origin_country?: string; region?: string;
-  producer?: string; variety?: string; process?: "washed" | "natural" | "honey" | "anaerobic"
-  | "wet_hulled" | "other"; process_detail?: string; supplier?: string; purchase_date?: string;
-  price_per_kg?: { amount: number; currency: string }; notes?: string; archived: boolean;
-  created_at: string; stock_g: number /* negative when more was roasted than bought */ }
+// The offer-sheet details (LotDetails) sit next to the name; all optional.
+interface Lot { id: string; name: string; purchase_date?: string; archived: boolean;
+  created_at: string; stock_g: number /* negative when more was roasted than bought */;
+  // origin
+  origin_country?: string; region?: string; producer?: string;
+  altitude?: { min_m: number; max_m?: number };
+  species?: "arabica" | "robusta" | "liberica" | "excelsa"; varieties?: string[];
+  // processing: base method + fermentation techniques + drying
+  process?: "washed" | "natural" | "honey" | "pulped_natural" | "semi_washed" | "wet_hulled" | "other";
+  honey?: "white" | "yellow" | "red" | "black";
+  fermentation?: ("anaerobic" | "carbonic_maceration" | "thermal_shock" | "extended"
+    | "inoculated" | "infused")[]; fermentation_hours?: number;
+  drying?: "raised_beds" | "patio" | "greenhouse" | "mechanical";
+  decaf?: "swiss_water" | "mountain_water" | "ethyl_acetate" | "co2" | "methylene_chloride";
+  process_detail?: string;
+  // quality and measurements
+  harvest?: string; arrival_date?: string; grade?: string; screen_size?: string;
+  moisture_pct?: number; water_activity?: number; density_g_per_l?: number;
+  cupping_score?: number; flavor_notes?: string;
+  // purchase and storage
+  supplier?: string; supplier_lot?: string; price_per_kg?: { amount: number; currency: string };
+  packaging?: "grainpro" | "vacuum" | "jute" | "ecotact" | "other"; storage_location?: string;
+  certifications?: ("organic" | "fairtrade" | "rainforest_alliance")[]; notes?: string }
 interface StockMovement { id: string; lot_id: string; at: string; grams: number /* signed */;
   kind: "purchase" | "roast_debit" | "adjustment"; roast_id?: string; note?: string }
 interface Point { t: number; bt: number | null; et: number | null; ror: number | null;
@@ -124,8 +142,8 @@ interface Snapshot {
 | `GET /api/roasts/{id}` | | the roast (`.roast.json` content) |
 | `PATCH /api/roasts/{id}` | `{ title?, roasted_weight_g?, green_weight_g?, notes? }` | the roast; a changed green weight replaces the roast's stock debit |
 | `GET /api/lots?archived=true` | | `Lot[]`, newest first; archived lots only with `archived=true` |
-| `POST /api/lots` | `{ name, purchase_g?, purchase_date?, origin_country?, region?, producer?, variety?, process?, process_detail?, supplier?, price_per_kg?, notes? }` | `Lot` (with its opening purchase) |
-| `GET /api/lots/{id}` / `PATCH /api/lots/{id}` | patch: the same fields plus `archived` | `Lot` |
+| `POST /api/lots` | `{ name, purchase_g?, purchase_date?, …offer-sheet fields of Lot }` | `Lot` (with its opening purchase); blank text is dropped, a honey grade kept only with `process: "honey"` |
+| `GET /api/lots/{id}` / `PATCH /api/lots/{id}` | patch: `{ name?, archived?, details? }`; `details` (all offer-sheet fields) replaces the lot's details whole | `Lot` |
 | `GET /api/lots/{id}/movements` | | `StockMovement[]`, newest first |
 | `POST /api/lots/{id}/purchases` | `{ grams, date?, note? }` | `Lot` |
 | `POST /api/lots/{id}/adjustments` | `{ grams /* signed */, note? }` | `Lot` |

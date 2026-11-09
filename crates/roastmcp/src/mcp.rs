@@ -73,17 +73,26 @@ impl Daemon {
             (m, _) => anyhow::bail!("unsupported request method {m}"),
         };
         let mut r = res.context("the RoastMCP daemon is not reachable")?;
-        let ok = r.status().is_success();
-        let v: Value = r.body_mut().read_json().unwrap_or(Value::Null);
-        if ok {
+        let status = r.status();
+        let text = r.body_mut().read_to_string().unwrap_or_default();
+        let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+        if status.is_success() {
             Ok(v)
         } else {
-            anyhow::bail!(
-                "{}",
-                v.get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("request failed")
-            )
+            // Our errors are `{"error": …}`; a body the router rejected
+            // (malformed field) is plain text: pass that on, the AI can fix it.
+            let msg = v
+                .get("error")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    if text.trim().is_empty() {
+                        format!("request failed ({status})")
+                    } else {
+                        text.trim().to_owned()
+                    }
+                });
+            anyhow::bail!("{msg}")
         }
     }
 
@@ -95,6 +104,42 @@ impl Daemon {
             }
         }
     }
+}
+
+/// Input of `add_lot`: the fields of an importer's offer sheet (ADR 0014).
+fn add_lot_schema() -> Value {
+    let num = |desc: &str| json!({"type": "number", "description": desc});
+    json!({"type": "object", "properties": {
+            "name": {"type": "string", "description": "Short name used everywhere, e.g. \"GL-BR-001 Brasilien Amarelo\"."},
+            "grams": num("Grams bought."),
+            "date": {"type": "string", "description": "Purchase day, YYYY-MM-DD (default today)."},
+            "origin_country": {"type": "string"}, "region": {"type": "string"},
+            "producer": {"type": "string", "description": "Producer, farm, cooperative or washing station."},
+            "altitude_min_m": num("Altitude, metres (or the lower bound)."), "altitude_max_m": num("Upper bound of the altitude, metres."),
+            "species": {"type": "string", "enum": ["arabica", "robusta", "liberica", "excelsa"]},
+            "varieties": {"type": "array", "items": {"type": "string"}},
+            "process": {"type": "string", "enum": ["washed", "natural", "honey", "pulped_natural", "semi_washed", "wet_hulled", "other"], "description": "Base method; fermentation techniques go in fermentation."},
+            "honey": {"type": "string", "enum": ["white", "yellow", "red", "black"], "description": "Only for process honey."},
+            "fermentation": {"type": "array", "items": {"type": "string", "enum": ["anaerobic", "carbonic_maceration", "thermal_shock", "extended", "inoculated", "infused"]}},
+            "fermentation_hours": num("Fermentation time, hours."),
+            "drying": {"type": "string", "enum": ["raised_beds", "patio", "greenhouse", "mechanical"]},
+            "decaf": {"type": "string", "enum": ["swiss_water", "mountain_water", "ethyl_acetate", "co2", "methylene_chloride"]},
+            "process_detail": {"type": "string", "description": "Processing as on the offer sheet, free text."},
+            "harvest": {"type": "string", "description": "Crop year, e.g. 2025/26."},
+            "arrival_date": {"type": "string", "description": "YYYY-MM-DD."},
+            "grade": {"type": "string", "description": "E.g. Excelso EP, SHB, AA, G1, NY2/3."},
+            "screen_size": {"type": "string", "description": "E.g. 15+, 17/18."},
+            "moisture_pct": num("Moisture, percent."), "water_activity": num("Water activity, aw (0-1)."),
+            "density_g_per_l": num("Bulk density, g/l."), "cupping_score": num("The supplier's SCA score."),
+            "flavor_notes": {"type": "string", "description": "The supplier's tasting notes."},
+            "supplier": {"type": "string", "description": "Importer or shop."},
+            "supplier_lot": {"type": "string", "description": "The supplier's lot number or code."},
+            "price_per_kg": num("Price per kg in EUR."),
+            "packaging": {"type": "string", "enum": ["grainpro", "vacuum", "jute", "ecotact", "other"]},
+            "storage_location": {"type": "string"},
+            "certifications": {"type": "array", "items": {"type": "string", "enum": ["organic", "fairtrade", "rainforest_alliance"]}},
+            "notes": {"type": "string"}},
+          "required": ["name"]})
 }
 
 fn tools() -> Value {
@@ -145,17 +190,8 @@ fn tools() -> Value {
          "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
         {"name": "list_lots", "description": "The green coffee in stock: lots with name, origin, process, supplier, purchase date and stock_g (grams; negative if more was roasted than recorded as bought). Archived lots only when asked.",
          "inputSchema": {"type": "object", "properties": {"include_archived": {"type": "boolean"}}}},
-        {"name": "add_lot", "description": "Records a new green coffee lot (a purchase of a coffee not in the inventory yet), with the grams bought. Use add_purchase for more of a lot that exists.",
-         "inputSchema": {"type": "object", "properties": {
-            "name": {"type": "string", "description": "Short name used everywhere, e.g. \"GL-BR-001 Brasilien Amarelo\"."},
-            "grams": num("Grams bought."),
-            "date": {"type": "string", "description": "Purchase day, YYYY-MM-DD (default today)."},
-            "origin_country": {"type": "string"}, "region": {"type": "string"}, "producer": {"type": "string"},
-            "variety": {"type": "string"},
-            "process": {"type": "string", "enum": ["washed", "natural", "honey", "anaerobic", "wet_hulled", "other"]},
-            "process_detail": {"type": "string"}, "supplier": {"type": "string"},
-            "price_per_kg": num("Price per kg in EUR."), "notes": {"type": "string"}},
-          "required": ["name"]}},
+        {"name": "add_lot", "description": "Records a new green coffee lot (a coffee not in the inventory yet) with the grams bought and, as far as known, the details of the importer's offer sheet. Use add_purchase for more of a lot that exists. Only name is required; leave out what you do not know.",
+         "inputSchema": add_lot_schema()},
         {"name": "add_purchase", "description": "Records a purchase of more of an existing lot.",
          "inputSchema": {"type": "object", "properties": {
             "lot": {"type": "string", "description": "Lot id or exact name (see list_lots)."},
@@ -280,19 +316,45 @@ fn call_tool(d: &mut Daemon, name: &str, args: &Value) -> anyhow::Result<Value> 
                 "purchase_g": arg_f("grams"),
                 "purchase_date": arg_s("date"),
             });
+            // Offer-sheet details pass through as the API takes them.
             for k in [
                 "origin_country",
                 "region",
                 "producer",
-                "variety",
+                "species",
+                "varieties",
                 "process",
+                "honey",
+                "fermentation",
+                "fermentation_hours",
+                "drying",
+                "decaf",
                 "process_detail",
+                "harvest",
+                "arrival_date",
+                "grade",
+                "screen_size",
+                "moisture_pct",
+                "water_activity",
+                "density_g_per_l",
+                "cupping_score",
+                "flavor_notes",
                 "supplier",
+                "supplier_lot",
+                "packaging",
+                "storage_location",
+                "certifications",
                 "notes",
             ] {
-                if let Some(v) = arg_s(k) {
-                    body[k] = json!(v);
+                if let Some(v) = args.get(k).filter(|v| !v.is_null()) {
+                    body[k] = v.clone();
                 }
+            }
+            if let Some(min) = arg_f("altitude_min_m") {
+                // Whole metres: the API takes integers.
+                let metres = |v: f64| v.round().clamp(0.0, 10_000.0) as u32;
+                body["altitude"] =
+                    json!({"min_m": metres(min), "max_m": arg_f("altitude_max_m").map(metres)});
             }
             if let Some(p) = arg_f("price_per_kg") {
                 body["price_per_kg"] = json!({"amount": p, "currency": "EUR"});
