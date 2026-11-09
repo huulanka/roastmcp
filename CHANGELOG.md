@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/huulanka/roastmcp/compare/v1.4.0...v1.5.0) (2026-11-09)
+
+
+### Features
+
+* detect DROP from the bean temperature, like Artisan's auto DROP ([#22](https://github.com/huulanka/roastmcp/issues/22)) ([6070181](https://github.com/huulanka/roastmcp/commit/60701818ed4cb01f81624cb40dcb294416b7390a))
+
 # [1.4.0](https://github.com/huulanka/roastmcp/compare/v1.3.0...v1.4.0) (2026-11-09)
 
 
