@@ -44,7 +44,7 @@ pub fn open_append(path: &Path) -> io::Result<File> {
     OpenOptions::new().create(true).append(true).open(path)
 }
 
-fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
     let tmp = path.with_extension("tmp");
     {
         let mut f = File::create(&tmp)?;

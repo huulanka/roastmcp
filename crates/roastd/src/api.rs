@@ -16,6 +16,7 @@ use tower_http::services::{ServeDir, ServeFile};
 
 use crate::engine::{ConnectReq, EngineHandle, Fail, RecordingMeta};
 use crate::files;
+use crate::inventory::{AdjustReq, LotPatch, NewLot, PurchaseReq};
 
 /// Shared state of the handlers.
 #[derive(Clone)]
@@ -70,6 +71,11 @@ pub fn router(state: AppState, ui_dir: Option<PathBuf>) -> Router {
         .route("/shutdown", post(shutdown))
         .route("/reference", get(reference).put(set_reference))
         .route("/preheat", post(preheat_start).delete(preheat_stop))
+        .route("/lots", get(lots).post(lot_add))
+        .route("/lots/{id}", get(lot).patch(lot_patch))
+        .route("/lots/{id}/movements", get(lot_movements))
+        .route("/lots/{id}/purchases", post(lot_purchase))
+        .route("/lots/{id}/adjustments", post(lot_adjust))
         .layer(middleware::from_fn_with_state(state.clone(), auth));
 
     let mut app = Router::new().nest("/api", api);
@@ -376,7 +382,87 @@ async fn roast_patch(
         .await
         .map_err(|e| Fail::internal(e.to_string()))?
         .map_err(|e| Fail::internal(e.to_string()))?;
+    if p.green_weight_g.is_some() {
+        // One debit per roast: a corrected green weight replaces it.
+        let debit = r.clone();
+        st.engine
+            .call(move |e| e.inventory.sync_roast_debit(&debit))
+            .await
+            .map_err(|e| engine_gone(&e))??;
+    }
     Ok(Json(r))
+}
+
+// ------------------------------------------------------------- inventory
+
+#[derive(Deserialize)]
+struct LotsQuery {
+    #[serde(default)]
+    archived: bool,
+}
+
+fn lot_id(id: &str) -> Result<uuid::Uuid, Fail> {
+    id.parse()
+        .map_err(|_| Fail::not_found("no such green coffee lot"))
+}
+
+async fn lots(State(st): State<AppState>, Query(q): Query<LotsQuery>) -> impl IntoResponse {
+    ok(st.engine.call(move |e| e.inventory.lots(q.archived)).await)
+}
+
+async fn lot(State(st): State<AppState>, Path(id): Path<String>) -> Response {
+    match lot_id(&id) {
+        Ok(id) => flat(st.engine.call(move |e| e.inventory.lot(id)).await),
+        Err(f) => f.into_response(),
+    }
+}
+
+async fn lot_movements(State(st): State<AppState>, Path(id): Path<String>) -> Response {
+    match lot_id(&id) {
+        Ok(id) => flat(st.engine.call(move |e| e.inventory.movements(id)).await),
+        Err(f) => f.into_response(),
+    }
+}
+
+async fn lot_add(State(st): State<AppState>, Json(b): Json<NewLot>) -> impl IntoResponse {
+    flat(st.engine.call(move |e| e.inventory.add_lot(b)).await)
+}
+
+async fn lot_patch(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Json(b): Json<LotPatch>,
+) -> Response {
+    match lot_id(&id) {
+        Ok(id) => flat(st.engine.call(move |e| e.inventory.update_lot(id, b)).await),
+        Err(f) => f.into_response(),
+    }
+}
+
+async fn lot_purchase(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Json(b): Json<PurchaseReq>,
+) -> Response {
+    match lot_id(&id) {
+        Ok(id) => flat(
+            st.engine
+                .call(move |e| e.inventory.add_purchase(id, b))
+                .await,
+        ),
+        Err(f) => f.into_response(),
+    }
+}
+
+async fn lot_adjust(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Json(b): Json<AdjustReq>,
+) -> Response {
+    match lot_id(&id) {
+        Ok(id) => flat(st.engine.call(move |e| e.inventory.adjust(id, b)).await),
+        Err(f) => f.into_response(),
+    }
 }
 
 async fn roast_alog(State(st): State<AppState>, Path(id): Path<String>) -> Response {

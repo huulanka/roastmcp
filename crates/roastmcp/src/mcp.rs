@@ -143,6 +143,35 @@ fn tools() -> Value {
         {"name": "list_roasts", "description": "Saved roasts, newest first.", "inputSchema": {"type": "object", "properties": {}}},
         {"name": "get_roast", "description": "A saved roast with its curve downsampled to every 10 s.",
          "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
+        {"name": "list_lots", "description": "The green coffee in stock: lots with name, origin, process, supplier, purchase date and stock_g (grams; negative if more was roasted than recorded as bought). Archived lots only when asked.",
+         "inputSchema": {"type": "object", "properties": {"include_archived": {"type": "boolean"}}}},
+        {"name": "add_lot", "description": "Records a new green coffee lot (a purchase of a coffee not in the inventory yet), with the grams bought. Use add_purchase for more of a lot that exists.",
+         "inputSchema": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "Short name used everywhere, e.g. \"GL-BR-001 Brasilien Amarelo\"."},
+            "grams": num("Grams bought."),
+            "date": {"type": "string", "description": "Purchase day, YYYY-MM-DD (default today)."},
+            "origin_country": {"type": "string"}, "region": {"type": "string"}, "producer": {"type": "string"},
+            "variety": {"type": "string"},
+            "process": {"type": "string", "enum": ["washed", "natural", "honey", "anaerobic", "wet_hulled", "other"]},
+            "process_detail": {"type": "string"}, "supplier": {"type": "string"},
+            "price_per_kg": num("Price per kg in EUR."), "notes": {"type": "string"}},
+          "required": ["name"]}},
+        {"name": "add_purchase", "description": "Records a purchase of more of an existing lot.",
+         "inputSchema": {"type": "object", "properties": {
+            "lot": {"type": "string", "description": "Lot id or exact name (see list_lots)."},
+            "grams": num("Grams bought."),
+            "date": {"type": "string", "description": "Purchase day, YYYY-MM-DD (default today)."},
+            "note": {"type": "string"}},
+          "required": ["lot", "grams"]}},
+        {"name": "start_recording", "description": "Prepares a roast exactly like the app's start dialog and starts the recording: the lot (its stock is debited by the green weight when the roast is saved after CHARGE), green weight, goal, the reference roast as plan line, and the targets. Moves no actuator; the person charges the beans (CHARGE is detected or marked). Ask the person for anything you are unsure of.",
+         "inputSchema": {"type": "object", "properties": {
+            "lot": {"type": "string", "description": "Lot id or exact name (see list_lots)."},
+            "green_weight_g": num("Green weight, grams."),
+            "goal": {"type": "string", "enum": ["espresso", "filter", "omni", "other"]},
+            "reference": {"type": "string", "description": "Id of a saved roast to follow (see list_roasts); its curve becomes the plan line."},
+            "drop_bt_c": num("Bean temperature to drop at, °C."),
+            "dtr_pct": num("Development time ratio to drop at, percent."),
+            "title": {"type": "string", "description": "Default: the lot's name."}}}},
         {"name": "set_reference", "description": "Shows a saved roast (id from list_roasts) as the reference curve behind the live roast, or clears it (id omitted). The person sees it in the app.",
          "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}}}
     ])
@@ -237,6 +266,69 @@ fn call_tool(d: &mut Daemon, name: &str, args: &Value) -> anyhow::Result<Value> 
             )
         }
         "list_roasts" => d.call("GET", "/roasts", None),
+        "list_lots" => {
+            let all = args.get("include_archived").and_then(Value::as_bool) == Some(true);
+            d.call(
+                "GET",
+                if all { "/lots?archived=true" } else { "/lots" },
+                None,
+            )
+        }
+        "add_lot" => {
+            let mut body = json!({
+                "name": arg_s("name").context("name is required")?,
+                "purchase_g": arg_f("grams"),
+                "purchase_date": arg_s("date"),
+            });
+            for k in [
+                "origin_country",
+                "region",
+                "producer",
+                "variety",
+                "process",
+                "process_detail",
+                "supplier",
+                "notes",
+            ] {
+                if let Some(v) = arg_s(k) {
+                    body[k] = json!(v);
+                }
+            }
+            if let Some(p) = arg_f("price_per_kg") {
+                body["price_per_kg"] = json!({"amount": p, "currency": "EUR"});
+            }
+            d.call("POST", "/lots", Some(body))
+        }
+        "add_purchase" => {
+            let lot = resolve_lot(d, &arg_s("lot").context("lot is required")?)?;
+            d.call(
+                "POST",
+                &format!("/lots/{lot}/purchases"),
+                Some(json!({"grams": arg_f("grams").context("grams is required")?, "date": arg_s("date"), "note": arg_s("note")})),
+            )
+        }
+        "start_recording" => {
+            let lot = match arg_s("lot") {
+                Some(l) => Some(resolve_lot(d, &l)?),
+                None => None,
+            };
+            let plan = json!({
+                "goal": arg_s("goal"),
+                "reference_id": arg_s("reference"),
+                "drop_bt_c": arg_f("drop_bt_c"),
+                "dtr_pct": arg_f("dtr_pct"),
+            });
+            d.call(
+                "POST",
+                "/recording/start",
+                Some(json!({
+                    "title": arg_s("title"),
+                    "lot_id": lot,
+                    "green_weight_g": arg_f("green_weight_g"),
+                    "plan": plan,
+                })),
+            )
+        }
         "set_reference" => d.call(
             "PUT",
             "/reference",
@@ -254,6 +346,49 @@ fn call_tool(d: &mut Daemon, name: &str, args: &Value) -> anyhow::Result<Value> 
             Ok(r)
         }
         _ => anyhow::bail!("unknown tool {name}"),
+    }
+}
+
+/// A lot id from an id or a name: exact name first (ignoring case), then a
+/// name that contains the text, if only one does.
+fn resolve_lot(d: &mut Daemon, lot: &str) -> anyhow::Result<String> {
+    if uuid::Uuid::parse_str(lot.trim()).is_ok() {
+        return Ok(lot.trim().to_owned());
+    }
+    let lots = d.call("GET", "/lots?archived=true", None)?;
+    let lots = lots.as_array().cloned().unwrap_or_default();
+    let name_of = |l: &Value| {
+        l.get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned()
+    };
+    let id_of = |l: &Value| l.get("id").and_then(Value::as_str).map(str::to_owned);
+    let wanted = lot.trim().to_lowercase();
+    if let Some(id) = lots
+        .iter()
+        .find(|l| name_of(l).to_lowercase() == wanted)
+        .and_then(id_of)
+    {
+        return Ok(id);
+    }
+    let partial: Vec<&Value> = lots
+        .iter()
+        .filter(|l| name_of(l).to_lowercase().contains(&wanted))
+        .collect();
+    match partial.as_slice() {
+        [one] => id_of(one).context("lot without id"),
+        [] => anyhow::bail!(
+            "no lot named {lot:?}; lots: {}",
+            lots.iter().map(name_of).collect::<Vec<_>>().join(", ")
+        ),
+        many => anyhow::bail!(
+            "{lot:?} matches several lots: {}",
+            many.iter()
+                .map(|l| name_of(l))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     }
 }
 
