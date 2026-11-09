@@ -1,3 +1,10 @@
+# [1.12.0](https://github.com/huulanka/roastmcp/compare/v1.11.0...v1.12.0) (2026-11-09)
+
+
+### Features
+
+* batch numbers per bean, and deleting roasts from the archive ([#30](https://github.com/huulanka/roastmcp/issues/30)) ([9f6167d](https://github.com/huulanka/roastmcp/commit/9f6167d4e6c1c98a497d7cfa6c2deb0c2dcb9275))
+
 # [1.11.0](https://github.com/huulanka/roastmcp/compare/v1.10.0...v1.11.0) (2026-11-09)
 
 
