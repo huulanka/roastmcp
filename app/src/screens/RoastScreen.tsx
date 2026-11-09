@@ -20,7 +20,7 @@ import { StartDialog } from "@/components/StartDialog.tsx";
 import { EventSegments, PrimaryButton } from "@/components/EventRow.tsx";
 import { PreheatCard } from "@/components/Preheat.tsx";
 import { Readouts } from "@/components/Readouts.tsx";
-import { RoastChart, type ChartOverlay } from "@/components/RoastChart.tsx";
+import { RoastChart, type ChartOverlay, type ChartView } from "@/components/RoastChart.tsx";
 import { BeanMark } from "@/components/TopBar.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import {
@@ -33,7 +33,14 @@ import {
   mergeReference,
 } from "@/lib/chartData.ts";
 import { planProgress } from "@/lib/plan.ts";
-import { isRecording, latestAiNote, nextAction, rorAlert, rorDelta } from "@/lib/roast.ts";
+import {
+  isRecording,
+  latestAiNote,
+  nextAction,
+  PREHEAT_HOLDER,
+  rorAlert,
+  rorDelta,
+} from "@/lib/roast.ts";
 import { formatClock, formatNumber } from "@/lib/units.ts";
 import {
   attempt,
@@ -101,12 +108,31 @@ function Disconnected({
   );
 }
 
+const CHART_VIEW_KEY = "roastmcp.chartView";
+
+function storedChartView(): ChartView {
+  try {
+    return localStorage.getItem(CHART_VIEW_KEY) === "follow" ? "follow" : "whole";
+  } catch {
+    return "whole";
+  }
+}
+
 export function RoastScreen({ onConnect }: { onConnect: () => void }) {
   const { t } = useTranslation();
   const { snapshot, points, notes, controlLog } = useLive();
   const [startOpen, setStartOpen] = useState(false);
   const [stopOpen, setStopOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
+  const [chartView, setChartView] = useState<ChartView>(storedChartView);
+  const changeChartView = (v: ChartView) => {
+    setChartView(v);
+    try {
+      localStorage.setItem(CHART_VIEW_KEY, v);
+    } catch {
+      /* private window: not remembered */
+    }
+  };
   const savedId = useJustSaved();
 
   const events = snapshot?.events;
@@ -283,6 +309,12 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
   }
 
   const preRoast = connected && base === null && snapshot.preheat !== undefined;
+  // The coach speaks for an AI; without one it would only take room.
+  const holder = snapshot.safety.lease_holder;
+  const coachShown =
+    note !== null ||
+    snapshot.safety.ai_suspended ||
+    (holder !== null && holder !== undefined && holder !== PREHEAT_HOLDER);
   const chartLabel = t("Roast curve: bean {{bt}} °C at {{time}}, RoR {{ror}} °C/min", {
     bt: formatNumber(snapshot.bt),
     time: formatClock(base !== null && snapshot.t !== null ? snapshot.t - base : snapshot.t),
@@ -301,6 +333,8 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
           onClearReference={() =>
             void attempt(async () => applySnapshot(await api.setReference(null)))
           }
+          view={chartView}
+          onView={changeChartView}
         />
         <div className="h-[22rem] min-h-0 lg:h-auto lg:min-h-56 lg:flex-1">
           <RoastChart
@@ -310,6 +344,7 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
             overlay={overlay}
             minSpanS={720}
             actuators
+            view={chartView}
             label={chartLabel}
           />
         </div>
@@ -322,15 +357,6 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
         <RoastScaleBar bt={snapshot.bt} target={scaleTarget} reference={scaleRef} />
         <EventSegments snapshot={snapshot} />
         <div className="flex flex-wrap items-center justify-end gap-3">
-          {preRoast && (
-            <div className="mr-auto">
-              <PreheatCard
-                preheat={snapshot.preheat ?? null}
-                bt={snapshot.bt}
-                disabled={!snapshot.safety.connected || snapshot.safety.emergency_stop}
-              />
-            </div>
-          )}
           {controlLog.length > 0 && (
             <Button variant="ghost" onClick={() => setLogOpen(true)}>
               {t("History")}
@@ -346,11 +372,23 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
       </section>
       <aside
         aria-label={t("Readings and controls")}
-        className="flex min-h-0 flex-[1_1_20rem] flex-col gap-5 lg:max-w-[23rem] lg:overflow-y-auto"
+        className="flex min-h-0 flex-[1_1_20rem] flex-col gap-4 lg:max-w-[23rem] lg:overflow-y-auto"
       >
         <Readouts snapshot={snapshot} rorDelta={dRor} alert={alert} />
-        <Controls machine={snapshot.machine} safety={snapshot.safety} />
-        <CoachCard snapshot={snapshot} note={note} />
+        <Controls
+          machine={snapshot.machine}
+          safety={snapshot.safety}
+          top={
+            preRoast ? (
+              <PreheatCard
+                preheat={snapshot.preheat ?? null}
+                bt={snapshot.bt}
+                disabled={!snapshot.safety.connected || snapshot.safety.emergency_stop}
+              />
+            ) : null
+          }
+        />
+        {coachShown && <CoachCard snapshot={snapshot} note={note} />}
       </aside>
       <Dialog open={logOpen} onOpenChange={setLogOpen}>
         <DialogContent>

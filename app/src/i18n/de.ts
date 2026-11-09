@@ -360,4 +360,11 @@ export const de: Record<string, string> = {
   Label: "Etikett",
   Copy: "Kopieren",
   roasted: "geröstet",
+  "Whole roast": "Ganze Röstung",
+  Follow: "Mitlaufen",
+  "Time axis": "Zeitachse",
+  "Back to live": "Zurück zu live",
+  automatic: "Automatik",
+  heating: "heizt",
+  holding: "hält",
 };

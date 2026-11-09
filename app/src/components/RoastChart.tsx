@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import i18n from "i18next";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
@@ -19,6 +19,13 @@ export interface ChartOverlay {
 }
 
 const PCT_MAX = 300;
+/** Width of the following window, seconds. */
+const FOLLOW_SPAN_S = 360;
+/** Room ahead of the latest sample (projection and the next minutes), seconds. */
+const AHEAD_S = 45;
+
+/** How the time axis behaves: the whole roast, or a window that follows the latest sample. */
+export type ChartView = "whole" | "follow";
 const NO_OVERLAY: ChartOverlay = { now: null, projected: null, target: null };
 
 function css(name: string): string {
@@ -43,6 +50,7 @@ export function RoastChart({
   overlay = NO_OVERLAY,
   minSpanS = 0,
   actuators = false,
+  view = "whole",
   label,
 }: {
   data: ChartData;
@@ -53,6 +61,8 @@ export function RoastChart({
   minSpanS?: number;
   /** Also draw burner and air (stepped, lower third). */
   actuators?: boolean;
+  /** Whole roast (default) or a window following the latest sample. */
+  view?: ChartView;
   /** Accessible summary of the chart. */
   label: string;
 }) {
@@ -64,6 +74,26 @@ export function RoastChart({
   const dataRef = useRef(data);
   const bandRef = useRef(band);
   const overlayRef = useRef(overlay);
+  const viewRef = useRef(view);
+  /** A range chosen by dragging or scrolling; null follows the view. */
+  const zoomRef = useRef<[number, number] | null>(null);
+  /** The view a zoom was made in; the "back" button shows only there. */
+  const [zoomedIn, setZoomedIn] = useState<ChartView | null>(null);
+  const zoomed = zoomedIn === view;
+
+  const resetZoom = () => {
+    zoomRef.current = null;
+    setZoomedIn(null);
+    const u = plot.current;
+    if (u) u.setData(toUPlot(dataRef.current, actuators));
+  };
+
+  useEffect(() => {
+    viewRef.current = view;
+    zoomRef.current = null;
+    const u = plot.current;
+    if (u) u.setData(toUPlot(dataRef.current, actuators));
+  }, [view, actuators]);
 
   useEffect(() => {
     markerRef.current = markers;
@@ -105,15 +135,21 @@ export function RoastChart({
       height: el.clientHeight,
       padding: [30, 6, 0, 0],
       legend: { show: false },
-      cursor: { drag: { x: false, y: false }, points: { size: 7 } },
+      // Dragging across the chart zooms to that span.
+      cursor: { drag: { x: true, y: false, setScale: false }, points: { size: 7 } },
       scales: {
         x: {
           time: false,
           range: (_u, min, max) => {
+            if (zoomRef.current) return zoomRef.current;
             const lo = Number.isFinite(min) ? min : 0;
             const hi = Number.isFinite(max) ? max : 0;
             const ahead = overlayRef.current.projected?.x ?? -Infinity;
-            return [Math.min(lo, 0), Math.max(hi + 5, ahead + 45, minSpanS, 60)];
+            const end = Math.max(hi + 5, ahead + AHEAD_S);
+            if (viewRef.current === "follow" && end - lo > FOLLOW_SPAN_S) {
+              return [end - FOLLOW_SPAN_S, end];
+            }
+            return [Math.min(lo, 0), Math.max(end, minSpanS, 60)];
           },
         },
         bt: {
@@ -167,6 +203,19 @@ export function RoastChart({
       ],
       series,
       hooks: {
+        setSelect: [
+          (u) => {
+            const { left, width } = u.select;
+            if (width > 8) {
+              const a = u.posToVal(left, "x");
+              const b = u.posToVal(left + width, "x");
+              zoomRef.current = [Math.min(a, b), Math.max(a, b)];
+              setZoomedIn(viewRef.current);
+              u.setScale("x", { min: zoomRef.current[0], max: zoomRef.current[1] });
+            }
+            u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
+          },
+        ],
         setCursor: [
           (u) => {
             const t = tip.current;
@@ -349,6 +398,25 @@ export function RoastChart({
     };
     const u = new uPlot(opts, toUPlot(dataRef.current, actuators), el);
     plot.current = u;
+    // Scrolling sideways (trackpad, shift + wheel) moves the visible span
+    // back and forth; it then stays put until "back" is pressed.
+    const onWheel = (e: WheelEvent) => {
+      const dx = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.shiftKey ? e.deltaY : 0;
+      if (dx === 0) return;
+      e.preventDefault();
+      const min = u.scales.x.min ?? 0;
+      const max = u.scales.x.max ?? 0;
+      const span = max - min;
+      const d = dataRef.current;
+      const first = d.x[0] ?? 0;
+      const last = d.x[d.x.length - 1] ?? span;
+      let shift = (dx / Math.max(1, u.bbox.width / uPlot.pxRatio)) * span;
+      shift = Math.max(Math.min(shift, last + AHEAD_S - max), Math.min(0, first - min));
+      zoomRef.current = [min + shift, max + shift];
+      setZoomedIn(viewRef.current);
+      u.setScale("x", { min: zoomRef.current[0], max: zoomRef.current[1] });
+    };
+    u.over.addEventListener("wheel", onWheel, { passive: false });
     const ro = new ResizeObserver(() => {
       u.setSize({ width: el.clientWidth, height: el.clientHeight });
     });
@@ -357,14 +425,24 @@ export function RoastChart({
     void document.fonts?.ready.then(() => plot.current === u && u.redraw(false));
     return () => {
       ro.disconnect();
+      u.over.removeEventListener("wheel", onWheel);
       u.destroy();
       plot.current = null;
     };
   }, [minSpanS, actuators, theme]);
 
   return (
-    <div className="relative size-full min-h-0 min-w-0" role="img" aria-label={label}>
-      <div ref={host} className="absolute inset-0" />
+    <div className="relative size-full min-h-0 min-w-0">
+      <div ref={host} className="absolute inset-0" role="img" aria-label={label} />
+      {zoomed && (
+        <button
+          type="button"
+          onClick={resetZoom}
+          className="absolute top-9 right-12 z-10 rounded-pill border border-border-strong bg-popover px-3 py-1 text-[13px] text-foreground shadow-pop transition-colors hover:bg-surface-raised focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+        >
+          {view === "follow" ? i18n.t("Back to live") : i18n.t("Whole roast")}
+        </button>
+      )}
       <div
         ref={tip}
         className="pointer-events-none absolute top-0 left-0 z-10 flex w-[150px] flex-col gap-1 rounded-lg border border-border-strong bg-popover px-3 py-2.5 tabular text-[13px] text-foreground opacity-0 shadow-pop transition-opacity duration-150"
