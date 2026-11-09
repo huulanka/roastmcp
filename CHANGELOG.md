@@ -1,3 +1,10 @@
+# [1.11.0](https://github.com/huulanka/roastmcp/compare/v1.10.0...v1.11.0) (2026-11-09)
+
+
+### Features
+
+* preheat by step, wait and learn, instead of constant adjusting ([#29](https://github.com/huulanka/roastmcp/issues/29)) ([08ee147](https://github.com/huulanka/roastmcp/commit/08ee14711e9ca433c6ad7377f543336ff6397ad9))
+
 # [1.10.0](https://github.com/huulanka/roastmcp/compare/v1.9.1...v1.10.0) (2026-11-09)
 
 
