@@ -186,6 +186,9 @@ fn tools() -> Value {
         {"name": "emergency_stop", "description": "Emergency stop: burner off, air high, drum running; latched until a person resets it in the app.",
          "inputSchema": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"]}},
         {"name": "list_roasts", "description": "Saved roasts, newest first.", "inputSchema": {"type": "object", "properties": {}}},
+        {"name": "list_profiles", "description": "Roast profiles the roaster developed: name, intended beans, batch size and the newest version (id, number, change note). A version's curve, milestones and recipe come with get_profile.", "inputSchema": {"type": "object", "properties": {}}},
+        {"name": "get_profile", "description": "One profile with all its versions, newest first: each with its target curve (roast time, BT, RoR), dry end / first crack / drop targets and its recipe (burner and air steps).",
+         "inputSchema": {"type": "object", "properties": {"id": {"type": "string", "description": "Profile id or exact name (see list_profiles)."}}, "required": ["id"]}},
         {"name": "get_roast", "description": "A saved roast with its curve downsampled to every 10 s.",
          "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
         {"name": "list_lots", "description": "The green coffee in stock: lots with name, origin, process, supplier, purchase date and stock_g (grams; negative if more was roasted than recorded as bought). Archived lots only when asked.",
@@ -205,6 +208,7 @@ fn tools() -> Value {
             "green_weight_g": num("Green weight, grams."),
             "goal": {"type": "string", "enum": ["espresso", "filter", "omni", "other"]},
             "reference": {"type": "string", "description": "Id of a saved roast to follow (see list_roasts); its curve becomes the plan line."},
+            "profile": {"type": "string", "description": "A profile to follow instead of a roast: profile id or exact name (its newest version; see list_profiles). Its curve becomes the plan line and its recipe is announced to the person."},
             "drop_bt_c": num("Bean temperature to drop at, °C."),
             "dtr_pct": num("Development time ratio to drop at, percent."),
             "batch_no": {"type": "string", "description": "Batch number for the bag's label, the lot's code and its next running number, e.g. BRYB-002 (list_roasts shows the numbers used). Ignored in the simulator."},
@@ -303,6 +307,11 @@ fn call_tool(d: &mut Daemon, name: &str, args: &Value) -> anyhow::Result<Value> 
             )
         }
         "list_roasts" => d.call("GET", "/roasts", None),
+        "list_profiles" => d.call("GET", "/profiles", None),
+        "get_profile" => {
+            let id = resolve_profile(d, &arg_s("id").context("id is required")?)?;
+            d.call("GET", &format!("/profiles/{id}"), None)
+        }
         "list_lots" => {
             let all = args.get("include_archived").and_then(Value::as_bool) == Some(true);
             d.call(
@@ -375,9 +384,21 @@ fn call_tool(d: &mut Daemon, name: &str, args: &Value) -> anyhow::Result<Value> 
                 Some(l) => Some(resolve_lot(d, &l)?),
                 None => None,
             };
+            let profile_version = match arg_s("profile") {
+                Some(p) => {
+                    let id = resolve_profile(d, &p)?;
+                    let detail = d.call("GET", &format!("/profiles/{id}"), None)?;
+                    detail
+                        .pointer("/versions/0/id")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                }
+                None => None,
+            };
             let plan = json!({
                 "goal": arg_s("goal"),
                 "reference_id": arg_s("reference"),
+                "profile_version_id": profile_version,
                 "drop_bt_c": arg_f("drop_bt_c"),
                 "dtr_pct": arg_f("dtr_pct"),
             });
@@ -415,6 +436,25 @@ fn call_tool(d: &mut Daemon, name: &str, args: &Value) -> anyhow::Result<Value> 
 
 /// A lot id from an id or a name: exact name first (ignoring case), then a
 /// name that contains the text, if only one does.
+/// A profile id from an id or an exact (case-insensitive) name.
+fn resolve_profile(d: &mut Daemon, profile: &str) -> anyhow::Result<String> {
+    if uuid::Uuid::parse_str(profile.trim()).is_ok() {
+        return Ok(profile.trim().to_owned());
+    }
+    let list = d.call("GET", "/profiles?archived=true", None)?;
+    let wanted = profile.trim().to_lowercase();
+    list.as_array()
+        .into_iter()
+        .flatten()
+        .find(|p| {
+            p.get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|n| n.to_lowercase() == wanted)
+        })
+        .and_then(|p| p.get("id").and_then(Value::as_str).map(str::to_owned))
+        .with_context(|| format!("no profile named {profile:?}; see list_profiles"))
+}
+
 fn resolve_lot(d: &mut Daemon, lot: &str) -> anyhow::Result<String> {
     if uuid::Uuid::parse_str(lot.trim()).is_ok() {
         return Ok(lot.trim().to_owned());

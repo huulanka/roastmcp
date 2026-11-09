@@ -3,7 +3,7 @@ import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 
 import { api, ApiError } from "@/api/client.ts";
-import type { Lot, RoastGoal, RoastPlan, RoastSummary } from "@/api/types.ts";
+import type { Lot, ProfileSummary, RoastGoal, RoastPlan, RoastSummary } from "@/api/types.ts";
 import { Field, inputCls, UnitInput } from "@/components/Dialogs.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Kbd } from "@/components/ui/kbd.tsx";
@@ -32,6 +32,7 @@ import {
   suggestedTargets,
 } from "@/lib/plan.ts";
 import { nextBatchNo } from "@/lib/batch.ts";
+import { fromTarget, phaseShares } from "@/lib/profile.ts";
 import { bluetoothName } from "@/lib/ports.ts";
 import { formatClock, formatNumber, weightLossPct } from "@/lib/units.ts";
 import { cn } from "@/lib/utils.ts";
@@ -46,6 +47,8 @@ const GOAL_NAME: Record<RoastGoal, string> = {
   other: "Own",
 };
 const LAST_LOT_KEY = "roastmcp.lastLot";
+/** Prefix of a profile version in the plan select (roasts use their bare id). */
+const PROFILE = "profile:";
 /** Radix reserves the empty string; this stands for "none" in the selects. */
 const NONE = "none";
 
@@ -78,16 +81,21 @@ interface Form {
   batchNo: string;
   goal: RoastGoal | null;
   refId: string;
+  /** A profile version as the plan, instead of a roast. */
+  profileVersionId: string;
   drop: string;
   dtr: string;
 }
 
 /** Goal, plan and targets suggested by a reference roast. */
-function fromReference(ref: RoastSummary | null): Pick<Form, "goal" | "refId" | "drop" | "dtr"> {
+function fromReference(
+  ref: RoastSummary | null,
+): Pick<Form, "goal" | "refId" | "profileVersionId" | "drop" | "dtr"> {
   const s = suggestedTargets(ref);
   return {
     goal: s.goal,
     refId: ref?.id ?? "",
+    profileVersionId: "",
     drop: s.drop === null ? "" : String(s.drop),
     dtr: s.dtr === null ? "" : String(s.dtr),
   };
@@ -111,10 +119,12 @@ export function StartDialog({
   const sim = machine?.simulated ?? false;
   const [lots, setLots] = useState<Lot[]>([]);
   const [roasts, setRoasts] = useState<RoastSummary[]>([]);
+  const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [form, setForm] = useState<Form>({
     lotId: "",
     weight: "",
     batchNo: "",
+    profileVersionId: "",
     goal: null,
     refId: "",
     drop: "",
@@ -125,6 +135,10 @@ export function StartDialog({
   useEffect(() => {
     if (!open) return;
     let alive = true;
+    api
+      .profiles()
+      .then((p) => alive && setProfiles(p))
+      .catch(() => alive && setProfiles([]));
     Promise.all([api.lots(), api.roasts()])
       .then(([l, r]) => {
         if (!alive) return;
@@ -169,7 +183,11 @@ export function StartDialog({
       const dtr = parseNumber(form.dtr);
       const plan: RoastPlan = {
         ...(form.goal ? { goal: form.goal } : {}),
-        ...(form.refId ? { reference_id: form.refId } : {}),
+        ...(form.profileVersionId
+          ? { profile_version_id: form.profileVersionId }
+          : form.refId
+            ? { reference_id: form.refId }
+            : {}),
         ...(drop !== null ? { drop_bt_c: drop } : {}),
         ...(dtr !== null ? { dtr_pct: dtr } : {}),
       };
@@ -357,11 +375,36 @@ export function StartDialog({
 
           <Field label={t("Plan")}>
             <Select
-              value={form.refId || NONE}
+              value={
+                form.profileVersionId ? `${PROFILE}${form.profileVersionId}` : form.refId || NONE
+              }
               onValueChange={(v) => {
+                if (v.startsWith(PROFILE)) {
+                  const versionId = v.slice(PROFILE.length);
+                  set({ profileVersionId: versionId, refId: "" });
+                  // The profile's own targets: its drop temperature and DTR.
+                  void api
+                    .profileVersion(versionId)
+                    .then(({ version }) => {
+                      const { milestones } = fromTarget(version.target);
+                      const dev = phaseShares(milestones).development;
+                      set({
+                        drop: String(Math.round(milestones.drop.bt)),
+                        dtr: String(Math.round(dev)),
+                      });
+                    })
+                    .catch(() => undefined);
+                  return;
+                }
                 const id = v === NONE ? "" : v;
                 const s = fromReference(roasts.find((r) => r.id === id) ?? null);
-                set({ refId: id, drop: s.drop, dtr: s.dtr, goal: s.goal ?? form.goal });
+                set({
+                  refId: id,
+                  profileVersionId: "",
+                  drop: s.drop,
+                  dtr: s.dtr,
+                  goal: s.goal ?? form.goal,
+                });
               }}
             >
               <SelectTrigger aria-label={t("Plan")} className="py-2">
@@ -372,6 +415,21 @@ export function StartDialog({
                   <span className="text-muted-foreground">{t("No plan")}</span>
                 </SelectItem>
                 <SelectSeparator />
+                {profiles
+                  .filter((p) => p.latest)
+                  .map((p) => (
+                    <SelectItem key={p.id} value={`${PROFILE}${p.latest?.id}`}>
+                      <span className="flex min-w-0 items-baseline gap-2">
+                        <span className="truncate">
+                          {p.name} · v{p.latest?.version}
+                        </span>
+                        <span className="shrink-0 text-[13px] text-muted-foreground">
+                          {t("Profile")}
+                        </span>
+                      </span>
+                    </SelectItem>
+                  ))}
+                {profiles.length > 0 && <SelectSeparator />}
                 {references.map((r) => (
                   <SelectItem key={r.id} value={r.id}>
                     <PlanOption roast={r} />

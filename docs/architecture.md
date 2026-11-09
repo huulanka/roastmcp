@@ -201,6 +201,15 @@ after a settle time, outside a dead band. The daemon feeds it each reading and
 sends its decisions as source `Autopilot`; what it learns per machine and air
 setting is kept in `control.json`.
 
+## Profiles
+
+A profile ([ADR 0017](adr/0017-profile-designer.md)) is a versioned plan: a
+target curve, dry end / first crack / drop targets and a recipe of burner and
+air steps, kept in `profiles.json`. The app's designer starts one from a roast
+and warps its curve when a milestone moves; a roast that follows a version
+shows its curve as the plan line, and the app announces the next recipe step
+for the person to set.
+
 ## Autopilot
 
 Two levels ([ADR 0004](adr/0004-ai-sets-targets-controller-executes.md)):

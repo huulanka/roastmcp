@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 
 use crate::inventory::InventoryStore;
 use crate::learned::LearnedStore;
+use crate::profiles::ProfileStore;
 use roast_control::{PreheatController, PreheatInput, PreheatPhase, PreheatReason, PreheatTuning};
 use roast_core::{
     Actuator, ActuatorValues, BatchInfo, CommandOutcome, CommandRequest, CommandSource,
@@ -86,6 +87,8 @@ pub struct EngineOptions {
     pub inventory_path: PathBuf,
     /// What automatic control has learned about each machine (ADR 0015).
     pub control_path: PathBuf,
+    /// Roast profiles and their versions.
+    pub profiles_path: PathBuf,
     /// Simulator speed factor.
     pub sim_speed: f64,
 }
@@ -362,6 +365,8 @@ pub struct Engine {
     learned: LearnedStore,
     /// Green coffee lots and their stock (ADR 0014).
     pub(crate) inventory: InventoryStore,
+    /// Roast profiles and their versions.
+    pub(crate) profiles: ProfileStore,
     /// Holder and time of a control request refused for a missing presence
     /// confirmation.
     control_request: Option<(String, Instant)>,
@@ -374,6 +379,7 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
     let audit = files::open_append(&opts.audit_path).ok();
     let inventory = InventoryStore::load(opts.inventory_path.clone());
     let learned = LearnedStore::load(opts.control_path.clone());
+    let profiles = ProfileStore::load(opts.profiles_path.clone());
     let mut engine = Engine {
         safety: Safety::new(SafetyConfig::from_profile(&opts.profile)),
         opts,
@@ -409,6 +415,7 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
         preheat: None,
         learned,
         inventory,
+        profiles,
     };
     if let Some(problem) = engine.inventory.problem().map(str::to_owned) {
         engine.alarm("critical", "inventory", problem);
@@ -728,6 +735,27 @@ impl Engine {
             }
         };
         self.audit(serde_json::json!({"type": "reference", "id": id}));
+        self.publish(None);
+        Ok(self.snapshot())
+    }
+
+    /// The connected machine's profile id ("simulator" in the simulator), for
+    /// filing what is made for it.
+    pub(crate) fn machine_id(&self) -> Option<String> {
+        self.machine.as_ref().map(|m| {
+            if m.simulated {
+                "simulator".to_owned()
+            } else {
+                m.id.clone()
+            }
+        })
+    }
+
+    /// Shows a profile version's target curve as the reference (plan line).
+    pub fn set_reference_profile(&mut self, version_id: uuid::Uuid) -> Result<Snapshot, Fail> {
+        let (profile, version) = self.profiles.version(version_id)?;
+        self.reference = Some(ReferenceCurve::from_profile(&profile, &version));
+        self.audit(serde_json::json!({"type": "reference", "profile_version": version_id}));
         self.publish(None);
         Ok(self.snapshot())
     }
@@ -1280,7 +1308,11 @@ impl Engine {
             None => None,
         };
         let plan = meta.plan.filter(|p| !p.is_empty());
-        if let Some(reference) = plan.as_ref().and_then(|p| p.reference_id) {
+        let profile_version = plan.as_ref().and_then(|p| p.profile_version_id);
+        if let Some(version) = profile_version {
+            // A profile's target curve is the plan line on the chart.
+            self.set_reference_profile(version)?;
+        } else if let Some(reference) = plan.as_ref().and_then(|p| p.reference_id) {
             // The plan's reference roast is the plan line on the chart.
             self.set_reference(Some(reference))?;
         }
@@ -1317,7 +1349,7 @@ impl Engine {
             roast_degree: None,
             green_lot_id: lot.as_ref().map(|l| l.id),
             plan,
-            profile_version_id: None,
+            profile_version_id: profile_version,
             experiment_id: None,
             origin: if simulated {
                 RoastOrigin::Simulated
@@ -1390,10 +1422,14 @@ impl Engine {
         }
         if let Some(plan) = meta.plan {
             let reference = plan.reference_id;
+            let profile_version = plan.profile_version_id;
             if let Some(roast) = self.roast.as_mut() {
                 roast.plan = Some(plan).filter(|p| !p.is_empty());
+                roast.profile_version_id = profile_version;
             }
-            if reference.is_some() {
+            if let Some(version) = profile_version {
+                self.set_reference_profile(version)?;
+            } else if reference.is_some() {
                 self.set_reference(reference)?;
             }
         }

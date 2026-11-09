@@ -132,7 +132,7 @@ interface Snapshot {
 | `POST /api/ai/resume` | | `Snapshot` (a person allows AI control again) |
 | `POST /api/ai/lease` | `{ holder }` | `{ holder, expires_in_s }` or 409 `{ error, reason }` |
 | `DELETE /api/ai/lease` | | `Snapshot` |
-| `POST /api/recording/start` | `{ title?, green_weight_g?, beans?, lot_id?, plan?: RoastPlan, batch_no? }` | `Snapshot`; the lot's name becomes `beans` (and the title if none), the plan's reference becomes the reference curve; `batch_no` (e.g. `BRYB-002`) is kept with the roast, starts its file names and gives a lot without a code its code; the simulator ignores it and debits no stock; 404 for an unknown lot |
+| `POST /api/recording/start` | `{ title?, green_weight_g?, beans?, lot_id?, plan?: RoastPlan, batch_no? }` — `plan.profile_version_id` makes a profile version the plan line (wins over `plan.reference_id`) | `Snapshot`; the lot's name becomes `beans` (and the title if none), the plan's reference becomes the reference curve; `batch_no` (e.g. `BRYB-002`) is kept with the roast, starts its file names and gives a lot without a code its code; the simulator ignores it and debits no stock; 404 for an unknown lot |
 | `PATCH /api/recording` | `{ title?, green_weight_g?, roasted_weight_g?, beans?, lot_id?, plan? }` | `Snapshot` |
 | `POST /api/recording/stop` | | `{ id, json_path, alog_path }` (saves the roast) |
 | `POST /api/events` | `{ kind, origin? }` | `RoastEvent` (marks at the latest `t`; replaces an earlier event of the same kind) |
@@ -142,6 +142,11 @@ interface Snapshot {
 | `GET /api/roasts/{id}` | | the roast (`.roast.json` content); each sample also carries `ror` (°C/min), computed as the live value |
 | `PATCH /api/roasts/{id}` | `{ title?, roasted_weight_g?, green_weight_g?, notes? }` | the roast, as `GET`; a changed green weight replaces the roast's stock debit |
 | `DELETE /api/roasts/{id}` | | `{ credited_g, trash_path }` — the files move to `roasts/trash/` (restore by moving them back), the stock debit is taken back, the action log records it |
+| `GET /api/profiles?archived=true` | | `{ …Profile, latest: { id, version, created_at, change_note } \| null, versions }[]`, newest change first (ADR 0017) |
+| `POST /api/profiles` | `{ name, description?, intended_beans?, batch_size_g?, target: ProfileTarget, change_note? }` | `{ …Profile, versions: ProfileVersion[] }` with version 1; 400 for a target whose times do not rise from 0, temperatures outside 0–300 °C or recipe values outside 0–100 % |
+| `GET /api/profiles/{id}` / `PATCH /api/profiles/{id}` | patch: `{ name?, description?, intended_beans?, batch_size_g?, archived? }` | `{ …Profile, versions }`, versions newest first |
+| `POST /api/profiles/{id}/versions` | `{ target: ProfileTarget, change_note?, parent_version? }` | `{ …Profile, versions }` with the new version first |
+| `GET /api/profile-versions/{id}` | | `{ profile, version }` — the version a roast's plan names |
 | `GET /api/lots?archived=true` | | `Lot[]`, newest first; archived lots only with `archived=true` |
 | `POST /api/lots` | `{ name, purchase_g?, purchase_date?, batch_code?, …offer-sheet fields of Lot }` | `Lot` (with its opening purchase); blank text is dropped, a honey grade kept only with `process: "honey"`; `batch_code` keeps letters and digits, upper case, at most 8 |
 | `GET /api/lots/{id}` / `PATCH /api/lots/{id}` | patch: `{ name?, archived?, details?, batch_code? }`; `details` (all offer-sheet fields) replaces the lot's details whole; an empty `batch_code` removes it | `Lot` |

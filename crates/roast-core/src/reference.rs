@@ -9,7 +9,8 @@
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::event::{EventKind, RoastEvent};
+use crate::event::{EventKind, EventOrigin, RoastEvent};
+use crate::profile::{DropRule, EventTarget, Profile, ProfileVersion};
 use crate::roast::Roast;
 use crate::ror::{RorConfig, ror_series};
 
@@ -65,6 +66,60 @@ impl ReferenceCurve {
         ReferenceCurve {
             id: roast.id,
             title: roast.title.clone(),
+            points,
+            events,
+        }
+    }
+
+    /// A profile version as the plan line: its target curve, and its dry end,
+    /// first crack and (timed) drop as events. The id is the version's.
+    #[must_use]
+    pub fn from_profile(profile: &Profile, version: &ProfileVersion) -> Self {
+        let target = &version.target;
+        let points = target
+            .points
+            .iter()
+            .map(|p| RefPoint {
+                t: p.roast_time_s,
+                bt: Some(p.bt_c),
+                ror: p.ror_c_per_min,
+            })
+            .collect();
+        let event = |kind, e: Option<EventTarget>| {
+            let e = e?;
+            Some(RoastEvent {
+                t: e.roast_time_s?,
+                kind,
+                origin: EventOrigin::Human,
+                bt: e.bt_c,
+            })
+        };
+        let drop = match target.events.drop {
+            Some(DropRule::AtTime { roast_time_s }) => Some(EventTarget {
+                roast_time_s: Some(roast_time_s),
+                bt_c: None,
+            }),
+            _ => None,
+        };
+        let mut events: Vec<RoastEvent> = [
+            event(
+                EventKind::Charge,
+                Some(EventTarget {
+                    roast_time_s: Some(0.0),
+                    bt_c: target.points.first().map(|p| p.bt_c),
+                }),
+            ),
+            event(EventKind::DryEnd, target.events.dry_end),
+            event(EventKind::FirstCrackStart, target.events.first_crack),
+            event(EventKind::Drop, drop),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        events.sort_by(|a, b| a.t.total_cmp(&b.t));
+        ReferenceCurve {
+            id: version.id,
+            title: format!("{} · v{}", profile.name, version.version),
             points,
             events,
         }
@@ -320,5 +375,64 @@ mod tests {
     fn no_projection_before_the_turning_point() {
         assert!(project(&[(10.0, 120.0, -15.0)], &[], None).is_none());
         assert!(project(&[], &[], None).is_none());
+    }
+
+    #[test]
+    fn a_profile_version_becomes_the_plan_line() {
+        use crate::profile::{EventTargets, ProfileTarget, TargetPoint};
+        let profile = Profile::new("Brasilien Espresso", chrono::Utc::now());
+        let version = ProfileVersion {
+            id: Uuid::new_v4(),
+            profile_id: profile.id,
+            version: 2,
+            parent_version: Some(1),
+            created_at: chrono::Utc::now(),
+            change_note: None,
+            target: ProfileTarget {
+                points: vec![
+                    TargetPoint {
+                        roast_time_s: 0.0,
+                        bt_c: 200.0,
+                        ror_c_per_min: None,
+                    },
+                    TargetPoint {
+                        roast_time_s: 541.0,
+                        bt_c: 194.0,
+                        ror_c_per_min: Some(7.0),
+                    },
+                    TargetPoint {
+                        roast_time_s: 631.0,
+                        bt_c: 205.0,
+                        ror_c_per_min: Some(6.0),
+                    },
+                ],
+                actions: Vec::new(),
+                events: EventTargets {
+                    dry_end: None,
+                    first_crack: Some(EventTarget {
+                        bt_c: Some(194.0),
+                        roast_time_s: Some(541.0),
+                    }),
+                    drop: Some(DropRule::AtTime {
+                        roast_time_s: 631.0,
+                    }),
+                },
+                tolerance: Default::default(),
+            },
+        };
+        let r = ReferenceCurve::from_profile(&profile, &version);
+        assert_eq!(r.id, version.id);
+        assert_eq!(r.title, "Brasilien Espresso · v2");
+        assert_eq!(r.points.len(), 3);
+        let kinds: Vec<EventKind> = r.events.iter().map(|e| e.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                EventKind::Charge,
+                EventKind::FirstCrackStart,
+                EventKind::Drop
+            ]
+        );
+        assert_eq!(r.at(541.0).0, Some(194.0));
     }
 }
