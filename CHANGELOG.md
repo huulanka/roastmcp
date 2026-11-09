@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/huulanka/roastmcp/compare/v1.7.0...v1.8.0) (2026-11-09)
+
+
+### Features
+
+* **app:** start a roast with the bean from the inventory, a goal and a plan ([#25](https://github.com/huulanka/roastmcp/issues/25)) ([7f78213](https://github.com/huulanka/roastmcp/commit/7f78213e540c6e579037704791d2b3c38fd204d0))
+
 # [1.7.0](https://github.com/huulanka/roastmcp/compare/v1.6.0...v1.7.0) (2026-11-09)
 
 
