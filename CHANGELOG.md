@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/huulanka/roastmcp/compare/v1.6.0...v1.7.0) (2026-11-09)
+
+
+### Features
+
+* record green coffee lots with the details of an offer sheet ([#24](https://github.com/huulanka/roastmcp/issues/24)) ([9fbdce0](https://github.com/huulanka/roastmcp/commit/9fbdce0491bed02e9e4fb0b9254e263348d3d776))
+
 # [1.6.0](https://github.com/huulanka/roastmcp/compare/v1.5.0...v1.6.0) (2026-11-09)
 
 
