@@ -146,8 +146,12 @@ export function RoastChart({
             const hi = Number.isFinite(max) ? max : 0;
             const ahead = overlayRef.current.projected?.x ?? -Infinity;
             const end = Math.max(hi + 5, ahead + AHEAD_S);
-            if (viewRef.current === "follow" && end - lo > FOLLOW_SPAN_S) {
-              return [end - FOLLOW_SPAN_S, end];
+            if (viewRef.current === "follow") {
+              // Follow the latest live sample, not the end of a reference ahead of it.
+              const now = overlayRef.current.now?.x ?? hi;
+              const right = Math.max(now + 5, ahead + AHEAD_S);
+              if (right - lo > FOLLOW_SPAN_S) return [right - FOLLOW_SPAN_S, right];
+              return [Math.min(lo, 0), Math.max(lo + FOLLOW_SPAN_S, 60)];
             }
             return [Math.min(lo, 0), Math.max(end, minSpanS, 60)];
           },
