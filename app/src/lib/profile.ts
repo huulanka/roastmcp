@@ -233,6 +233,31 @@ export function fromTarget(target: ProfileTarget): { curve: CurvePoint[]; milest
   };
 }
 
+/** Longest time a step may follow its event, seconds (as in the daemon). */
+export const MAX_EVENT_OFFSET_S = 900;
+
+/**
+ * Where a step sits in the plan, seconds since CHARGE: its time, the planned
+ * dry end or first crack plus its offset, or where the curve first reaches
+ * its temperature after the turning point (null if it never does).
+ */
+export function plannedTime(
+  trigger: ActionTrigger,
+  m: Milestones,
+  curve: readonly CurvePoint[],
+): number | null {
+  switch (trigger.at) {
+    case "time":
+      return trigger.roast_time_s;
+    case "event":
+      return (trigger.event === "dry_end" ? m.dryEnd.t : m.firstCrack.t) + trigger.offset_s;
+    case "bt": {
+      const tp = turningPoint(curve);
+      return curve.find((p) => p.t > tp.t && p.bt >= trigger.bt_c)?.t ?? null;
+    }
+  }
+}
+
 /** A step's trigger as the daemon names it: "1:30", "FC +0:30", "185 °C". */
 export function triggerLabel(trigger: ActionTrigger): string {
   switch (trigger.at) {
@@ -349,40 +374,3 @@ export const TEMPLATE_MILESTONES: Milestones = {
   firstCrack: { t: 525, bt: 193 },
   drop: { t: 640, bt: 204 },
 };
-
-/** Recipe steps due at the same roast time. */
-export interface RecipeCue {
-  /** Seconds since CHARGE. */
-  at: number;
-  /** What still has to change (in the future: everything planned then). */
-  steps: PlannedAction[];
-}
-
-/**
- * The recipe step to announce now: the next time step whose values the
- * machine does not have yet. A step stays "due" for `graceS` after its time;
- * one that is already set (±1 %) counts as done.
- */
-export function nextRecipeCue(
-  actions: readonly PlannedAction[],
-  sinceCharge: number,
-  current: Partial<Record<Actuator, number>>,
-  graceS = 30,
-): RecipeCue | null {
-  const groups = new Map<number, PlannedAction[]>();
-  for (const a of actions) {
-    if (a.trigger.at !== "time") continue;
-    const at = a.trigger.roast_time_s;
-    groups.set(at, [...(groups.get(at) ?? []), a]);
-  }
-  for (const at of [...groups.keys()].sort((p, q) => p - q)) {
-    if (at < sinceCharge - graceS) continue;
-    const pending = (groups.get(at) ?? []).filter(
-      (s) =>
-        Math.abs((current[s.actuator] ?? Number.NaN) - s.value) >= 1 ||
-        current[s.actuator] === undefined,
-    );
-    if (pending.length > 0) return { at, steps: pending };
-  }
-  return null;
-}

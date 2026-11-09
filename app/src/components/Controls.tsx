@@ -1,11 +1,17 @@
 import { useState } from "react";
-import { Minus, Plus } from "lucide-react";
+import { BotOff, Minus, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import type { Actuator, ActuatorSpec, MachineInfo, SafetyStatus } from "@/api/types.ts";
 import { Button } from "@/components/ui/button.tsx";
 import { Slider } from "@/components/ui/slider.tsx";
 import { Switch } from "@/components/ui/switch.tsx";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip.tsx";
 import { PREHEAT_HOLDER } from "@/lib/roast.ts";
 import { actuatorShown } from "@/lib/units.ts";
 import { cn } from "@/lib/utils.ts";
@@ -24,6 +30,34 @@ const RANGE_COLOUR: Partial<Record<Actuator, string>> = {
   air: "var(--ror)",
 };
 const PRIMARY: Actuator[] = ["burner", "air"];
+/** Where the machine profile names none (older daemons): the heat loop. */
+const DEFAULT_TAKEOVER: Actuator[] = ["burner", "air", "drum"];
+
+/**
+ * While an AI is in control: touching this control ends AI control (ADR
+ * 0019). Filter and cooling carry no mark; the person may use them freely.
+ */
+function TakeoverMark() {
+  const { t } = useTranslation();
+  const label = t("Changing it ends AI control");
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            tabIndex={0}
+            role="img"
+            aria-label={label}
+            className="inline-flex shrink-0 self-center rounded-sm text-warning-text outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <BotOff className="size-4" aria-hidden />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top">{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
 
 function commanded(safety: SafetyStatus, a: Actuator): number {
   return safety.actuators[a] ?? 0;
@@ -84,12 +118,15 @@ function MainControl({
   current,
   disabled,
   automatic = false,
+  endsAi = false,
 }: {
   spec: ActuatorSpec;
   current: number;
   disabled: boolean;
   /** An automation (preheat) is moving it; touching it hands control back. */
   automatic?: boolean;
+  /** An AI is in control and touching this ends it. */
+  endsAi?: boolean;
 }) {
   const { t } = useTranslation();
   const { shown, slider } = useShown(spec, current);
@@ -99,6 +136,7 @@ function MainControl({
       <div className="flex items-baseline justify-between">
         <span className="flex items-baseline gap-2 text-[15px] font-medium">
           {name}
+          {endsAi && <TakeoverMark />}
           {automatic && (
             <span className="text-[13px] font-normal text-brand-text">{t("automatic")}</span>
           )}
@@ -126,10 +164,12 @@ function CompactControl({
   spec,
   current,
   disabled,
+  endsAi = false,
 }: {
   spec: ActuatorSpec;
   current: number;
   disabled: boolean;
+  endsAi?: boolean;
 }) {
   const { t } = useTranslation();
   const shown = useDesired()[spec.actuator] ?? current;
@@ -137,7 +177,10 @@ function CompactControl({
   const unit = spec.display ? t(spec.display.unit) : "%";
   return (
     <div className="flex items-center gap-2">
-      <span className="w-18 shrink-0 text-sm">{name}</span>
+      <span className="flex w-18 shrink-0 items-center gap-1.5 text-sm">
+        {name}
+        {endsAi && <TakeoverMark />}
+      </span>
       <Stepper spec={spec} current={current} disabled={disabled} sign={-1} />
       <span className="min-w-0 flex-1 text-center tabular text-[15px] font-medium whitespace-nowrap">
         {Math.round(actuatorShown(spec.display, shown))}
@@ -148,7 +191,17 @@ function CompactControl({
   );
 }
 
-function SwitchControl({ a, on, disabled }: { a: Actuator; on: boolean; disabled: boolean }) {
+function SwitchControl({
+  a,
+  on,
+  disabled,
+  endsAi = false,
+}: {
+  a: Actuator;
+  on: boolean;
+  disabled: boolean;
+  endsAi?: boolean;
+}) {
   const { t } = useTranslation();
   return (
     <label
@@ -157,7 +210,10 @@ function SwitchControl({ a, on, disabled }: { a: Actuator; on: boolean; disabled
         disabled && "cursor-default",
       )}
     >
-      <span>{t(ACTUATOR_NAME[a])}</span>
+      <span className="flex items-center gap-1.5">
+        {t(ACTUATOR_NAME[a])}
+        {endsAi && <TakeoverMark />}
+      </span>
       <span className="flex items-center gap-3">
         <span
           className={cn(
@@ -181,10 +237,13 @@ function SwitchControl({ a, on, disabled }: { a: Actuator; on: boolean; disabled
 export function Controls({
   machine,
   safety,
+  preheating = false,
   top,
 }: {
   machine: MachineInfo | null;
   safety: SafetyStatus;
+  /** The preheat moves the burner (also under an AI that took over before CHARGE). */
+  preheating?: boolean;
   /** Shown above burner and air: the preheat before a roast. */
   top?: React.ReactNode;
 }) {
@@ -192,6 +251,9 @@ export function Controls({
   const desired = useDesired();
   const disabled = !machine || !safety.connected || safety.emergency_stop;
   if (!machine) return null;
+  const aiInControl = safety.lease_holder !== null && safety.lease_holder !== PREHEAT_HOLDER;
+  const takeover = machine.takeover_actuators ?? DEFAULT_TAKEOVER;
+  const endsAi = (a: Actuator) => aiInControl && takeover.includes(a);
 
   const main = machine.actuators.filter((s) => PRIMARY.includes(s.actuator));
   const rest = machine.actuators.filter((s) => !PRIMARY.includes(s.actuator));
@@ -212,7 +274,10 @@ export function Controls({
           spec={spec}
           current={commanded(safety, spec.actuator)}
           disabled={disabled}
-          automatic={spec.actuator === "burner" && safety.lease_holder === PREHEAT_HOLDER}
+          automatic={
+            spec.actuator === "burner" && (preheating || safety.lease_holder === PREHEAT_HOLDER)
+          }
+          endsAi={endsAi(spec.actuator)}
         />
       ))}
       {(rest.length > 0 || switches.length > 0) && (
@@ -223,6 +288,7 @@ export function Controls({
               spec={spec}
               current={commanded(safety, spec.actuator)}
               disabled={disabled}
+              endsAi={endsAi(spec.actuator)}
             />
           ))}
           {switches.map((a) => (
@@ -231,6 +297,7 @@ export function Controls({
               a={a}
               on={(desired[a] ?? commanded(safety, a)) >= 50}
               disabled={disabled}
+              endsAi={endsAi(a)}
             />
           ))}
         </div>

@@ -7,8 +7,8 @@ import {
   fromRoast,
   fromTarget,
   milestonesProblem,
-  nextRecipeCue,
   phaseShares,
+  plannedTime,
   recipeFromRoast,
   rorOf,
   sortActions,
@@ -129,34 +129,6 @@ describe("stored plans", () => {
   });
 });
 
-describe("recipe cues", () => {
-  const step = (t: number, actuator: "burner" | "air", value: number) => ({
-    trigger: { at: "time" as const, roast_time_s: t },
-    actuator,
-    value,
-  });
-  const recipe = [
-    step(0, "burner", 80),
-    step(0, "air", 20),
-    step(90, "burner", 85),
-    step(290, "air", 30),
-  ];
-
-  it("announces what is not set yet, grouped by time", () => {
-    expect(nextRecipeCue(recipe, 2, { burner: 80, air: 100 })).toEqual({
-      at: 0,
-      steps: [step(0, "air", 20)],
-    });
-    expect(nextRecipeCue(recipe, 60, { burner: 80, air: 20 })?.at).toBe(90);
-  });
-
-  it("drops a step once it is set or long past", () => {
-    expect(nextRecipeCue(recipe, 100, { burner: 85, air: 20 })?.at).toBe(290);
-    expect(nextRecipeCue(recipe, 130, { burner: 70, air: 20 })?.at).toBe(290);
-    expect(nextRecipeCue(recipe, 400, { burner: 70, air: 30 })).toBeNull();
-  });
-});
-
 describe("steps after an event", () => {
   it("are named and sorted like the daemon does", () => {
     const fc = { at: "event", event: "first_crack_start", offset_s: 30 } as const;
@@ -170,5 +142,18 @@ describe("steps after an event", () => {
       { trigger: { at: "time", roast_time_s: 90 }, actuator: "burner", value: 85 },
     ]);
     expect(sorted.map((s) => triggerLabel(s.trigger))).toEqual(["1:30", "DE +0:00", "FC +0:30"]);
+  });
+
+  it("sit at the planned event in the plan", () => {
+    const m = TEMPLATE_MILESTONES;
+    const curve = templateCurve(m);
+    const fc = { at: "event", event: "first_crack_start", offset_s: 30 } as const;
+    expect(plannedTime(fc, m, curve)).toBe(m.firstCrack.t + 30);
+    expect(plannedTime({ at: "time", roast_time_s: 90 }, m, curve)).toBe(90);
+    // A temperature step: where the curve reaches it after the turning point.
+    const at = plannedTime({ at: "bt", bt_c: m.dryEnd.bt }, m, curve);
+    expect(at).not.toBeNull();
+    expect(Math.abs((at ?? 0) - m.dryEnd.t)).toBeLessThan(5);
+    expect(plannedTime({ at: "bt", bt_c: 290 }, m, curve)).toBeNull();
   });
 });
