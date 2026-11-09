@@ -1,3 +1,10 @@
+# [1.13.0](https://github.com/huulanka/roastmcp/compare/v1.12.0...v1.13.0) (2026-11-09)
+
+
+### Features
+
+* **app:** a tidier roast screen, and a curve that can follow and zoom ([#31](https://github.com/huulanka/roastmcp/issues/31)) ([b0afb90](https://github.com/huulanka/roastmcp/commit/b0afb90389c356ab55a9d8c564c564e6236dbc9e))
+
 # [1.12.0](https://github.com/huulanka/roastmcp/compare/v1.11.0...v1.12.0) (2026-11-09)
 
 
