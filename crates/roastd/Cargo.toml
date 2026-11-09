@@ -15,6 +15,7 @@ axum = { version = "0.8", features = ["ws"] }
 chrono.workspace = true
 dirs = "7"
 roast-alog.workspace = true
+roast-control.workspace = true
 roast-core.workspace = true
 roast-driver.workspace = true
 roast-machine.workspace = true

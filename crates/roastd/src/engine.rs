@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 
 use crate::inventory::InventoryStore;
+use crate::learned::LearnedStore;
+use roast_control::{PreheatController, PreheatInput, PreheatPhase, PreheatReason, PreheatTuning};
 use roast_core::{
     Actuator, ActuatorValues, BatchInfo, CommandOutcome, CommandRequest, CommandSource,
     ControlLogEntry, EventDetector, EventKind, EventOrigin, Note, Phases, Projection,
@@ -82,6 +84,8 @@ pub struct EngineOptions {
     pub audit_path: PathBuf,
     /// The green coffee inventory (ADR 0014).
     pub inventory_path: PathBuf,
+    /// What automatic control has learned about each machine (ADR 0015).
+    pub control_path: PathBuf,
     /// Simulator speed factor.
     pub sim_speed: f64,
 }
@@ -160,27 +164,21 @@ struct ActuatorSpec {
 
 /// Lease holder name of the preheat controller.
 const PREHEAT_HOLDER: &str = "preheat";
-/// How often the preheat controller acts, seconds.
-const PREHEAT_STEP_S: f64 = 5.0;
-/// Highest burner value the preheat controller asks for, percent.
-const PREHEAT_MAX_BURNER: f64 = 90.0;
-/// Proportional gain, burner percent per °C below the target.
-const PREHEAT_KP: f64 = 2.5;
-/// Integral gain, burner percent per °C·s.
-const PREHEAT_KI: f64 = 0.05;
-/// Above target + this, the burner goes off.
-const PREHEAT_OVERSHOOT_C: f64 = 5.0;
-/// Within this of the target, preheat counts as holding.
-const PREHEAT_BAND_C: f64 = 3.0;
+/// Ambient temperature when the machine reports none, °C.
+const DEFAULT_AMBIENT_C: f64 = 22.0;
 
-/// The preheat controller: brings the bean probe to a target and holds it.
-/// It is an autopilot: its commands pass the safety layer with the AI rules
-/// (lease, presence, bounded raises), and anything a person does ends it.
+/// A running preheat: brings the bean probe to a target and holds it with
+/// the step-wait-learn controller (ADR 0015). It is an autopilot: its
+/// commands pass the safety layer with the AI rules (lease, presence,
+/// bounded raises), and anything a person does ends it.
 #[derive(Debug, Clone)]
 struct Preheat {
-    target_c: f64,
-    integral: f64,
-    last_step: Option<f64>,
+    ctl: PreheatController,
+    /// Machine and air setting its learning is filed under.
+    machine_key: String,
+    air: f64,
+    /// Recording time of the reading it last looked at.
+    last_seen_t: Option<f64>,
     last_raise: Option<f64>,
 }
 
@@ -346,6 +344,9 @@ pub struct Engine {
     last_bt: Option<f64>,
     last_et: Option<f64>,
     last_ror: Option<f64>,
+    last_ambient: Option<f64>,
+    /// Recording time of the latest reading.
+    last_reading_t: Option<f64>,
     last_reading: Option<Instant>,
     stale_alarmed: bool,
     last_autosave: Instant,
@@ -355,6 +356,8 @@ pub struct Engine {
     audit: Option<File>,
     reference: Option<ReferenceCurve>,
     preheat: Option<Preheat>,
+    /// What automatic control learned about each machine.
+    learned: LearnedStore,
     /// Green coffee lots and their stock (ADR 0014).
     pub(crate) inventory: InventoryStore,
     /// Holder and time of a control request refused for a missing presence
@@ -368,6 +371,7 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
     let (updates, _) = broadcast::channel(256);
     let audit = files::open_append(&opts.audit_path).ok();
     let inventory = InventoryStore::load(opts.inventory_path.clone());
+    let learned = LearnedStore::load(opts.control_path.clone());
     let mut engine = Engine {
         safety: Safety::new(SafetyConfig::from_profile(&opts.profile)),
         opts,
@@ -390,6 +394,8 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
         last_bt: None,
         last_et: None,
         last_ror: None,
+        last_ambient: None,
+        last_reading_t: None,
         last_reading: None,
         stale_alarmed: false,
         control_request: None,
@@ -399,6 +405,7 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
         audit,
         reference: None,
         preheat: None,
+        learned,
         inventory,
     };
     if let Some(problem) = engine.inventory.problem().map(str::to_owned) {
@@ -498,14 +505,10 @@ impl Engine {
                 .filter(|(_, at)| at.elapsed() < CONTROL_REQUEST_SHOWN_FOR)
                 .map(|(holder, _)| holder.clone()),
             preheat: self.preheat.as_ref().map(|p| PreheatStatus {
-                target_c: p.target_c,
-                state: if self
-                    .last_bt
-                    .is_some_and(|bt| bt >= p.target_c - PREHEAT_BAND_C)
-                {
-                    "holding"
-                } else {
-                    "heating"
+                target_c: p.ctl.target_c(),
+                state: match p.ctl.phase() {
+                    PreheatPhase::Heating => "heating",
+                    PreheatPhase::Holding => "holding",
                 },
             }),
             events,
@@ -572,13 +575,31 @@ impl Engine {
         self.safety
             .acquire_lease(PREHEAT_HOLDER, now)
             .map_err(|r| Fail::conflict(reject_text(r), Some(r)))?;
+        let status = self.safety.status(now);
+        let air = status.actuators.get(&Actuator::Air).copied().unwrap_or(0.0);
+        let machine_key = self.machine.as_ref().map_or_else(String::new, |m| {
+            if m.simulated {
+                "simulator".to_owned()
+            } else {
+                m.id.clone()
+            }
+        });
+        let plant = self.learned.preheat(&machine_key, air);
+        let ambient = self.last_ambient.unwrap_or(DEFAULT_AMBIENT_C);
         self.preheat = Some(Preheat {
-            target_c,
-            integral: 0.0,
-            last_step: None,
+            ctl: PreheatController::new(target_c, ambient, PreheatTuning::default(), plant),
+            machine_key,
+            air,
+            last_seen_t: None,
             last_raise: None,
         });
-        self.audit(serde_json::json!({"type": "preheat_started", "target_c": target_c}));
+        self.audit(serde_json::json!({
+            "type": "preheat_started",
+            "target_c": target_c,
+            "air": air,
+            "ror_per_pct": plant.ror_per_pct,
+            "hold_pct_per_c": plant.hold_pct_per_c,
+        }));
         self.alarm(
             "info",
             "preheat",
@@ -596,13 +617,22 @@ impl Engine {
     }
 
     fn end_preheat(&mut self, message: &str) {
-        if self.preheat.take().is_none() {
+        let Some(p) = self.preheat.take() else {
             return;
+        };
+        let learned = p.ctl.plant();
+        if let Err(e) = self.learned.set_preheat(&p.machine_key, p.air, learned) {
+            tracing::warn!("could not save what the preheat learned: {e}");
         }
         if self.safety.status(self.now()).lease_holder.as_deref() == Some(PREHEAT_HOLDER) {
             self.safety.release_lease();
         }
-        self.audit(serde_json::json!({"type": "preheat_ended", "message": message}));
+        self.audit(serde_json::json!({
+            "type": "preheat_ended",
+            "message": message,
+            "ror_per_pct": learned.ror_per_pct,
+            "hold_pct_per_c": learned.hold_pct_per_c,
+        }));
         self.alarm("info", "preheat", message.to_owned());
         self.publish(None);
     }
@@ -625,7 +655,11 @@ impl Engine {
             self.end_preheat("Preheat ended - you have control.");
             return;
         }
-        if p.last_step.is_some_and(|l| now - l < PREHEAT_STEP_S) {
+        // One decision per reading.
+        let Some(t) = self.last_reading_t else {
+            return;
+        };
+        if p.last_seen_t.is_some_and(|seen| seen >= t) {
             return;
         }
         if self.safety.acquire_lease(PREHEAT_HOLDER, now).is_err() {
@@ -635,55 +669,45 @@ impl Engine {
         let Some(bt) = self.last_bt else {
             return;
         };
-        let current = self
-            .safety
-            .status(now)
+        let burner = status
             .actuators
             .get(&Actuator::Burner)
             .copied()
             .unwrap_or(0.0);
-        let Some(p) = self.preheat.as_mut() else {
-            return;
-        };
-        let dt = p
-            .last_step
-            .map_or(0.0, |l| (now - l).min(2.0 * PREHEAT_STEP_S));
-        p.last_step = Some(now);
-        let error = p.target_c - bt;
-        let unclamped = PREHEAT_KP * error + PREHEAT_KI * (p.integral + error * dt);
-        // Integrate only while the output is not saturated in that direction.
-        if (0.0..=PREHEAT_MAX_BURNER).contains(&unclamped)
-            || (unclamped > PREHEAT_MAX_BURNER && error < 0.0)
-            || (unclamped < 0.0 && error > 0.0)
-        {
-            p.integral += error * dt;
-        }
-        let mut target = (PREHEAT_KP * error + PREHEAT_KI * p.integral)
-            .clamp(0.0, PREHEAT_MAX_BURNER)
-            .round();
-        if error < -PREHEAT_OVERSHOOT_C {
-            target = 0.0;
-        }
-        if (target - current).abs() < 2.0 {
-            return;
-        }
-        let raise = target > current;
         let min_interval = self
             .safety
             .config()
             .ai_limits
             .get(&Actuator::Burner)
             .map_or(0.0, |l| l.min_interval_s);
+        let ror = self.last_ror;
+        let Some(p) = self.preheat.as_mut() else {
+            return;
+        };
+        p.last_seen_t = Some(t);
+        let Some(d) = p.ctl.step(PreheatInput { t, bt, ror, burner }) else {
+            return;
+        };
+        let raise = d.burner > burner;
+        // The safety layer paces automatic raises; asking sooner is refused.
         if raise && p.last_raise.is_some_and(|l| now - l < min_interval) {
             return;
         }
         if raise {
             p.last_raise = Some(now);
         }
-        let reason = format!("preheat to {:.0} °C", p.target_c);
+        let target = p.ctl.target_c();
+        let reason = match d.reason {
+            PreheatReason::Heat => format!("preheat to {target:.0} °C: full heat"),
+            PreheatReason::StepToHold => {
+                format!("preheat to {target:.0} °C: step down to the holding power")
+            }
+            PreheatReason::Correct => format!("preheat to {target:.0} °C: correction"),
+            PreheatReason::Cut => format!("preheat to {target:.0} °C: far too hot, heat off"),
+        };
         self.command(CommandRequest {
             actuator: Actuator::Burner,
-            value: target,
+            value: d.burner,
             source: CommandSource::Autopilot,
             reason: Some(reason),
         });
@@ -954,6 +978,8 @@ impl Engine {
         self.last_bt = r.bt;
         self.last_et = r.et;
         self.last_ror = ror;
+        self.last_ambient = r.ambient_c.or(self.last_ambient);
+        self.last_reading_t = Some(t);
         let actuators = self.safety.status(self.now()).actuators;
         let point = Point {
             t,

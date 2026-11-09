@@ -1,6 +1,6 @@
 [package]
 name = "roast-control"
-description = "Autopilot controller that follows a target profile"
+description = "Controllers that move the burner: preheat now, the autopilot later"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +11,7 @@ publish.workspace = true
 
 [dependencies]
 roast-core.workspace = true
+serde.workspace = true
 
 [lints]
 workspace = true

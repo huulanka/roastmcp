@@ -66,8 +66,11 @@ layer under the AI rules (bounded raises, cuts free, never above the profile's
 counts as a presence confirmation and allows automation again. It ends at
 CHARGE, on any manual command, an emergency stop, a lost link or a missed
 presence confirmation; the burner then holds its value and the person has
-control. The controller is a PI controller on the bean probe with anti-windup;
-its gains are a first guess and need checking on each machine.
+control. The controller ([ADR 0015](adr/0015-preheat-step-wait-learn.md))
+heats fully, steps down once to the holding power before the target, then
+corrects rarely: it waits 45 s after each change, ignores errors within
+±2 °C and turns the burner off at once above target + 10 °C. What it learns
+about a machine is kept in `control.json` in the data folder.
 
 ## Limits (defaults, per machine profile)
 
