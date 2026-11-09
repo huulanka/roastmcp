@@ -4,10 +4,12 @@ import { useTranslation } from "react-i18next";
 
 import { api, ApiError } from "@/api/client.ts";
 import type {
+  ActionTrigger,
   Actuator,
   PlannedAction,
   ProfileDetail,
   ProfileSummary,
+  RecipeAnchor,
   RoastSummary,
 } from "@/api/types.ts";
 import { Field, inputCls, UnitInput } from "@/components/Dialogs.tsx";
@@ -34,16 +36,19 @@ import { isComplete, parseNumber } from "@/lib/plan.ts";
 import {
   type CurvePoint,
   type Milestones,
+  MAX_EVENT_OFFSET_S,
   TEMPLATE_MILESTONES,
   fromRoast,
   fromTarget,
   milestonesProblem,
   phaseShares,
+  plannedTime,
   recipeFromRoast,
   rorOf,
   sortActions,
   templateCurve,
   toTarget,
+  triggerLabel,
   turningPoint,
   warp,
 } from "@/lib/profile.ts";
@@ -67,6 +72,36 @@ const ACTUATORS: [Actuator, string][] = [
   ["air", "Air"],
   ["drum", "Drum"],
 ];
+/** What a step's time counts from (ADR 0019). */
+type StepRef = "start" | RecipeAnchor;
+const STEP_REFS: [StepRef, string][] = [
+  ["start", "from start"],
+  ["dry_end", "after dry end"],
+  ["first_crack_start", "after first crack"],
+];
+
+function stepRef(trigger: ActionTrigger): StepRef | "bt" {
+  if (trigger.at === "time") return "start";
+  if (trigger.at === "event") return trigger.event;
+  return "bt";
+}
+
+/**
+ * The step's trigger counted from `ref`, keeping where it sits in the plan:
+ * 9:15 with first crack planned at 8:45 becomes "after first crack +0:30".
+ */
+function withRef(
+  trigger: ActionTrigger,
+  ref: StepRef,
+  m: Milestones,
+  curve: readonly CurvePoint[],
+): ActionTrigger {
+  const at = plannedTime(trigger, m, curve) ?? 0;
+  if (ref === "start") return { at: "time", roast_time_s: Math.round(Math.max(0, at)) };
+  const anchor = ref === "dry_end" ? m.dryEnd.t : m.firstCrack.t;
+  const offset = Math.round(Math.min(MAX_EVENT_OFFSET_S, Math.max(0, at - anchor)));
+  return { at: "event", event: ref, offset_s: offset };
+}
 
 /** "4:40" or "280" → seconds; null when it is not a time. */
 function parseClock(text: string): number | null {
@@ -81,15 +116,18 @@ function ClockInput({
   value,
   onCommit,
   label,
+  prefix = "",
 }: {
   value: number;
   onCommit: (s: number) => void;
   label: string;
+  /** "+" for a time after an event. */
+  prefix?: string;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const commit = () => {
     if (draft === null) return;
-    const s = parseClock(draft);
+    const s = parseClock(draft.replace(/^\s*\+/, ""));
     if (s !== null) onCommit(Math.round(s));
     setDraft(null);
   };
@@ -98,7 +136,7 @@ function ClockInput({
       aria-label={label}
       className={cn(inputCls, "h-10 text-right tabular")}
       inputMode="numeric"
-      value={draft ?? formatClock(value)}
+      value={draft ?? `${prefix}${formatClock(value)}`}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => e.key === "Enter" && commit()}
@@ -139,11 +177,22 @@ function NumberInput({
   );
 }
 
-/** Burner/air value at each time of the curve, from the recipe's time steps. */
-function stepped(actions: readonly PlannedAction[], a: Actuator, xs: readonly number[]) {
+/**
+ * Burner/air value at each time of the curve, from the recipe: steps after
+ * an event sit at its planned time, temperature steps where the curve
+ * reaches them.
+ */
+function stepped(
+  actions: readonly PlannedAction[],
+  a: Actuator,
+  curve: readonly CurvePoint[],
+  m: Milestones,
+) {
+  const xs = curve.map((p) => p.t);
   const steps = actions
-    .filter((s) => s.actuator === a && s.trigger.at === "time")
-    .map((s) => ({ t: s.trigger.at === "time" ? s.trigger.roast_time_s : 0, v: s.value }))
+    .filter((s) => s.actuator === a)
+    .map((s) => ({ t: plannedTime(s.trigger, m, curve), v: s.value }))
+    .filter((s): s is { t: number; v: number } => s.t !== null)
     .sort((p, q) => p.t - q.t);
   return xs.map((x) => {
     let v: number | null = null;
@@ -165,8 +214,8 @@ function chartOf(
     x: xs,
     bt: curve.map((p) => p.bt),
     ror,
-    burner: stepped(recipe, "burner", xs),
-    air: stepped(recipe, "air", xs),
+    burner: stepped(recipe, "burner", curve, m),
+    air: stepped(recipe, "air", curve, m),
   };
   const markers: ChartMarker[] = [
     { x: 0, label: t("Charge") },
@@ -538,11 +587,24 @@ function Editor({ id, onChanged }: { id: string; onChanged: () => void }) {
               size="sm"
               onClick={() => {
                 const last = recipe.at(-1);
-                const at = last && last.trigger.at === "time" ? last.trigger.roast_time_s + 60 : 0;
+                // The next step continues from the last one's reference.
+                const trigger: ActionTrigger =
+                  last?.trigger.at === "event"
+                    ? {
+                        ...last.trigger,
+                        offset_s: Math.min(MAX_EVENT_OFFSET_S, last.trigger.offset_s + 30),
+                      }
+                    : {
+                        at: "time",
+                        roast_time_s: Math.min(
+                          last?.trigger.at === "time" ? last.trigger.roast_time_s + 60 : 0,
+                          milestones.drop.t,
+                        ),
+                      };
                 setRecipe([
                   ...recipe,
                   {
-                    trigger: { at: "time", roast_time_s: Math.min(at, milestones.drop.t) },
+                    trigger,
                     actuator: "burner",
                     value: last?.actuator === "burner" ? last.value : 75,
                   },
@@ -557,8 +619,40 @@ function Editor({ id, onChanged }: { id: string; onChanged: () => void }) {
             {recipe.map((s, i) => (
               <li
                 key={i}
-                className="grid grid-cols-[5.5rem_minmax(0,9rem)_6.5rem_auto] items-center gap-2"
+                className="grid grid-cols-[9.5rem_4.75rem_minmax(0,7rem)_5.5rem_auto] items-center gap-2"
               >
+                <Select
+                  value={stepRef(s.trigger)}
+                  disabled={s.trigger.at === "bt"}
+                  onValueChange={(v) =>
+                    setRecipe(
+                      sortActions(
+                        recipe.map((x, j) =>
+                          j === i
+                            ? { ...x, trigger: withRef(x.trigger, v as StepRef, milestones, curve) }
+                            : x,
+                        ),
+                      ),
+                    )
+                  }
+                >
+                  <SelectTrigger
+                    aria-label={t("Step reference")}
+                    className="h-10 py-1 whitespace-nowrap"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {STEP_REFS.map(([r, name]) => (
+                      <SelectItem key={r} value={r}>
+                        {t(name)}
+                      </SelectItem>
+                    ))}
+                    {s.trigger.at === "bt" && (
+                      <SelectItem value="bt">{t("at a temperature")}</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
                 {s.trigger.at === "time" ? (
                   <ClockInput
                     label={t("Step time")}
@@ -573,10 +667,31 @@ function Editor({ id, onChanged }: { id: string; onChanged: () => void }) {
                       )
                     }
                   />
+                ) : s.trigger.at === "event" ? (
+                  <ClockInput
+                    label={t("Step time")}
+                    prefix="+"
+                    value={s.trigger.offset_s}
+                    onCommit={(v) =>
+                      setRecipe(
+                        sortActions(
+                          recipe.map((x, j) =>
+                            j === i && x.trigger.at === "event"
+                              ? {
+                                  ...x,
+                                  trigger: {
+                                    ...x.trigger,
+                                    offset_s: Math.min(MAX_EVENT_OFFSET_S, Math.max(0, v)),
+                                  },
+                                }
+                              : x,
+                          ),
+                        ),
+                      )
+                    }
+                  />
                 ) : (
-                  <span className="text-right tabular text-[15px]">
-                    {formatNumber(s.trigger.bt_c, 0)} °C
-                  </span>
+                  <span className="text-right tabular text-[15px]">{triggerLabel(s.trigger)}</span>
                 )}
                 <Select
                   value={s.actuator}

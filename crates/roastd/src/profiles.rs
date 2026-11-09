@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use chrono::Utc;
-use roast_core::{Profile, ProfileTarget, ProfileVersion};
+use roast_core::{ActionTrigger, MAX_EVENT_OFFSET_S, Profile, ProfileTarget, ProfileVersion};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -131,6 +131,16 @@ fn check(target: &ProfileTarget) -> Result<(), Fail> {
     for a in &target.actions {
         if !(0.0..=100.0).contains(&a.value) {
             return Err(Fail::bad("recipe values must be between 0 and 100 %"));
+        }
+        let fits = match a.trigger {
+            ActionTrigger::Time { roast_time_s } => (0.0..=1800.0).contains(&roast_time_s),
+            ActionTrigger::Bt { bt_c } => (50.0..=300.0).contains(&bt_c),
+            ActionTrigger::Event { offset_s, .. } => (0.0..=MAX_EVENT_OFFSET_S).contains(&offset_s),
+        };
+        if !fits {
+            return Err(Fail::bad(
+                "recipe steps come at 0-30 min, at 50-300 °C, or 0-15 min after dry end or first crack",
+            ));
         }
     }
     Ok(())

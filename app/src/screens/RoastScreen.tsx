@@ -52,7 +52,6 @@ import {
 } from "@/state/actions.ts";
 import { nudge } from "@/state/controls.ts";
 import { applySnapshot, useLive } from "@/state/live.ts";
-import { useRecipe } from "@/state/recipe.ts";
 import { useReferenceCurve } from "@/state/reference.ts";
 
 /** Enter belongs to text fields, dialogs and menus; everywhere else it is the next event. */
@@ -143,10 +142,9 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
   const refCurve = useReferenceCurve(refStatus?.id ?? null);
   const connected = snapshot?.connection === "connected";
   const recording = snapshot ? isRecording(snapshot.state) : false;
-  // A profile as the plan brings its recipe (ADR 0017).
-  const recipe = useRecipe(
-    recording ? (snapshot?.recording?.plan?.profile_version_id ?? null) : null,
-  );
+  // A profile as the plan brings its recipe; the daemon names the next step
+  // and whether it sets it itself (ADR 0017, ADR 0019).
+  const nextStep = recording ? (refStatus?.next_step ?? null) : null;
 
   const live = useMemo(
     () => buildChartData(points, base, rorStart(events ?? [], base)),
@@ -386,6 +384,7 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
         <Controls
           machine={snapshot.machine}
           safety={snapshot.safety}
+          preheating={!!snapshot.preheat}
           top={
             preRoast ? (
               <PreheatCard
@@ -394,11 +393,9 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
                 plan={preheatPlan}
                 disabled={!snapshot.safety.connected || snapshot.safety.emergency_stop}
               />
-            ) : recipe && base !== null && typeof snapshot.t === "number" ? (
+            ) : nextStep && base !== null ? (
               <RecipeCue
-                recipe={recipe}
-                sinceCharge={snapshot.t - base}
-                current={snapshot.safety.actuators}
+                next={nextStep}
                 disabled={!snapshot.safety.connected || snapshot.safety.emergency_stop}
               />
             ) : null

@@ -7,17 +7,15 @@
 //! same in the browser; this is the version for the daemon and the MCP
 //! server, so a plan an AI writes looks like one made in the app.
 
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
 
+use crate::Actuator;
 use crate::event::EventKind;
 use crate::profile::{
-    ActionTrigger, DropRule, EventTarget, EventTargets, PlannedAction, ProfileTarget, TargetPoint,
-    ToleranceBand,
+    ActionTrigger, DropRule, EventTarget, EventTargets, PlannedAction, ProfileTarget, RecipeAnchor,
+    TargetPoint, ToleranceBand,
 };
 use crate::roast::Roast;
-use crate::{Actuator, ActuatorValues};
 
 /// Spacing of a stored target curve, seconds.
 const STEP_S: f64 = 2.0;
@@ -302,12 +300,21 @@ fn round1(v: f64) -> f64 {
     (v * 10.0).round() / 10.0
 }
 
-/// Time steps first in time order, then temperature steps by temperature.
+/// Time steps first in time order, then temperature steps by temperature,
+/// then steps after dry end and after first crack by their offset.
 #[must_use]
 pub fn sort_actions(actions: &[PlannedAction]) -> Vec<PlannedAction> {
     let key = |a: &PlannedAction| match a.trigger {
         ActionTrigger::Time { roast_time_s } => roast_time_s,
         ActionTrigger::Bt { bt_c } => 10_000.0 + bt_c,
+        ActionTrigger::Event {
+            event: RecipeAnchor::DryEnd,
+            offset_s,
+        } => 20_000.0 + offset_s,
+        ActionTrigger::Event {
+            event: RecipeAnchor::FirstCrackStart,
+            offset_s,
+        } => 30_000.0 + offset_s,
     };
     let mut out = actions.to_vec();
     out.sort_by(|p, q| key(p).total_cmp(&key(q)));
@@ -506,55 +513,6 @@ pub fn template_curve(m: &Milestones) -> Vec<CurvePoint> {
     pts
 }
 
-/// Recipe steps due at the same roast time.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct RecipeCue {
-    /// Seconds since CHARGE.
-    pub at: f64,
-    /// What still has to change.
-    pub steps: Vec<PlannedAction>,
-}
-
-/// The recipe step to act on now: the next time step whose values the
-/// machine does not have yet. A step stays due for `grace_s` after its time;
-/// one already set (±1 %) counts as done. Like the app's recipe cue.
-#[must_use]
-pub fn next_recipe_cue(
-    actions: &[PlannedAction],
-    since_charge: f64,
-    current: &ActuatorValues,
-    grace_s: f64,
-) -> Option<RecipeCue> {
-    // Keyed by tenths of a second: times are whole or tenths.
-    let mut groups: BTreeMap<i64, Vec<PlannedAction>> = BTreeMap::new();
-    for a in actions {
-        if let ActionTrigger::Time { roast_time_s } = a.trigger {
-            #[allow(clippy::cast_possible_truncation)]
-            let key = (roast_time_s * 10.0).round() as i64;
-            groups.entry(key).or_default().push(*a);
-        }
-    }
-    for (key, steps) in groups {
-        #[allow(clippy::cast_precision_loss)]
-        let at = key as f64 / 10.0;
-        if at < since_charge - grace_s {
-            continue;
-        }
-        let pending: Vec<PlannedAction> = steps
-            .into_iter()
-            .filter(|s| {
-                current
-                    .get(&s.actuator)
-                    .is_none_or(|v| (v - s.value).abs() >= 1.0)
-            })
-            .collect();
-        if !pending.is_empty() {
-            return Some(RecipeCue { at, steps: pending });
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -610,27 +568,5 @@ mod tests {
         assert_eq!(milestones_problem(&m), None);
         m.drop.t = m.first_crack.t + 10.0;
         assert!(milestones_problem(&m).is_some());
-    }
-
-    #[test]
-    fn the_next_cue_skips_done_steps_and_old_ones() {
-        let step = |t: f64, actuator, value| PlannedAction {
-            trigger: ActionTrigger::Time { roast_time_s: t },
-            actuator,
-            value,
-        };
-        let recipe = [
-            step(0.0, Actuator::Burner, 80.0),
-            step(0.0, Actuator::Air, 20.0),
-            step(90.0, Actuator::Burner, 85.0),
-            step(500.0, Actuator::Burner, 60.0),
-        ];
-        let now = ActuatorValues::from([(Actuator::Burner, 80.0), (Actuator::Air, 20.0)]);
-        let cue = next_recipe_cue(&recipe, 10.0, &now, 30.0).unwrap();
-        assert_eq!(cue.at, 90.0);
-        let now = ActuatorValues::from([(Actuator::Burner, 85.0), (Actuator::Air, 20.0)]);
-        let cue = next_recipe_cue(&recipe, 200.0, &now, 30.0).unwrap();
-        assert_eq!((cue.at, cue.steps.len()), (500.0, 1));
-        assert!(next_recipe_cue(&recipe, 600.0, &now, 30.0).is_none());
     }
 }

@@ -162,6 +162,7 @@ impl Importer<'_> {
                 ai_air_max_step: 20.0,
                 ai_air_min_interval_s: 5.0,
                 preheat_presence_interval_s: None,
+                takeover_actuators: None,
             },
             capabilities: MachineCapabilities {
                 automatic_drop: false,

@@ -16,7 +16,8 @@ function typing(target: EventTarget | null): boolean {
 
 /**
  * Calls a person back before a presence confirmation is due (ADR 0018): a
- * gong 60 s and 20 s before, whenever an AI or the preheat holds control.
+ * gong 60 s and 20 s before, whenever an AI or the preheat holds control,
+ * and at once when an AI asks for control (ADR 0019).
  * The space bar confirms presence while the app has focus, wherever focus
  * is, except in a text field. Only a person can press it; an AI cannot.
  */
@@ -24,7 +25,16 @@ export function PresenceWatcher() {
   const { t } = useTranslation();
   const { snapshot } = useLive();
   const prevDue = useRef<number | null>(null);
+  const prevAsking = useRef<string | null>(null);
   const latest = useRef(snapshot);
+
+  // An AI asks for control: the gong at once, so the person looks up from the
+  // machine (ADR 0019). The alarm's toast says who asks.
+  const asking = snapshot?.control_request ?? null;
+  useEffect(() => {
+    if (asking && asking !== prevAsking.current) gong(true);
+    prevAsking.current = asking;
+  }, [asking]);
 
   useEffect(() => {
     latest.current = snapshot;

@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{Actuator, Process};
+use crate::{Actuator, EventKind, Process};
 
 /// A roast profile: what it is for, independent of the plan's versions.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -109,7 +109,41 @@ pub enum ActionTrigger {
     Time { roast_time_s: f64 },
     /// When the bean temperature first reaches a value after the turning point.
     Bt { bt_c: f64 },
+    /// A time after a roast event, marked or detected (ADR 0019): the step
+    /// waits for the event, so it follows the beans rather than the clock.
+    Event { event: RecipeAnchor, offset_s: f64 },
 }
+
+/// The events a recipe step can be tied to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecipeAnchor {
+    DryEnd,
+    FirstCrackStart,
+}
+
+impl RecipeAnchor {
+    /// The roast event it stands for.
+    #[must_use]
+    pub fn kind(self) -> EventKind {
+        match self {
+            RecipeAnchor::DryEnd => EventKind::DryEnd,
+            RecipeAnchor::FirstCrackStart => EventKind::FirstCrackStart,
+        }
+    }
+
+    /// Short label for people: "DE" or "FC".
+    #[must_use]
+    pub fn short(self) -> &'static str {
+        match self {
+            RecipeAnchor::DryEnd => "DE",
+            RecipeAnchor::FirstCrackStart => "FC",
+        }
+    }
+}
+
+/// Longest time a step may follow its event, seconds.
+pub const MAX_EVENT_OFFSET_S: f64 = 900.0;
 
 /// A planned actuator change, for example "air to 60 % at 160 °C".
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -200,6 +234,14 @@ mod tests {
                     actuator: Actuator::Burner,
                     value: 70.0,
                 },
+                PlannedAction {
+                    trigger: ActionTrigger::Event {
+                        event: RecipeAnchor::FirstCrackStart,
+                        offset_s: 30.0,
+                    },
+                    actuator: Actuator::Burner,
+                    value: 50.0,
+                },
             ],
             events: EventTargets {
                 dry_end: Some(EventTarget {
@@ -214,6 +256,9 @@ mod tests {
         let json = serde_json::to_value(&target).unwrap();
         assert_eq!(json["actions"][0]["trigger"]["at"], "bt");
         assert_eq!(json["actions"][0]["actuator"], "air");
+        assert_eq!(json["actions"][2]["trigger"]["at"], "event");
+        assert_eq!(json["actions"][2]["trigger"]["event"], "first_crack_start");
+        assert_eq!(json["actions"][2]["trigger"]["offset_s"], 30.0);
         assert_eq!(json["events"]["drop"]["rule"], "at_dtr");
         let back: ProfileTarget = serde_json::from_value(json).unwrap();
         assert_eq!(back, target);

@@ -46,8 +46,8 @@ pub use inventory::{
 };
 pub use maintenance::{DueReason, MaintenanceLogEntry, MaintenanceTask};
 pub use profile::{
-    ActionTrigger, DropRule, EventTarget, EventTargets, PlannedAction, Profile, ProfileTarget,
-    ProfileVersion, TargetPoint, ToleranceBand,
+    ActionTrigger, DropRule, EventTarget, EventTargets, MAX_EVENT_OFFSET_S, PlannedAction, Profile,
+    ProfileTarget, ProfileVersion, RecipeAnchor, TargetPoint, ToleranceBand,
 };
 pub use reference::{Milestone, Projection, RefPoint, ReferenceCurve, ReferenceKind, project};
 pub use roast::{

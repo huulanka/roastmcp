@@ -6,7 +6,9 @@ stop moving in a hot drum can ignite. RoastMCP's safety design starts from that.
 ## Non-negotiables
 
 1. **A person supervises every roast and can always take over.** Anything done
-   by hand wins over the AI and the autopilot, immediately.
+   by hand wins over the AI and the autopilot, immediately. A command on the
+   heat loop (burner, air, drum) also ends AI control; the smoke filter and the
+   bean cooling can be handled without ending it (ADR 0019).
 2. **Emergency stop** at any time: burner off, air up, drum keeps turning.
 3. **Burner changes by the AI in small steps only**, within a range and at a
    limited rate.
@@ -30,9 +32,10 @@ or drum movement the beans can ignite.
 
 | Situation | Reaction |
 |---|---|
-| Human command while AI/autopilot is in control | Human command applied; AI control suspended until a human resumes it |
+| Human command on burner, air or drum while AI/autopilot is in control | Human command applied; AI control suspended until a human resumes it |
+| Human command on the filter or the bean cooling while an AI is in control | Applied; the AI stays in control (the machine profile's `limits.takeover_actuators` names the actuators that end it; it must include the burner) |
 | AI command outside range / step / rate | Clamped to the limit (reported to the AI) or rejected |
-| AI lease expires (no AI activity for the lease time, default 60 s) | Autopilot stops, actuators hold, loud alert: "AI disconnected — you have control" |
+| AI lease expires (no AI activity for the lease time, default 60 s; only the AI's own commands and status calls renew it, not the recipe runner acting under it) | Recipe runner stops, actuators hold, loud alert: "AI disconnected — you have control"; before CHARGE the preheat takes its own lease back and holds on |
 | Presence confirmation missed while AI/autopilot is in control (interval default 3 min, 10 min for the preheat before CHARGE, + 30 s grace) | Safe state, alarm |
 | Critical step requested by AI/autopilot (start, DROP, step larger than the normal limit) | Waits for human confirmation |
 | DROP (detected or marked) | Burner 0 and bean cooling on, as safety-layer commands; an AI's lease ends ("handed control back"), which is not a takeover and suspends nothing |
@@ -69,10 +72,16 @@ step. The AI cannot confirm presence; only the app's UI can.
   600 s if not set). The empty drum is bounded there by the preheat's own
   limits. Anyone else, an AI that takes over included, keeps the normal
   interval and needs a confirmation within it.
+- **CHARGE marked in the app (ADR 0019):** the person who presses CHARGE is
+  demonstrably at the roaster, so it counts as a presence confirmation,
+  whether or not an AI is involved. A detected CHARGE, or one the AI marks,
+  does not.
 
 When an AI asks for control without a fresh confirmation, the request is
-refused and the app shows "I'm at the roaster" in the top bar (with an alarm
-sound) for two minutes; the AI then asks again.
+refused and the app shows "I'm at the roaster" in the top bar and sounds the
+gong at once, for two minutes; the AI then asks again. An AI may ask while
+the preheat holds: after the confirmation it holds the lease and the preheat
+keeps holding the target under that lease until CHARGE.
 
 ## Preheat
 
@@ -84,9 +93,12 @@ see above). Starting it counts as a presence confirmation and allows
 automation again. It runs at the air the roast starts with: the app fills in
 target and air from the plan (its BT and air at CHARGE), and starting sets
 that air first as the person's own command (ADR 0018). The MCP has no preheat
-tool, because starting it confirms presence. It ends at CHARGE or on any
-manual command, an air change included, and then the burner holds its value
-and the person has control. An emergency stop, a lost link or a missed
+tool, because starting it confirms presence. It ends at CHARGE or on a
+manual command on burner, air or drum, and then the burner holds its value
+and the person has control. An AI that takes over before CHARGE does not end
+it: the preheat holds under the AI's lease (and its 3 min presence interval)
+until CHARGE; if the AI releases control or its lease runs out first, the
+preheat takes its own lease back. An emergency stop, a lost link or a missed
 presence confirmation end it with the safe state. The controller
 ([ADR 0015](adr/0015-preheat-step-wait-learn.md), [ADR 0018](adr/0018-preheat-air-presence-calm-hold.md))
 heats fully, steps down once to the holding power before the target, then
@@ -99,6 +111,23 @@ target + 10 °C. What it learns about a machine is kept per air setting in
 An AI cannot mark CHARGE without a running recording (it would start one
 without beans, weight or plan); the app's CHARGE button still starts one.
 
+## Recipe runner
+
+While an AI holds the lease and the plan is a profile, the daemon sets the
+recipe's steps itself ([ADR 0019](adr/0019-handover-before-charge-and-recipe-runner.md)):
+each at its trigger (a roast time, a bean temperature after the turning point,
+or a time after dry end or first crack, marked or detected), with source
+`Autopilot`, through the safety layer and under the AI's lease and presence
+rules, logged with a reason ("recipe 1:30: burner 85 %"). Raises are paced by
+the limits below; a step nobody set within 30 s of its time passes. The one
+exception: in the first 10 s after CHARGE the autopilot may set the CHARGE
+step at once, because the cold beans take the heat (range, overheat, lease and
+presence still apply; an AI's own commands keep their limits). Without a
+lease there is no runner: the steps are cues for the person. The AI changes
+the remaining steps for this roast only (`adjust_recipe`), which is noted with
+the roast; its own `set_*` command replaces the step due on that actuator, not
+later ones.
+
 ## Limits (defaults, per machine profile)
 
 | | Human | AI / autopilot |
@@ -108,6 +137,7 @@ without beans, weight or plan); the app's CHARGE button still starts one.
 | Burner range | profile range | profile range, optionally narrowed per roast |
 | Air up (toward safe) | any | any size, any time |
 | Air down | any | ≤ 20 points per command, ≤ 1 per 5 s |
+| CHARGE step (recipe runner, first 10 s after CHARGE) | | at once, within the range |
 
 Limits only bound moves away from the safe state. Experienced roasters cut
 heat by 15-50 % at once before and during first crack; a symmetric step limit

@@ -95,6 +95,8 @@ export interface MachineInfo {
   link_loss_tested: boolean;
   /** What the machine does when the link breaks, as advice; null until tested. */
   link_lost: string | null;
+  /** A person's command on these ends AI control (ADR 0019); absent on older daemons. */
+  takeover_actuators?: Actuator[];
 }
 export interface Recording {
   id: string;
@@ -125,8 +127,13 @@ export interface TargetPoint {
   bt_c: number;
   ror_c_per_min?: number | null;
 }
-export type ActionTrigger = { at: "time"; roast_time_s: number } | { at: "bt"; bt_c: number };
-/** A recipe step: an actuator to a value at a time or temperature. */
+/** The events a recipe step can follow (ADR 0019). */
+export type RecipeAnchor = "dry_end" | "first_crack_start";
+export type ActionTrigger =
+  | { at: "time"; roast_time_s: number }
+  | { at: "bt"; bt_c: number }
+  | { at: "event"; event: RecipeAnchor; offset_s: number };
+/** A recipe step: an actuator to a value at a time, a temperature or after an event. */
 export interface PlannedAction {
   trigger: ActionTrigger;
   actuator: Actuator;
@@ -262,11 +269,39 @@ export interface ReferenceStatus {
   delta_ror?: number | null;
   events: RoastEvent[];
   /** A profile's next recipe step the machine does not have yet. */
-  next_step?: {
-    at_s: number;
-    in_s: number | null;
-    set: { actuator: Actuator; value: number; current: number | null }[];
-  } | null;
+  next_step?: NextStep | null;
+}
+/** The next recipe step(s), from the daemon's recipe runner (ADR 0019). */
+export interface NextStep {
+  /** Roast time it is due; null while its event has neither come nor is expected. */
+  at_s: number | null;
+  /** Seconds until then (negative: due since); null before CHARGE. */
+  in_s: number | null;
+  /** `at_s` is an estimate: the event or temperature has not come yet. */
+  projected?: boolean;
+  /** "1:30", "FC +0:30", "185 °C". */
+  label?: string;
+  /** The daemon sets it itself (an AI holds the lease); otherwise a cue for the person. */
+  automatic?: boolean;
+  set: { step?: number; actuator: Actuator; value: number; current: number | null }[];
+}
+export type RecipeStepState = "waiting" | "due" | "done" | "passed" | "skipped" | "replaced";
+/** A profile's recipe in the running roast (ADR 0019). */
+export interface RecipeStatus {
+  automatic: boolean;
+  adjusted: boolean;
+  steps: {
+    step: number;
+    actuator: Actuator;
+    value: number;
+    planned_value?: number;
+    trigger: ActionTrigger;
+    label: string;
+    at_s: number | null;
+    projected: boolean;
+    state: RecipeStepState;
+    adjusted: boolean;
+  }[];
 }
 export interface Projection {
   /** BT expected 60 s from now. */
@@ -312,6 +347,8 @@ export interface Snapshot {
   preheat?: Preheat | null;
   /** An AI asked for control and waits for "I'm at the roaster". */
   control_request?: string | null;
+  /** The profile's recipe in this roast (ADR 0019). */
+  recipe?: RecipeStatus | null;
 }
 export interface Note {
   t: number;

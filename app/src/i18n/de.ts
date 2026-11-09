@@ -420,6 +420,15 @@ export const de: Record<string, string> = {
     "Die Temperaturen müssen von Trocken über 1. Crack bis Drop steigen.",
   Profile: "Profil",
   "in {{t}}": "in {{t}}",
+  "about in {{t}}": "ca. in {{t}}",
   now: "jetzt",
-  Set: "Stellen",
+  Apply: "Anwenden",
+  "The AI is in control: the recipe's steps are set automatically.":
+    "Die KI steuert: Die Schritte des Rezepts werden automatisch gesetzt.",
+  "Changing it ends AI control": "Ändern beendet die KI-Steuerung",
+  "Step reference": "Bezug des Schritts",
+  "from start": "ab Start",
+  "after dry end": "nach Trocken",
+  "after first crack": "nach 1. Crack",
+  "at a temperature": "bei Temperatur",
 };

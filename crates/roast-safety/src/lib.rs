@@ -9,9 +9,12 @@
 //! 1. the machine has the actuator and is connected;
 //! 2. the emergency-stop latch;
 //! 3. overheat (the burner may not be raised above the BT limit);
-//! 4. arbitration: a human command always applies and suspends AI control;
+//! 4. arbitration: a human command always applies; on the takeover actuators
+//!    (burner, air, drum by default) it also suspends AI control, while
+//!    filter and cooling leave the AI in control (ADR 0019);
 //! 5. AI/autopilot: not suspended, valid lease, recent presence confirmation;
-//! 6. range clamp, and for AI/autopilot the step clamp and the rate limit.
+//! 6. range clamp, and for AI/autopilot the step clamp and the rate limit
+//!    (except the autopilot's CHARGE step in the first 10 s after CHARGE).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -24,6 +27,9 @@ use serde::{Deserialize, Serialize};
 
 /// The overheat state ends once BT is this far below the limit, °C.
 const OVERHEAT_HYSTERESIS_C: f64 = 5.0;
+/// For this long after CHARGE the autopilot may set the recipe's CHARGE
+/// step at once, without step and rate limits (ADR 0019), s.
+pub const CHARGE_JUMP_S: f64 = 10.0;
 
 /// Step and rate limit of AI/autopilot commands for one actuator.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -56,6 +62,8 @@ pub struct SafetyConfig {
     /// The longer presence interval while the preheat holds the lease before
     /// CHARGE (empty drum, bounded by its own limits; ADR 0018), s.
     pub preheat_presence_interval_s: f64,
+    /// Actuators on which a person's command ends AI control (ADR 0019).
+    pub takeover: BTreeSet<Actuator>,
 }
 
 impl SafetyConfig {
@@ -108,6 +116,7 @@ impl SafetyConfig {
             preheat_presence_interval_s: l
                 .preheat_presence_interval_s
                 .unwrap_or(DEFAULT_PREHEAT_PRESENCE_INTERVAL_S),
+            takeover: l.takeover_actuators().into_iter().collect(),
         }
     }
 }
@@ -192,6 +201,8 @@ pub struct Safety {
     current: ActuatorValues,
     connected: bool,
     overheat: bool,
+    /// Until when the autopilot may jump to the CHARGE step.
+    charge_jump_until: Option<f64>,
 }
 
 impl Safety {
@@ -209,6 +220,7 @@ impl Safety {
             current: ActuatorValues::new(),
             connected: false,
             overheat: false,
+            charge_jump_until: None,
         }
     }
 
@@ -291,9 +303,13 @@ impl Safety {
                     if away {
                         self.last_ai_change.insert(req.actuator, now);
                     }
-                    if let Some(l) = &mut self.lease {
-                        l.expires_at = now + self.cfg.lease_s;
-                    }
+                }
+                // The lease is the AI's sign of life: only its own commands
+                // renew it, not the autopilot acting under it (ADR 0019).
+                if req.source == CommandSource::Ai
+                    && let Some(l) = &mut self.lease
+                {
+                    l.expires_at = now + self.cfg.lease_s;
                 }
                 self.current.insert(req.actuator, value);
                 (
@@ -342,7 +358,7 @@ impl Safety {
         }
 
         if req.source == CommandSource::Human {
-            if self.lease.take().is_some() {
+            if self.cfg.takeover.contains(&a) && self.lease.take().is_some() {
                 self.ai_suspended = true;
             }
             return Ok((value, clamped_from));
@@ -367,12 +383,8 @@ impl Safety {
             // limited: cutting heat quickly is what experienced roasters do
             // before and during first crack. Only moves away from it are
             // bounded in size and rate.
-            if !self.toward_safe(a, cur, value) {
-                if self
-                    .last_ai_change
-                    .get(&a)
-                    .is_some_and(|&t| now - t < limit.min_interval_s)
-                {
+            if !self.toward_safe(a, cur, value) && !self.charge_jump(req.source, now) {
+                if self.rate_limited(a, value, req.source, now) {
                     return Err(RejectReason::RateLimited);
                 }
                 let bounded = value.clamp(cur - limit.max_step, cur + limit.max_step);
@@ -383,6 +395,48 @@ impl Safety {
             }
         }
         Ok((value, clamped_from))
+    }
+
+    /// Whether an automated request from `source` to set `a` to `value` now
+    /// would be refused as too soon after the previous move away from the
+    /// safe state. Moves toward the safe state, actuators without limits and
+    /// the autopilot's CHARGE step never are.
+    #[must_use]
+    pub fn rate_limited(&self, a: Actuator, value: f64, source: CommandSource, now: f64) -> bool {
+        if self.charge_jump(source, now) {
+            return false;
+        }
+        let Some(limit) = self.cfg.ai_limits.get(&a) else {
+            return false;
+        };
+        let away = self
+            .current
+            .get(&a)
+            .is_some_and(|&cur| !self.toward_safe(a, cur, value));
+        away && self
+            .last_ai_change
+            .get(&a)
+            .is_some_and(|&t| now - t < limit.min_interval_s)
+    }
+
+    /// Whether the autopilot may set its CHARGE step without step limits.
+    fn charge_jump(&self, source: CommandSource, now: f64) -> bool {
+        source == CommandSource::Autopilot && self.charge_jump_until.is_some_and(|u| now < u)
+    }
+
+    /// CHARGE: for the next [`CHARGE_JUMP_S`] seconds the autopilot may set
+    /// the recipe's CHARGE step at once. The cold beans take the heat; a ramp
+    /// from the holding power would take most of a minute (ADR 0019). AI
+    /// commands keep their limits, and range, overheat and presence still
+    /// apply.
+    pub fn allow_charge_jump(&mut self, now: f64) {
+        self.charge_jump_until = Some(now + CHARGE_JUMP_S);
+    }
+
+    /// Whether a person's command on `a` ends AI control.
+    #[must_use]
+    pub fn ends_ai_control(&self, a: Actuator) -> bool {
+        self.cfg.takeover.contains(&a)
     }
 
     /// Whether `cur -> value` moves toward (or stays at) the safe-state value.
@@ -605,6 +659,7 @@ mod tests {
             presence_interval_s: 180.0,
             presence_grace_s: 30.0,
             preheat_presence_interval_s: 600.0,
+            takeover: BTreeSet::from([Actuator::Burner, Actuator::Air, Actuator::Drum]),
         }
     }
 
@@ -677,6 +732,72 @@ mod tests {
         let mut s = connected();
         let (o, _) = s.request(&req(Actuator::Filter, 10.0, CommandSource::Human), 0.0);
         assert_eq!(rejected(&o), Some(RejectReason::NotSupported));
+    }
+
+    #[test]
+    fn a_persons_filter_and_cooling_leave_the_ai_in_control() {
+        let mut c = cfg();
+        c.ranges.insert(Actuator::Filter, (0.0, 100.0));
+        let mut s = Safety::new(c);
+        s.set_connected(true);
+        s.observe(&BTreeMap::from([(Actuator::Burner, 50.0)]));
+        s.confirm_presence(0.0);
+        s.acquire_lease("claude", 0.0).unwrap();
+        for a in [Actuator::Filter, Actuator::Cooling] {
+            let (o, _) = s.request(&req(a, 100.0, CommandSource::Human), 1.0);
+            assert_eq!(applied(&o), Some(100.0));
+            assert!(s.ai_in_control(1.0), "{a} ended AI control");
+            assert!(!s.ends_ai_control(a));
+        }
+        assert!(s.ends_ai_control(Actuator::Drum));
+        let (o, _) = s.request(&req(Actuator::Drum, 90.0, CommandSource::Human), 2.0);
+        assert_eq!(applied(&o), Some(90.0));
+        assert!(!s.ai_in_control(2.0));
+        assert!(s.status(2.0).ai_suspended);
+    }
+
+    #[test]
+    fn the_autopilot_may_jump_to_the_charge_step_for_10_s() {
+        let mut s = with_ai(0.0);
+        s.observe(&BTreeMap::from([(Actuator::Burner, 36.0)]));
+        // Before CHARGE: the usual 5-point steps.
+        let (o, _) = s.request(&req(Actuator::Burner, 85.0, CommandSource::Autopilot), 1.0);
+        assert_eq!(applied(&o), Some(41.0));
+        s.allow_charge_jump(2.0);
+        // The AI keeps its limits inside the window.
+        let (o, _) = s.request(&req(Actuator::Burner, 85.0, CommandSource::Ai), 7.0);
+        assert_eq!(applied(&o), Some(46.0));
+        let (o, _) = s.request(&req(Actuator::Burner, 85.0, CommandSource::Autopilot), 8.0);
+        assert_eq!(applied(&o), Some(85.0));
+        // After 10 s the limits are back.
+        s.observe(&BTreeMap::from([(Actuator::Burner, 40.0)]));
+        let (o, _) = s.request(&req(Actuator::Burner, 85.0, CommandSource::Autopilot), 20.0);
+        assert_eq!(applied(&o), Some(45.0));
+    }
+
+    #[test]
+    fn only_the_ais_own_commands_renew_its_lease() {
+        let mut s = with_ai(0.0);
+        s.request(&req(Actuator::Air, 45.0, CommandSource::Autopilot), 50.0);
+        let r = s.tick(60.0, None);
+        assert_eq!(r[0].kind, ReactionKind::LeaseExpired);
+    }
+
+    #[test]
+    fn the_rate_limit_can_be_asked_before_requesting() {
+        let mut s = with_ai(0.0);
+        let ai = CommandSource::Ai;
+        assert!(!s.rate_limited(Actuator::Burner, 55.0, ai, 0.0));
+        s.request(&req(Actuator::Burner, 55.0, ai), 0.0);
+        assert!(s.rate_limited(Actuator::Burner, 60.0, ai, 3.0));
+        assert!(
+            !s.rate_limited(Actuator::Burner, 30.0, ai, 3.0),
+            "cuts are free"
+        );
+        assert!(!s.rate_limited(Actuator::Burner, 60.0, ai, 5.0));
+        s.allow_charge_jump(3.0);
+        assert!(!s.rate_limited(Actuator::Burner, 90.0, CommandSource::Autopilot, 4.0));
+        assert!(s.rate_limited(Actuator::Burner, 90.0, ai, 4.0));
     }
 
     #[test]

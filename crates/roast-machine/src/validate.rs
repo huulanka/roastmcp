@@ -405,6 +405,23 @@ impl MachineProfile {
                 format!("{v} s is outside 180..=900 s"),
             );
         }
+        // A person's burner command always ends AI control: it is the heat.
+        if let Some(list) = &l.takeover_actuators {
+            if !list.contains(&Actuator::Burner) {
+                c.push(
+                    "limits.takeover_actuators",
+                    "must include the burner".to_owned(),
+                );
+            }
+            for a in list {
+                if !self.has_actuator(*a) {
+                    c.push(
+                        "limits.takeover_actuators",
+                        format!("the machine has no {a}"),
+                    );
+                }
+            }
+        }
     }
 
     fn check_capabilities(&self, c: &mut Checker) {
