@@ -40,9 +40,11 @@ const MAX_REJECTED_RUN: usize = 3;
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RorConfig {
-    /// Length of the least-squares window, seconds. Default 30 s: long enough
-    /// to average out thermocouple noise at 1 Hz, short enough to show burner
-    /// changes within half a minute.
+    /// Length of the least-squares window, seconds. Default 20 s, the span
+    /// Artisan users know (Cubean+ vendor settings: `DeltaSpan=20`), so curves
+    /// compare with roasts from Artisan; at 1-1.5 s sampling that is 13-20
+    /// readings, enough to average out thermocouple noise while showing a
+    /// burner change within 20 s.
     pub window_s: f64,
     /// Number of recent readings whose median is the reference for spike
     /// rejection. Default 5: tolerates up to two consecutive bad readings
@@ -57,7 +59,7 @@ pub struct RorConfig {
 impl Default for RorConfig {
     fn default() -> Self {
         RorConfig {
-            window_s: 30.0,
+            window_s: 20.0,
             median_len: 5,
             max_abs_c_per_min: 60.0,
         }
@@ -368,12 +370,14 @@ mod tests {
                 *s += gap;
             }
             let samples = linear(slope, start, &irregular_times(steps));
-            let ror = ror_series(&samples, &RorConfig::default());
+            let cfg = RorConfig::default();
+            let ror = ror_series(&samples, &cfg);
             for r in ror.iter().flatten() {
                 prop_assert!((r - slope).abs() < 1e-6, "got {} want {}", r, slope);
             }
+            // A RoR exists whenever the window holds three readings.
             prop_assert!(ror.last().copied().flatten().is_some() || samples.len() < 3
-                || samples[samples.len() - 3].t < samples[samples.len() - 1].t - 30.0);
+                || samples[samples.len() - 3].t < samples[samples.len() - 1].t - cfg.window_s);
         }
 
         #[test]
@@ -408,14 +412,21 @@ mod tests {
             size in -8.0f64..8.0,
         ) {
             // One spike within the plausibility bound slips through the
-            // median check; the least-squares fit keeps its influence small.
+            // median check; the least-squares fit bounds its influence. At
+            // 1 Hz the window holds n readings; a reading d off the line at
+            // the window's edge moves the slope by 60·d·((n-1)/2)/Sxx °C/min,
+            // Sxx = n(n²-1)/12 (about 6.2 °C/min for 8 °C over 20 s).
+            let cfg = RorConfig::default();
+            let n = cfg.window_s + 1.0;
+            let sxx = n * (n * n - 1.0) / 12.0;
+            let bound = 60.0 * 8.0 * ((n - 1.0) / 2.0) / sxx + 0.5;
             let times: Vec<f64> = (0..240).map(f64::from).collect();
             let mut samples = linear(slope, 150.0, &times);
             samples[at].bt = samples[at].bt.map(|bt| bt + size);
-            let ror = ror_series(&samples, &RorConfig::default());
+            let ror = ror_series(&samples, &cfg);
             for r in ror.iter().skip(31) {
                 let r = r.expect("RoR on a plausible ramp");
-                prop_assert!((r - slope).abs() < 3.0, "got {} want {}", r, slope);
+                prop_assert!((r - slope).abs() < bound, "got {} want {} (bound {})", r, slope, bound);
             }
         }
     }

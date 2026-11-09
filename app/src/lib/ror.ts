@@ -1,8 +1,8 @@
-/** Fallback rate of rise (°C/min) for samples that carry none: slope over a trailing window. */
+/** Fallback rate of rise (°C/min) for samples that carry none: slope over a trailing window (20 s, as the daemon and Artisan). */
 export function computeRor(
   ts: readonly number[],
   bts: readonly (number | null)[],
-  windowS = 30,
+  windowS = 20,
 ): (number | null)[] {
   const out: (number | null)[] = [];
   let j = 0;
