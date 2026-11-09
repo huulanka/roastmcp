@@ -294,6 +294,8 @@ pub struct RecordingMeta {
     lot_id: Option<uuid::Uuid>,
     /// Goal, reference roast and targets.
     plan: Option<RoastPlan>,
+    /// The batch number for the label, e.g. `BRYB-002` (not in the simulator).
+    batch_no: Option<String>,
 }
 
 /// Paths of a saved roast.
@@ -1288,6 +1290,15 @@ impl Engine {
             .filter(|t| !t.trim().is_empty())
             .or_else(|| lot.as_ref().map(|l| l.name.clone()))
             .unwrap_or_else(|| format!("Roast {}", now.format("%Y-%m-%d %H:%M")));
+        let simulated = self.machine.as_ref().is_some_and(|m| m.simulated);
+        // The simulator roasts no real coffee: no batch number.
+        let batch_no = meta
+            .batch_no
+            .map(|b| b.trim().to_owned())
+            .filter(|b| !b.is_empty() && !simulated);
+        if let (Some(l), Some(b)) = (lot.as_ref(), batch_no.as_deref()) {
+            self.inventory.adopt_batch_code(l.id, b);
+        }
         let profile = self.profile.as_ref();
         self.roast = Some(Roast {
             id: uuid::Uuid::new_v4(),
@@ -1300,6 +1311,7 @@ impl Engine {
                 roasted_weight_g: meta.roasted_weight_g,
                 // The lot's name, so files and .alog stay readable on their own.
                 beans: lot.as_ref().map(|l| l.name.clone()).or(meta.beans),
+                batch_no,
             },
             ambient: None,
             roast_degree: None,
@@ -1307,7 +1319,7 @@ impl Engine {
             plan,
             profile_version_id: None,
             experiment_id: None,
-            origin: if self.machine.as_ref().is_some_and(|m| m.simulated) {
+            origin: if simulated {
                 RoastOrigin::Simulated
             } else {
                 RoastOrigin::Recorded
@@ -1323,6 +1335,24 @@ impl Engine {
         self.audit(serde_json::json!({"type": "recording_started"}));
         self.publish_reset();
         Ok(self.snapshot())
+    }
+
+    /// A saved roast was deleted (its files are in the trash): its stock
+    /// debit is taken back, and it stops being the reference. Returns the
+    /// grams credited back.
+    pub(crate) fn roast_deleted(&mut self, id: uuid::Uuid, title: &str) -> Result<f64, Fail> {
+        let credited_g = self.inventory.remove_roast_debit(id)?;
+        if self.reference.as_ref().is_some_and(|r| r.id == id) {
+            self.reference = None;
+        }
+        self.audit(serde_json::json!({
+            "type": "roast_deleted",
+            "roast_id": id,
+            "title": title,
+            "credited_g": credited_g,
+        }));
+        self.publish(None);
+        Ok(credited_g)
     }
 
     /// Changes the running recording's details.
@@ -1342,6 +1372,12 @@ impl Engine {
         }
         if meta.beans.is_some() {
             roast.batch.beans = meta.beans;
+        }
+        if let Some(b) = meta.batch_no
+            && !matches!(roast.origin, RoastOrigin::Simulated)
+        {
+            let b = b.trim().to_owned();
+            roast.batch.batch_no = Some(b).filter(|b| !b.is_empty());
         }
         if let Some(id) = meta.lot_id {
             let lot = self.inventory.lot(id)?.lot;

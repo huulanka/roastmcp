@@ -29,3 +29,4 @@
 - [0013](adr/0013-bluetooth-rfcomm-on-macos.md) — Bluetooth roasters over a direct RFCOMM channel on macOS
 - [0014](adr/0014-green-coffee-inventory-and-roast-plan.md) — Green coffee inventory and the roast plan, the same for app and AI
 - [0015](adr/0015-preheat-step-wait-learn.md) — Preheat by step, wait and learn instead of a fast PI loop
+- [0016](adr/0016-batch-numbers-and-deleting-roasts.md) — Batch numbers per lot, and deleting roasts into a trash folder

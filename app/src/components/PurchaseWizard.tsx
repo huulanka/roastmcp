@@ -35,6 +35,7 @@ import {
   PROCESSES,
   SPECIES,
 } from "@/lib/lot.ts";
+import { cleanBatchCode, suggestBatchCode } from "@/lib/batch.ts";
 import { kg, parseNumber } from "@/lib/plan.ts";
 import { cn } from "@/lib/utils.ts";
 import { toast } from "@/state/toasts.ts";
@@ -137,6 +138,7 @@ export function PurchaseWizard({
     mode.kind === "restock" ? (mode.lotId ?? lots[0]?.id ?? "") : "",
   );
   const [name, setName] = useState(editing?.name ?? "");
+  const [code, setCode] = useState(editing?.batch_code ?? "");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(today());
   const [note, setNote] = useState("");
@@ -162,6 +164,8 @@ export function PurchaseWizard({
       ? lotId !== "" && grams !== null
       : name.trim() !== "" && grams !== null;
   const pages = restock ? 1 : STEPS.length;
+  // Country and initials, e.g. "BRYB": the start of this bean's batch numbers.
+  const suggestedCode = suggestBatchCode({ name, origin_country: form.origin_country });
 
   const save = async () => {
     if (!canSave) return;
@@ -169,7 +173,11 @@ export function PurchaseWizard({
     try {
       let lot: Lot;
       if (editing) {
-        lot = await api.patchLot(editing.id, { name: name.trim(), details: formToDetails(form) });
+        lot = await api.patchLot(editing.id, {
+          name: name.trim(),
+          details: formToDetails(form),
+          batch_code: cleanBatchCode(code),
+        });
       } else if (restock) {
         lot = await api.addPurchase(lotId, {
           grams: grams ?? 0,
@@ -179,6 +187,7 @@ export function PurchaseWizard({
       } else {
         lot = await api.addLot({
           name: name.trim(),
+          batch_code: cleanBatchCode(code) || suggestedCode,
           purchase_g: grams ?? undefined,
           purchase_date: date,
           ...formToDetails(form),
@@ -330,14 +339,27 @@ export function PurchaseWizard({
                 </>
               ) : (
                 <>
-                  <Field label={t("Name")}>
-                    <input
-                      className={inputCls}
-                      value={name}
-                      placeholder={t("e.g. GL-BR-001 Brasilien Amarelo")}
-                      onChange={(e) => setName(e.target.value)}
-                    />
-                  </Field>
+                  <div className="grid grid-cols-[minmax(0,1fr)_8rem] gap-3">
+                    <Field label={t("Name")}>
+                      <input
+                        className={inputCls}
+                        value={name}
+                        placeholder={t("e.g. GL-BR-001 Brasilien Amarelo")}
+                        onChange={(e) => setName(e.target.value)}
+                      />
+                    </Field>
+                    <Field label={t("Batch code")}>
+                      <input
+                        className={cn(inputCls, "tabular uppercase")}
+                        value={code}
+                        placeholder={suggestedCode || "BRYB"}
+                        spellCheck={false}
+                        autoComplete="off"
+                        maxLength={8}
+                        onChange={(e) => setCode(cleanBatchCode(e.target.value))}
+                      />
+                    </Field>
+                  </div>
                   {!editing && (
                     <div className="grid grid-cols-2 gap-3">
                       <Field label={t("Amount")}>

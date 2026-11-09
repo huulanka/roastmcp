@@ -71,6 +71,11 @@ pub fn to_py_value(roast: &Roast, offset: FixedOffset) -> PyValue {
             "g".into(),
         ]),
     );
+    // Artisan's batch counter: `BRYB-002` as prefix "BRYB-" and number 2.
+    if let Some((prefix, nr)) = roast.batch.batch_no.as_deref().and_then(split_batch_no) {
+        set("roastbatchprefix", encode_text(prefix).into());
+        set("roastbatchnr", PyValue::Int(nr));
+    }
     set(
         "roastertype",
         encode_text(roast.machine.as_deref().unwrap_or_default()).into(),
@@ -380,6 +385,20 @@ fn round1(v: f64) -> f64 {
     (v * 10.0).round() / 10.0
 }
 
+/// Splits a batch number into Artisan's prefix and number: the trailing
+/// digits are the number.
+fn split_batch_no(batch_no: &str) -> Option<(&str, i64)> {
+    let digits = batch_no.len()
+        - batch_no
+            .trim_end_matches(|c: char| c.is_ascii_digit())
+            .len();
+    if digits == 0 {
+        return None;
+    }
+    let (prefix, nr) = batch_no.split_at(batch_no.len() - digits);
+    nr.parse().ok().filter(|n| *n > 0).map(|n| (prefix, n))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -425,6 +444,7 @@ mod tests {
                 green_weight_g: Some(200.0),
                 roasted_weight_g: Some(170.0),
                 beans: Some("Catuaí\nline 2".into()),
+                batch_no: None,
             },
             ambient: None,
             roast_degree: None,
@@ -519,6 +539,20 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn the_batch_number_goes_into_artisans_batch_counter_and_back() {
+        let mut r = roast();
+        r.batch.batch_no = Some("BRYB-002".into());
+        let text = write_alog_with_offset(&r, FixedOffset::east_opt(0).unwrap());
+        let d = parse(&text).unwrap();
+        assert_eq!(d.get("roastbatchprefix").unwrap().to_literal(), "'BRYB-'");
+        assert_eq!(d.get("roastbatchnr").unwrap().to_literal(), "2");
+        let back = crate::read_alog(&text).unwrap();
+        assert_eq!(back.batch.batch_no.as_deref(), Some("BRYB-002"));
+        assert_eq!(split_batch_no("BR011"), Some(("BR", 11)));
+        assert_eq!(split_batch_no("BRYB"), None);
     }
 
     #[test]

@@ -1,12 +1,30 @@
 import { useEffect, useMemo, useState } from "react";
-import { Download } from "lucide-react";
+import { Copy, Download, Ellipsis, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { api, ApiError } from "@/api/client.ts";
-import type { Roast, RoastSummary } from "@/api/types.ts";
+import type { Roast, RoastGoal, RoastSummary } from "@/api/types.ts";
 import { inputCls } from "@/components/Dialogs.tsx";
 import { RoastChart } from "@/components/RoastChart.tsx";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog.tsx";
 import { Button } from "@/components/ui/button.tsx";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu.tsx";
+import { labelText } from "@/lib/batch.ts";
 import {
   EVENT_NAME,
   buildChartData,
@@ -59,10 +77,28 @@ function ReferenceButton({ id, size = "default" }: { id: string; size?: "default
   );
 }
 
-function Detail({ id, onChanged }: { id: string; onChanged: () => void }) {
+const GOAL_NAME: Record<RoastGoal, string> = {
+  espresso: "Espresso",
+  filter: "Filter",
+  omni: "Omni",
+  other: "Own",
+};
+
+function Detail({
+  id,
+  summary,
+  onChanged,
+  onDeleted,
+}: {
+  id: string;
+  summary: RoastSummary | null;
+  onChanged: () => void;
+  onDeleted: () => void;
+}) {
   const { t, i18n } = useTranslation();
   const [roast, setRoast] = useState<Roast | null>(null);
   const [weight, setWeight] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -115,19 +151,58 @@ function Detail({ id, onChanged }: { id: string; onChanged: () => void }) {
   const loss = weightLossPct(roast.batch?.green_weight_g, roast.batch?.roasted_weight_g);
   const download = (path: string, name: string, type?: string) =>
     void api.download(path, name, type).catch((e) => toast("critical", errText(e)));
+  const batchNo = summary?.batch_no ?? roast.batch?.batch_no ?? null;
+  const title = roast.title || id;
+  const when = roast.roasted_at
+    ? new Date(roast.roasted_at).toLocaleString(i18n.language, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      })
+    : "";
+  // What deleting gives back to the stock (simulator roasts never took any).
+  const credit =
+    summary?.lot_id && !summary.simulated && summary.green_weight_g ? summary.green_weight_g : null;
+  const copyLabel = () => {
+    const text = labelText(
+      {
+        batchNo,
+        beans: roast.batch?.beans ?? title,
+        goal: roast.plan?.goal ?? summary?.goal ?? null,
+        roastedAt: roast.roasted_at ?? new Date().toISOString(),
+      },
+      t,
+      (g) => t(GOAL_NAME[g]),
+    );
+    navigator.clipboard
+      .writeText(text)
+      .then(() => toast("success", t("Label copied")))
+      .catch((e) => toast("critical", errText(e)));
+  };
+  const remove = async () => {
+    try {
+      const r = await api.deleteRoast(id);
+      toast(
+        "success",
+        r.credited_g > 0
+          ? t("Deleted. {{grams}} g are back in stock.", { grams: formatNumber(r.credited_g, 0) })
+          : t("Deleted."),
+      );
+      onDeleted();
+    } catch (e) {
+      toast("critical", errText(e));
+    }
+  };
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-5">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex min-w-0 flex-col gap-1">
-          <h2 className="truncate text-xl font-semibold">{roast.title || id}</h2>
+          <h2 className="truncate text-xl font-semibold">
+            {batchNo && <span className="tabular">{batchNo} · </span>}
+            {title}
+          </h2>
           <span className="text-[13px] text-muted-foreground">
-            {roast.roasted_at
-              ? new Date(roast.roasted_at).toLocaleString(i18n.language, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                })
-              : id}
+            {when || id}
             {roast.batch?.beans ? ` · ${roast.batch.beans}` : ""}
           </span>
         </div>
@@ -142,15 +217,54 @@ function Detail({ id, onChanged }: { id: string; onChanged: () => void }) {
             <Download />
             .alog
           </Button>
-          <Button
-            variant="outline"
-            onClick={() => download(`/api/roasts/${encodeURIComponent(id)}`, `${id}.roast.json`)}
-          >
-            <Download />
-            .roast.json
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" aria-label={t("More")}>
+                <Ellipsis />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem
+                onSelect={() =>
+                  download(`/api/roasts/${encodeURIComponent(id)}`, `${id}.roast.json`)
+                }
+              >
+                <Download />
+                .roast.json
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={copyLabel}>
+                <Copy />
+                {t("Copy label")}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem danger onSelect={() => setConfirmDelete(true)}>
+                <Trash2 />
+                {t("Delete…")}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("Delete roast?")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {[batchNo, title].filter(Boolean).join(" · ")}
+              {when ? `, ${when}` : ""}.{" "}
+              {credit !== null &&
+                t("{{grams}} g go back into stock.", { grams: formatNumber(credit, 0) }) + " "}
+              {t("Its files move to the trash folder (roasts/trash) and can be restored there.")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("Cancel")}</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => void remove()}>
+              {t("Delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <div className="h-80 min-h-0 lg:h-auto lg:min-h-64 lg:flex-1">
         <RoastChart
           data={view.data}
@@ -248,6 +362,11 @@ export function ArchiveScreen() {
                     className="flex min-w-0 flex-1 cursor-pointer flex-col gap-1 rounded-lg py-3 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
                   >
                     <span className="flex items-baseline gap-2">
+                      {r.batch_no && (
+                        <span className="shrink-0 tabular text-[15px] font-medium text-muted-foreground">
+                          {r.batch_no}
+                        </span>
+                      )}
                       <span className="truncate text-[15px] font-medium">{r.title || r.id}</span>
                       {refId === r.id && (
                         <span className="shrink-0 text-[13px] text-brand-text">
@@ -279,7 +398,16 @@ export function ArchiveScreen() {
         )}
       </section>
       {sel ? (
-        <Detail id={sel} onChanged={() => setTick((n) => n + 1)} />
+        <Detail
+          key={sel}
+          id={sel}
+          summary={list?.find((r) => r.id === sel) ?? null}
+          onChanged={() => setTick((n) => n + 1)}
+          onDeleted={() => {
+            setSel(null);
+            setTick((n) => n + 1);
+          }}
+        />
       ) : (
         <div className="grid flex-1 place-items-center rounded-card border border-dashed border-border-strong p-10 text-[15px] text-muted-foreground">
           {t("Select a roast to see its curve.")}

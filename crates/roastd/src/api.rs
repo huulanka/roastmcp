@@ -65,7 +65,10 @@ pub fn router(state: AppState, ui_dir: Option<PathBuf>) -> Router {
         .route("/events/{kind}", delete(unmark_event))
         .route("/notes", post(note))
         .route("/roasts", get(roasts))
-        .route("/roasts/{id}", get(roast).patch(roast_patch))
+        .route(
+            "/roasts/{id}",
+            get(roast).patch(roast_patch).delete(roast_delete),
+        )
         .route("/roasts/{id}/alog", get(roast_alog))
         .route("/ws", get(ws))
         .route("/shutdown", post(shutdown))
@@ -395,6 +398,29 @@ fn with_ror(r: &roast_core::Roast) -> Result<serde_json::Value, Fail> {
         }
     }
     Ok(v)
+}
+
+/// Deletes a roast: its files move to the archive's `trash/` folder and its
+/// stock debit is taken back.
+async fn roast_delete(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    let (path, r) = find(&st, &id).await?;
+    let moved = tokio::task::spawn_blocking(move || files::trash(&path))
+        .await
+        .map_err(|e| Fail::internal(e.to_string()))?
+        .map_err(|e| Fail::internal(format!("the roast could not be moved to the trash: {e}")))?;
+    let (rid, title) = (r.id, r.title.clone());
+    let credited_g = st
+        .engine
+        .call(move |e| e.roast_deleted(rid, &title))
+        .await
+        .map_err(|e| engine_gone(&e))??;
+    Ok(Json(serde_json::json!({
+        "credited_g": credited_g,
+        "trash_path": moved,
+    })))
 }
 
 #[derive(Deserialize)]

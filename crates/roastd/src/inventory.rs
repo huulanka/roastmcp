@@ -37,6 +37,9 @@ pub struct NewLot {
     /// Day of that purchase; today if left out.
     #[serde(default)]
     pub purchase_date: Option<NaiveDate>,
+    /// Short code for its roasts' batch numbers.
+    #[serde(default)]
+    pub batch_code: Option<String>,
 }
 
 /// Changes to a lot. `details`, when given, replaces all offer-sheet details
@@ -50,6 +53,9 @@ pub struct LotPatch {
     pub details: Option<LotDetails>,
     #[serde(default)]
     pub archived: Option<bool>,
+    /// A new batch code; an empty one removes it.
+    #[serde(default)]
+    pub batch_code: Option<String>,
 }
 
 /// A purchase of more of a lot.
@@ -217,6 +223,7 @@ impl InventoryStore {
         let at = day_to_instant(req.purchase_date);
         let mut lot = GreenLot::new(req.name.trim(), Utc::now());
         lot.details = clean(req.details);
+        lot.batch_code = req.batch_code.as_deref().and_then(batch_code);
         lot.purchase_date = req
             .purchase_g
             .map(|_| req.purchase_date.unwrap_or_else(|| Utc::now().date_naive()));
@@ -242,6 +249,9 @@ impl InventoryStore {
             }
             if let Some(a) = p.archived {
                 lot.archived = a;
+            }
+            if let Some(c) = p.batch_code {
+                lot.batch_code = batch_code(&c);
             }
             Ok(())
         })?;
@@ -274,7 +284,11 @@ impl InventoryStore {
     /// # Errors
     /// An unknown lot or a failed save.
     pub fn sync_roast_debit(&mut self, roast: &Roast) -> Result<(), Fail> {
-        let lot = roast.green_lot_id.filter(|_| roast.charge_t().is_some());
+        // A roast in the simulator never touches the real stock.
+        let simulated = matches!(roast.origin, roast_core::RoastOrigin::Simulated);
+        let lot = roast
+            .green_lot_id
+            .filter(|_| roast.charge_t().is_some() && !simulated);
         let already = self.data.movements.iter().any(|m| {
             matches!(m.kind, roast_core::StockMovementKind::RoastDebit { roast_id } if roast_id == roast.id)
         });
@@ -284,6 +298,54 @@ impl InventoryStore {
         let grams = roast.batch.green_weight_g;
         self.change(|inv| inv.set_roast_debit(roast.id, lot, grams, roast.roasted_at))
     }
+
+    /// Takes back the debit of a deleted roast: its green coffee is in stock
+    /// again. Returns the grams credited back.
+    ///
+    /// # Errors
+    /// A failed save.
+    pub fn remove_roast_debit(&mut self, roast_id: Uuid) -> Result<f64, Fail> {
+        let grams: f64 = self
+            .data
+            .movements
+            .iter()
+            .filter(|m| matches!(m.kind, roast_core::StockMovementKind::RoastDebit { roast_id: r } if r == roast_id))
+            .map(|m| -m.grams)
+            .sum();
+        if grams == 0.0 {
+            return Ok(0.0);
+        }
+        self.change(|inv| inv.set_roast_debit(roast_id, None, None, Utc::now()))?;
+        Ok(grams)
+    }
+
+    /// Gives a lot without a batch code the code of a batch number used for
+    /// it (`BRYB-002` → `BRYB`), so the next roast continues the series.
+    pub fn adopt_batch_code(&mut self, lot: Uuid, batch_no: &str) {
+        let Some(code) = batch_no.rsplit_once('-').and_then(|(c, _)| batch_code(c)) else {
+            return;
+        };
+        if self.data.lot(lot).is_some_and(|l| l.batch_code.is_none()) {
+            let _ = self.change(|inv| {
+                if let Some(l) = inv.lot_mut(lot) {
+                    l.batch_code = Some(code);
+                }
+                Ok(())
+            });
+        }
+    }
+}
+
+/// A batch code as stored: letters and digits only, upper case, at most 8;
+/// `None` when nothing is left.
+fn batch_code(raw: &str) -> Option<String> {
+    let code: String = raw
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|c| c.to_ascii_uppercase())
+        .take(8)
+        .collect();
+    (!code.is_empty()).then_some(code)
 }
 
 /// Trims text fields and drops empty ones, so a cleared field is gone rather
@@ -350,6 +412,7 @@ mod tests {
                 green_weight_g: Some(grams),
                 roasted_weight_g: None,
                 beans: None,
+                batch_no: None,
             },
             ambient: None,
             roast_degree: None,

@@ -162,6 +162,8 @@ export interface Lot extends LotDetails {
   id: string;
   name: string;
   archived: boolean;
+  /** Start of its roasts' batch numbers, e.g. "BRYB". */
+  batch_code?: string | null;
   created_at: string;
   purchase_date?: string;
   stock_g: number;
@@ -263,6 +265,8 @@ export interface RoastSummary {
   first_crack_s?: number | null;
   dtr_pct?: number | null;
   goal?: RoastGoal | null;
+  /** Batch number on the label, e.g. "BRYB-002" (imports: from the file name). */
+  batch_no?: string | null;
 }
 export interface RoastSample {
   t: number;
@@ -281,7 +285,11 @@ export interface Roast {
     green_weight_g?: number | null;
     roasted_weight_g?: number | null;
     beans?: string | null;
+    batch_no?: string | null;
   };
+  plan?: RoastPlan | null;
+  green_lot_id?: string | null;
+  origin?: { kind: string; file_name?: string };
   samples: RoastSample[];
   events?: RoastEvent[];
   control_log?: unknown[];

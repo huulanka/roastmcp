@@ -132,18 +132,19 @@ interface Snapshot {
 | `POST /api/ai/resume` | | `Snapshot` (a person allows AI control again) |
 | `POST /api/ai/lease` | `{ holder }` | `{ holder, expires_in_s }` or 409 `{ error, reason }` |
 | `DELETE /api/ai/lease` | | `Snapshot` |
-| `POST /api/recording/start` | `{ title?, green_weight_g?, beans?, lot_id?, plan?: RoastPlan }` | `Snapshot`; the lot's name becomes `beans` (and the title if none), the plan's reference becomes the reference curve; 404 for an unknown lot |
+| `POST /api/recording/start` | `{ title?, green_weight_g?, beans?, lot_id?, plan?: RoastPlan, batch_no? }` | `Snapshot`; the lot's name becomes `beans` (and the title if none), the plan's reference becomes the reference curve; `batch_no` (e.g. `BRYB-002`) is kept with the roast, starts its file names and gives a lot without a code its code; the simulator ignores it and debits no stock; 404 for an unknown lot |
 | `PATCH /api/recording` | `{ title?, green_weight_g?, roasted_weight_g?, beans?, lot_id?, plan? }` | `Snapshot` |
 | `POST /api/recording/stop` | | `{ id, json_path, alog_path }` (saves the roast) |
 | `POST /api/events` | `{ kind, origin? }` | `RoastEvent` (marks at the latest `t`; replaces an earlier event of the same kind) |
 | `DELETE /api/events/{kind}` | | `Snapshot` (undo a mark) |
 | `POST /api/notes` | `{ text }` | `Snapshot` |
-| `GET /api/roasts` | | `{ id, title, roasted_at, total_s, drop_bt, green_weight_g, roasted_weight_g }[]`, newest first |
+| `GET /api/roasts` | | `{ id, title, roasted_at, total_s, drop_bt, green_weight_g, roasted_weight_g, batch_no, … }[]`, newest first; `batch_no` is the roast's, or for an imported Artisan file the one its name starts with (`BR011_…`) |
 | `GET /api/roasts/{id}` | | the roast (`.roast.json` content); each sample also carries `ror` (°C/min), computed as the live value |
 | `PATCH /api/roasts/{id}` | `{ title?, roasted_weight_g?, green_weight_g?, notes? }` | the roast, as `GET`; a changed green weight replaces the roast's stock debit |
+| `DELETE /api/roasts/{id}` | | `{ credited_g, trash_path }` — the files move to `roasts/trash/` (restore by moving them back), the stock debit is taken back, the action log records it |
 | `GET /api/lots?archived=true` | | `Lot[]`, newest first; archived lots only with `archived=true` |
-| `POST /api/lots` | `{ name, purchase_g?, purchase_date?, …offer-sheet fields of Lot }` | `Lot` (with its opening purchase); blank text is dropped, a honey grade kept only with `process: "honey"` |
-| `GET /api/lots/{id}` / `PATCH /api/lots/{id}` | patch: `{ name?, archived?, details? }`; `details` (all offer-sheet fields) replaces the lot's details whole | `Lot` |
+| `POST /api/lots` | `{ name, purchase_g?, purchase_date?, batch_code?, …offer-sheet fields of Lot }` | `Lot` (with its opening purchase); blank text is dropped, a honey grade kept only with `process: "honey"`; `batch_code` keeps letters and digits, upper case, at most 8 |
+| `GET /api/lots/{id}` / `PATCH /api/lots/{id}` | patch: `{ name?, archived?, details?, batch_code? }`; `details` (all offer-sheet fields) replaces the lot's details whole; an empty `batch_code` removes it | `Lot` |
 | `GET /api/lots/{id}/movements` | | `StockMovement[]`, newest first |
 | `POST /api/lots/{id}/purchases` | `{ grams, date?, note? }` | `Lot` |
 | `POST /api/lots/{id}/adjustments` | `{ grams /* signed */, note? }` | `Lot` |

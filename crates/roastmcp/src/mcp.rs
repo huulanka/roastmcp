@@ -207,6 +207,7 @@ fn tools() -> Value {
             "reference": {"type": "string", "description": "Id of a saved roast to follow (see list_roasts); its curve becomes the plan line."},
             "drop_bt_c": num("Bean temperature to drop at, °C."),
             "dtr_pct": num("Development time ratio to drop at, percent."),
+            "batch_no": {"type": "string", "description": "Batch number for the bag's label, the lot's code and its next running number, e.g. BRYB-002 (list_roasts shows the numbers used). Ignored in the simulator."},
             "title": {"type": "string", "description": "Default: the lot's name."}}}},
         {"name": "set_reference", "description": "Shows a saved roast (id from list_roasts) as the reference curve behind the live roast, or clears it (id omitted). The person sees it in the app.",
          "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}}}
@@ -387,6 +388,7 @@ fn call_tool(d: &mut Daemon, name: &str, args: &Value) -> anyhow::Result<Value> 
                     "title": arg_s("title"),
                     "lot_id": lot,
                     "green_weight_g": arg_f("green_weight_g"),
+                    "batch_no": arg_s("batch_no"),
                     "plan": plan,
                 })),
             )

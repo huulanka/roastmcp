@@ -10,6 +10,8 @@ use chrono::{DateTime, Utc};
 use roast_core::{EventKind, ROAST_FILE_SCHEMA_VERSION, Roast};
 use serde::{Deserialize, Serialize};
 
+/// Folder inside the roasts folder that deleted roasts move to.
+pub const TRASH_DIR: &str = "trash";
 const AUTOSAVE_NAME: &str = ".recording.roast.json";
 const JSON_EXT: &str = ".roast.json";
 
@@ -42,6 +44,9 @@ pub struct Summary {
     /// Development time ratio at the drop, percent.
     dtr_pct: Option<f64>,
     goal: Option<roast_core::RoastGoal>,
+    /// The batch number on the bag's label: the roast's own, or for an
+    /// imported Artisan file the one its name starts with (`BR011_…`).
+    batch_no: Option<String>,
 }
 
 /// Opens a file for appending, creating it and its directory.
@@ -83,10 +88,68 @@ fn slug(title: &str) -> String {
     s.chars().take(60).collect()
 }
 
-/// The base name (without extension) for a new roast file.
+/// The base name (without extension) for a new roast file; it starts with
+/// the batch number when the roast has one, as the roaster names files.
 fn base_name(roast: &Roast) -> String {
     let local = roast.roasted_at.with_timezone(&chrono::Local);
-    format!("{}_{}", local.format("%Y-%m-%d_%H%M"), slug(&roast.title))
+    let base = format!("{}_{}", local.format("%Y-%m-%d_%H%M"), slug(&roast.title));
+    match roast.batch.batch_no.as_deref().map(slug) {
+        Some(b) if !b.is_empty() => format!("{}_{base}", b.to_uppercase()),
+        _ => base,
+    }
+}
+
+/// The batch number a file name starts with, as in `BR011_yellow_bourbon.alog`
+/// or `BRYB-002_…`: two to six letters, an optional dash, one to four digits.
+fn batch_no_of_file_name(name: &str) -> Option<String> {
+    let head = name.split(['_', ' ', '.']).next()?;
+    let letters = head.chars().take_while(char::is_ascii_alphabetic).count();
+    let rest = head[letters..]
+        .strip_prefix('-')
+        .unwrap_or(&head[letters..]);
+    let digits_ok = (1..=4).contains(&rest.len()) && rest.chars().all(|c| c.is_ascii_digit());
+    ((2..=6).contains(&letters) && digits_ok).then(|| head.to_ascii_uppercase())
+}
+
+/// The batch number of a roast for the archive.
+fn batch_no(roast: &Roast) -> Option<String> {
+    roast
+        .batch
+        .batch_no
+        .clone()
+        .or_else(|| match &roast.origin {
+            roast_core::RoastOrigin::ImportedAlog { file_name, .. } => {
+                batch_no_of_file_name(file_name)
+            }
+            _ => None,
+        })
+}
+
+/// Moves a roast's files (`.roast.json` and `.alog`) into `trash/` beside
+/// them: out of the archive, but not gone. Returns the new `.roast.json` path.
+pub fn trash(json: &Path) -> io::Result<PathBuf> {
+    let dir = json
+        .parent()
+        .ok_or_else(|| io::Error::other("a roast file without a folder"))?
+        .join(TRASH_DIR);
+    fs::create_dir_all(&dir)?;
+    let alog = alog_path(json);
+    let name = json
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| io::Error::other("a roast file name that is not text"))?;
+    let stem = name.trim_end_matches(JSON_EXT);
+    let mut target = dir.join(name);
+    let mut n = 2;
+    while target.exists() {
+        target = dir.join(format!("{stem}-{n}{JSON_EXT}"));
+        n += 1;
+    }
+    fs::rename(json, &target)?;
+    if alog.exists() {
+        fs::rename(&alog, alog_path(&target))?;
+    }
+    Ok(target)
 }
 
 /// Saves a roast as `.roast.json` and `.alog`; returns both paths.
@@ -246,6 +309,7 @@ pub fn summary(roast: &Roast) -> Summary {
         first_crack_s,
         dtr_pct,
         goal: roast.plan.as_ref().and_then(|p| p.goal),
+        batch_no: batch_no(roast),
     }
 }
 
@@ -259,6 +323,55 @@ mod tests {
             slug("CR002 Milenio / Black-Honey!"),
             "cr002-milenio-black-honey"
         );
+    }
+
+    #[test]
+    fn batch_numbers_come_from_artisan_file_names() {
+        let b = |n| batch_no_of_file_name(n);
+        assert_eq!(
+            b("BR011_yellow_bourbon_natural_espresso_FullCity.alog").as_deref(),
+            Some("BR011")
+        );
+        assert_eq!(
+            b("CR002_milenio_blackhoney_espresso_26-11-08_1150.alog").as_deref(),
+            Some("CR002")
+        );
+        assert_eq!(
+            b("BRYB-002_2026-11-09_1904_x.alog").as_deref(),
+            Some("BRYB-002")
+        );
+        assert_eq!(b("2026-11-08_1150_roaster-scope.alog"), None);
+        assert_eq!(b("Roast.alog"), None);
+        assert_eq!(b("espresso_1.alog"), None);
+    }
+
+    #[test]
+    fn a_trashed_roast_leaves_the_archive_but_keeps_its_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut r: Roast = serde_json::from_value(serde_json::json!({
+            "id": uuid::Uuid::new_v4(),
+            "title": "Yellow Bourbon",
+            "roasted_at": "2026-11-09T18:04:00Z",
+            "sampling_interval_s": 1.5,
+            "batch": {},
+            "origin": {"kind": "recorded"},
+            "samples": [],
+            "events": [],
+            "control_log": [],
+            "notes": [],
+        }))
+        .unwrap();
+        r.batch.batch_no = Some("BRYB-002".into());
+        let (json, alog) = save(dir.path(), &r).unwrap();
+        let name = json.file_name().unwrap().to_str().unwrap().to_owned();
+        assert!(name.starts_with("BRYB-002_2026-11-09_"), "{name}");
+        assert_eq!(find(dir.path(), r.id).unwrap().0, json);
+
+        let moved = trash(&json).unwrap();
+        assert!(find(dir.path(), r.id).is_none());
+        assert!(!json.exists() && !alog.exists());
+        assert!(moved.exists() && alog_path(&moved).exists());
+        assert_eq!(read(&moved).unwrap().id, r.id);
     }
 
     #[test]
