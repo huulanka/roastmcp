@@ -1,3 +1,10 @@
+# [1.10.0](https://github.com/huulanka/roastmcp/compare/v1.9.1...v1.10.0) (2026-11-09)
+
+
+### Features
+
+* **app:** the roast curve runs from CHARGE to DROP, with the whole rate of rise ([#28](https://github.com/huulanka/roastmcp/issues/28)) ([4f95223](https://github.com/huulanka/roastmcp/commit/4f95223d960fc92a69bec6e5d94fdfe40908c54a))
+
 ## [1.9.1](https://github.com/huulanka/roastmcp/compare/v1.9.0...v1.9.1) (2026-11-09)
 
 
