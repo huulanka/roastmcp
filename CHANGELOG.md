@@ -1,3 +1,10 @@
+# [1.16.0](https://github.com/huulanka/roastmcp/compare/v1.15.0...v1.16.0) (2026-11-09)
+
+
+### Features
+
+* the AI takes over before CHARGE and the daemon runs the recipe (ADR 0019) ([#38](https://github.com/huulanka/roastmcp/issues/38)) ([2af48d6](https://github.com/huulanka/roastmcp/commit/2af48d62539f75a8001fd01609accaa73daa0c3e))
+
 # [1.15.0](https://github.com/huulanka/roastmcp/compare/v1.14.0...v1.15.0) (2026-11-09)
 
 
