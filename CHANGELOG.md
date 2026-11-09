@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/huulanka/roastmcp/compare/v1.5.0...v1.6.0) (2026-11-09)
+
+
+### Features
+
+* green coffee inventory and roast plan in the daemon and over MCP ([#23](https://github.com/huulanka/roastmcp/issues/23)) ([2ac1f56](https://github.com/huulanka/roastmcp/commit/2ac1f565c0987376c14d5274d73a13cebbfa00b0))
+
 # [1.5.0](https://github.com/huulanka/roastmcp/compare/v1.4.0...v1.5.0) (2026-11-09)
 
 
