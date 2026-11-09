@@ -962,14 +962,39 @@ impl Engine {
                 self.points.drain(..cut);
             }
         }
+        let mut dropped = false;
         for e in found {
-            if e.kind == EventKind::Charge && self.state == RoastState::Recording {
-                self.state = RoastState::Charged;
+            match e.kind {
+                EventKind::Charge if self.state == RoastState::Recording => {
+                    self.state = RoastState::Charged;
+                    self.alarm("info", "auto_event", "CHARGE detected.".to_owned());
+                }
+                EventKind::Drop => {
+                    self.state = RoastState::Dropped;
+                    dropped = true;
+                }
+                _ => {}
+            }
+            // As for a marked event (the simulator takes its beans out at DROP).
+            if let Some(d) = &self.driver {
+                let _ = d.send(DriverCmd::Event(e.kind));
             }
             self.audit(serde_json::json!({"type": "event", "event": e}));
         }
         self.points.push(point.clone());
         self.publish(Some(&point));
+        if dropped {
+            // Same as the DROP button: the roast is saved at once. The event
+            // is dated at the peak, where the beans left the drum.
+            self.alarm(
+                "info",
+                "auto_event",
+                "DROP detected: the roast is saved.".to_owned(),
+            );
+            if let Err(e) = self.stop_recording() {
+                tracing::warn!("saving after the detected DROP failed: {}", e.error);
+            }
+        }
     }
 
     fn on_tick(&mut self) {
