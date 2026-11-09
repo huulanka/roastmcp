@@ -115,9 +115,11 @@ latched the safe state.
 
 1. Preheat as usual (for example burner 70 %, air 30 %) until the BT you
    normally charge at — or use **Aufheizen** with a target temperature: it
-   raises the burner in bounded steps, holds the target, asks for presence
-   every 3 minutes and ends at CHARGE or as soon as you change anything. Watch
-   the first run closely; its control gains are untested on the machine.
+   heats fully, steps down once shortly before the target and then corrects
+   only rarely (it waits 45 s after each change and leaves ±2 °C alone),
+   asks for presence every 3 minutes and ends at CHARGE or as soon as you
+   change anything. Set the air first (for example 30 %); it learns the
+   machine per air setting and gets better with every run.
    Optionally pick an earlier roast as the reference (archive → "Als
    Referenz"; your imported Artisan roasts are there).
 2. Record your green coffee once under **Lager** (Inventory, top tab):

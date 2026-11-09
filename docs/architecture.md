@@ -192,6 +192,15 @@ Initial tools:
 Prompts: `debrief_roast`, `plan_next_roast`. Every AI tool call renews the AI
 lease; read-only tools never require one.
 
+## Preheat
+
+`roast-control`'s `PreheatController` brings the empty drum to a target by
+step, wait and learn ([ADR 0015](adr/0015-preheat-step-wait-learn.md)): full
+heat, one step to the holding power before the target, then rare corrections
+after a settle time, outside a dead band. The daemon feeds it each reading and
+sends its decisions as source `Autopilot`; what it learns per machine and air
+setting is kept in `control.json`.
+
 ## Autopilot
 
 Two levels ([ADR 0004](adr/0004-ai-sets-targets-controller-executes.md)):

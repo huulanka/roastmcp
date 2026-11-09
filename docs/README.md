@@ -10,6 +10,7 @@
 ## Research
 
 - **[Artisan and the Cubean+](research/artisan-and-cubean-plus.md)** — How the first machine talks, and why RoastMCP owns the connection
+- **[Preheat control](research/preheat-control.md)** — The Cubean+'s first real preheat, a model of the empty drum, and Artisan's PID
 
 ## Architecture Decision Records
 
@@ -27,3 +28,4 @@
 - [0012](adr/0012-guided-roast-flow.md) — A guided roast as three short steps around one live screen, not a modal wizard
 - [0013](adr/0013-bluetooth-rfcomm-on-macos.md) — Bluetooth roasters over a direct RFCOMM channel on macOS
 - [0014](adr/0014-green-coffee-inventory-and-roast-plan.md) — Green coffee inventory and the roast plan, the same for app and AI
+- [0015](adr/0015-preheat-step-wait-learn.md) — Preheat by step, wait and learn instead of a fast PI loop
