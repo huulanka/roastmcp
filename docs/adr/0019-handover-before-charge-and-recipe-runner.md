@@ -1,7 +1,7 @@
 # ADR 0019: The AI takes over before CHARGE, the daemon runs the recipe, and filter and cooling stay free
 
 ## Status
-Proposed (2026-11-09), for review. Amends [ADR 0004](0004-ai-sets-targets-controller-executes.md)
+Accepted (2026-11-09), with the three open points as proposed below. Amends [ADR 0004](0004-ai-sets-targets-controller-executes.md)
 (the AI sets targets, a controller executes them), [ADR 0017](0017-profile-designer.md)
 (recipe cues) and the presence and takeover rules in [safety.md](../safety.md).
 

@@ -82,7 +82,8 @@ interface ActuatorSpec { actuator: Actuator; min: number; max: number; step: num
 interface MachineInfo { id: string; name: string; simulated: boolean; port: string | null;
   actuators: ActuatorSpec[]; switches: Actuator[]; has_et: boolean;
   sampling_interval_s: number; max_bt_c: number; link_loss_tested: boolean;
-  link_lost: string | null }  // the profile's advice, once tested
+  link_lost: string | null;   // the profile's advice, once tested
+  takeover_actuators: Actuator[] }  // a person's command on these ends AI control (ADR 0019)
 
 interface Snapshot {
   version: string;
@@ -112,10 +113,20 @@ interface Snapshot {
     delta_ror: number | null;            // ror - ror_now
     events: RoastEvent[];                // t relative to the reference's CHARGE
     next_step?: {                        // a profile's next recipe step not yet applied
-      at_s: number;                      // roast time it is planned for
+      at_s: number | null;               // roast time it is due; null while its event is neither come nor expected
       in_s: number | null;               // seconds until then (negative: due since; null before CHARGE)
-      set: { actuator: Actuator; value: number; current: number | null }[];
-    };                                   // due for 30 s after its time, like the app's cue
+      projected: boolean;                // at_s is an estimate (projection or plan) for a step after an event or at a BT
+      label: string;                     // "1:30", "FC +0:30", "185 °C"
+      automatic: boolean;                // the daemon sets it (an AI holds the lease); else a cue for the person
+      set: { step: number; actuator: Actuator; value: number; current: number | null }[];
+    };                                   // due for 30 s after its time unless the runner is setting it
+  };
+  recipe: null | {                       // a profile plan's recipe in this roast (ADR 0019)
+    automatic: boolean; adjusted: boolean;
+    steps: { step: number; actuator: Actuator; value: number; planned_value?: number;
+             trigger: ActionTrigger; label: string; at_s: number | null; projected: boolean;
+             state: "waiting" | "due" | "done" | "passed" | "skipped" | "replaced";
+             adjusted: boolean }[];
   };
   projection: null | {                   // between CHARGE and DROP, once the RoR is positive
     bt_60s: number | null;
@@ -137,6 +148,7 @@ interface Snapshot {
 | `POST /api/disconnect` | | `Snapshot` |
 | `POST /api/command` | `{ actuator, value, source?: "human" \| "ai", reason? }` | `{ outcome: CommandOutcome }` (source defaults to `human`) |
 | `POST /api/emergency-stop` | `{ reason? }` | `Snapshot` |
+| `POST /api/recipe/adjust` | `{ changes: { step, shift_s?, value?, skip? }[], reason?, origin?: "human" \| "ai" }` | `Snapshot`; changes the running roast's recipe only, all or none (400 names the step that does not fit); noted with the roast |
 | `POST /api/emergency-stop/reset` | | `Snapshot` |
 | `POST /api/presence` | | `Snapshot` (a person confirmed being at the roaster) |
 | `POST /api/ai/resume` | | `Snapshot` (a person allows AI control again) |
@@ -191,9 +203,11 @@ The server sends JSON text messages:
 `roastmcp mcp` is an MCP server on stdio that forwards to this API using
 `daemon.json`. Tools: `get_status`, `get_curve`, `wait` (up to 30 s, then a
 compact status: roast time, BT, RoR, actuators, the plan's deviation and next
-recipe step, the projection, lease and presence, and only the events and
-alarms new since the last `get_status` or `wait`; `full: true` returns the
-whole status), `mark_event`, `add_note`, `request_control`, `release_control`,
+recipe step, the recipe's open steps, the projection, lease and presence,
+and only the events and alarms new since the last `get_status` or `wait`;
+`full: true` returns the whole status), `mark_event`, `add_note`,
+`request_control` (also while the preheat holds, ADR 0019), `release_control`,
+`adjust_recipe` (move, change or skip steps of the running roast's recipe),
 `set_burner`, `set_air`, `set_drum`, `set_filter`, `set_cooling` (on/off),
 `emergency_stop`, `list_roasts`,
 `get_roast`, `set_reference` (a roast or a profile), the inventory and start

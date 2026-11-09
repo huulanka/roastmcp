@@ -97,9 +97,10 @@ decides, in this order:
 
 1. **Latched states.** After an emergency stop, only `Human` and `Safety`
    commands are accepted until a human resets.
-2. **Arbitration.** `Human` and `Safety` always win. A `Human` command while the
-   AI or the autopilot is in control suspends AI control until a human resumes
-   it.
+2. **Arbitration.** `Human` and `Safety` always win. A `Human` command on
+   burner, air or drum while the AI or the autopilot is in control suspends AI
+   control until a human resumes it; on the filter or the bean cooling it does
+   not (the machine profile's `limits.takeover_actuators`, ADR 0019).
 3. **Limits.** Range per actuator; maximum step and maximum rate of change,
    with tighter limits for `Ai` and `Autopilot` than for `Human`. A request
    beyond the step limit is clamped, not rejected, and the clamp is reported.
@@ -210,7 +211,19 @@ target curve, dry end / first crack / drop targets and a recipe of burner and
 air steps, kept in `profiles.json`. The app's designer starts one from a roast
 and warps its curve when a milestone moves; a roast that follows a version
 shows its curve as the plan line, and the app announces the next recipe step
-for the person to set.
+for the person to set. A step comes at a roast time, at a bean temperature
+after the turning point, or a time after dry end or first crack.
+
+## Recipe runner
+
+While an AI holds the lease and the plan is a profile, `roast-control`'s
+`RecipeRun` follows the recipe ([ADR 0019](adr/0019-handover-before-charge-and-recipe-runner.md)):
+the daemon feeds it each reading from CHARGE on, and sets due steps with
+source `Autopilot`, paced by the safety layer's limits (the CHARGE step may
+jump in the first 10 s). The AI judges and adjusts the remaining steps for
+the roast (`adjust_recipe`); without a lease the steps are cues for the
+person. An AI may take over while the preheat holds; the preheat then holds
+under its lease until CHARGE.
 
 ## Autopilot
 

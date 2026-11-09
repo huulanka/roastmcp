@@ -16,7 +16,9 @@ under guardrails — control a roast. Start with `docs/architecture.md` and
   driver's `apply` for an actuator except the safety layer, and `safe_state`
   except the safety layer and the emergency stop.
 - `Human` and `Safety` commands always win over `Ai` and `Autopilot`. A human
-  command suspends AI control.
+  command on burner, air or drum (the machine profile's
+  `limits.takeover_actuators`) suspends AI control; filter and cooling do not
+  (ADR 0019).
 - The safe state is burner 0, air high, drum running — never "everything off".
 - The emergency stop must not depend on the AI, MCP or the web view.
 - AI/autopilot control requires a valid lease and recent presence confirmation;
