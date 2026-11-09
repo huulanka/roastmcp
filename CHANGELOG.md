@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/huulanka/roastmcp/compare/v1.8.0...v1.9.0) (2026-11-09)
+
+
+### Features
+
+* **app:** green coffee inventory as its own tab, with a purchase wizard ([#26](https://github.com/huulanka/roastmcp/issues/26)) ([95fbb29](https://github.com/huulanka/roastmcp/commit/95fbb2905ba5cd2561821414bbb933986184759c))
+
 # [1.8.0](https://github.com/huulanka/roastmcp/compare/v1.7.0...v1.8.0) (2026-11-09)
 
 
