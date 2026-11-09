@@ -114,15 +114,67 @@ export interface RoastPlan {
   drop_bt_c?: number;
   dtr_pct?: number;
 }
+export type Process =
+  "washed" | "natural" | "honey" | "pulped_natural" | "semi_washed" | "wet_hulled" | "other";
+export type HoneyGrade = "white" | "yellow" | "red" | "black";
+export type Fermentation =
+  "anaerobic" | "carbonic_maceration" | "thermal_shock" | "extended" | "inoculated" | "infused";
+export type Drying = "raised_beds" | "patio" | "greenhouse" | "mechanical";
+export type Decaf =
+  "swiss_water" | "mountain_water" | "ethyl_acetate" | "co2" | "methylene_chloride";
+export type Species = "arabica" | "robusta" | "liberica" | "excelsa";
+export type Packaging = "grainpro" | "vacuum" | "jute" | "ecotact" | "other";
+export type Certification = "organic" | "fairtrade" | "rainforest_alliance";
+/** What an importer's offer sheet states about a lot (ADR 0014); all optional. */
+export interface LotDetails {
+  origin_country?: string;
+  region?: string;
+  producer?: string;
+  altitude?: { min_m: number; max_m?: number };
+  species?: Species;
+  varieties?: string[];
+  process?: Process;
+  honey?: HoneyGrade;
+  fermentation?: Fermentation[];
+  fermentation_hours?: number;
+  drying?: Drying;
+  decaf?: Decaf;
+  process_detail?: string;
+  harvest?: string;
+  arrival_date?: string;
+  grade?: string;
+  screen_size?: string;
+  moisture_pct?: number;
+  water_activity?: number;
+  density_g_per_l?: number;
+  cupping_score?: number;
+  flavor_notes?: string;
+  supplier?: string;
+  supplier_lot?: string;
+  price_per_kg?: { amount: number; currency: string };
+  packaging?: Packaging;
+  storage_location?: string;
+  certifications?: Certification[];
+  notes?: string;
+}
 /** A green coffee lot with its stock (grams; negative when more was roasted than bought). */
-export interface Lot {
+export interface Lot extends LotDetails {
   id: string;
   name: string;
   archived: boolean;
   created_at: string;
   purchase_date?: string;
   stock_g: number;
-  [detail: string]: unknown;
+}
+export interface StockMovement {
+  id: string;
+  lot_id: string;
+  at: string;
+  /** Signed grams. */
+  grams: number;
+  kind: "purchase" | "roast_debit" | "adjustment";
+  roast_id?: string;
+  note?: string;
 }
 /** The reference roast as seen from the live roast (same time since CHARGE). */
 export interface ReferenceStatus {
