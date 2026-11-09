@@ -91,7 +91,9 @@ interface Snapshot {
   connection_error: string | null;
   state: RoastState;
   recording: { id: string; title: string; started_at: string;
-               green_weight_g: number | null; beans: string | null } | null;
+               green_weight_g: number | null; beans: string | null;
+               lot_id: string | null; plan: RoastPlan | null;
+               batch_no: string | null /* never in the simulator */ } | null;
   t: number | null;                      // time of the latest point
   charge_t: number | null;
   bt: number | null; et: number | null; ror: number | null;
@@ -187,9 +189,13 @@ The server sends JSON text messages:
 ## MCP
 
 `roastmcp mcp` is an MCP server on stdio that forwards to this API using
-`daemon.json`. Tools: `get_status`, `get_curve`, `wait` (up to 30 s, then
-status), `mark_event`, `add_note`, `request_control`, `release_control`,
-`set_burner`, `set_air`, `set_drum`, `emergency_stop`, `list_roasts`,
+`daemon.json`. Tools: `get_status`, `get_curve`, `wait` (up to 30 s, then a
+compact status: roast time, BT, RoR, actuators, the plan's deviation and next
+recipe step, the projection, lease and presence, and only the events and
+alarms new since the last `get_status` or `wait`; `full: true` returns the
+whole status), `mark_event`, `add_note`, `request_control`, `release_control`,
+`set_burner`, `set_air`, `set_drum`, `set_filter`, `set_cooling` (on/off),
+`emergency_stop`, `list_roasts`,
 `get_roast`, `set_reference` (a roast or a profile), the inventory and start
 dialog of the app (ADR 0014): `list_lots`, `add_lot`, `add_purchase`,
 `start_recording` (lot by id or name, green weight, goal, reference or
@@ -201,5 +207,10 @@ the app's profile designer does: a starting curve (a saved roast via
 `from_roast`, the newest version, or a typical Cubean+ espresso roast) moved
 to the milestones given, plus the recipe, and save it through `POST
 /api/profiles` and `POST /api/profiles/{id}/versions`. `mark_event charge`
-from the AI needs a running recording. Presence can only be confirmed in the
+from the AI needs a running recording; `start_recording` answers with the
+status, whose `recording.batch_no` confirms the batch number. A marked event
+replaces a detected one of the same kind (alarm `event_replaced`); phases,
+DTR and the plan use the marked one. At DROP the daemon turns the burner
+off, switches the bean cooling on and ends the AI's lease (see
+[safety.md](safety.md)). Presence can only be confirmed in the
 app, and there is no preheat tool, because starting it confirms presence.

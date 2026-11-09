@@ -153,3 +153,23 @@ safer than a faster path for one of them.
   start/stop icon button like the burner's −/+ (the column has no room for a
   second row without scrolling at 1280×800). The plan fills in target and
   air; the status then reads "per plan".
+
+## On the machine (2026-11-09 evening)
+The acceptance run ([research](../research/preheat-control.md#the-third-real-preheat-air-20--adr-0018-acceptance))
+kept air 20 %, stepped once to 53 %, peaked at 203.2 °C and needed one
+presence confirmation before the hold, but made 4 changes in the first 5
+min of holding: it cut every 45 s (the settle time) while the curve was
+already turning, and once cut below the band although the curve was rising
+back into it. Two rules were added to the hold:
+
+- **A second correction in the same direction waits 90 s** after the last
+  change (`repeat_after_s`): the machine needs about that long to show a
+  change's full effect. A gross miss (more than 8 °C predicted) still acts
+  after 20 s.
+- **No correction while the rate of rise already carries the temperature
+  back towards the target** at 1 °C/min or more (`returning_ror`).
+
+In the test model this gives 2 changes in the first 5 min of holding at the
+estimate (peak 203.5 °C), 1–3 for machines 30 % weaker or 20–40 % stronger
+and with 10 s more delay (peaks 202.1–205.6 °C), and never below 198 °C.
+The machine has since learned 35.9 % for 200 °C at air 20 %.

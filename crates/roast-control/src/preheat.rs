@@ -37,6 +37,14 @@ pub struct PreheatTuning {
     pub min_step: f64,
     /// Largest single correction while holding, burner %.
     pub max_step: f64,
+    /// While holding, a second correction in the same direction waits this
+    /// long after the last change, s: the time a burner change takes to show
+    /// its full effect on the rate of rise (about 90 s on the Cubean+,
+    /// measured on 2026-11-09).
+    pub repeat_after_s: f64,
+    /// While holding, no correction while the rate of rise already carries
+    /// the temperature back towards the target at least this fast, °C/min.
+    pub returning_ror: f64,
     /// Above target + this, the burner goes off at once, °C.
     pub cut_above_c: f64,
 }
@@ -56,6 +64,8 @@ impl Default for PreheatTuning {
             max_boost: 15.0,
             min_step: 3.0,
             max_step: 10.0,
+            repeat_after_s: 90.0,
+            returning_ror: 1.0,
             cut_above_c: 10.0,
         }
     }
@@ -175,6 +185,8 @@ pub struct PreheatDecision {
 #[derive(Debug, Clone, Copy)]
 struct Change {
     t: f64,
+    /// +1 for a raise, -1 for a cut.
+    direction: f64,
     burner_before: f64,
     ror_before: Option<f64>,
     learned: bool,
@@ -248,9 +260,9 @@ impl PreheatController {
 
         self.learn_response(r);
 
+        let gross_miss = (predicted - self.target_c).abs() > tu.urgent_c;
         if let Some(c) = self.last_change {
             let since = r.t - c.t;
-            let gross_miss = (predicted - self.target_c).abs() > tu.urgent_c;
             if since < tu.settle_s && !(gross_miss && since >= tu.urgent_after_s) {
                 return None;
             }
@@ -289,6 +301,12 @@ impl PreheatController {
                     self.learn_hold(r, error);
                     return None;
                 }
+                // Already on the way back: the last change is working.
+                if r.ror
+                    .is_some_and(|ror| -ror * error.signum() >= tu.returning_ror)
+                {
+                    return None;
+                }
                 // Aim the rate of rise at closing the error within the horizon.
                 let wanted_ror = -error / tu.horizon_s;
                 let mut delta = self
@@ -296,6 +314,15 @@ impl PreheatController {
                     .clamp(-tu.max_step, tu.max_step);
                 if delta.abs() < tu.min_step {
                     delta = tu.min_step.copysign(delta);
+                }
+                // Another step the same way only once the last one has had
+                // its full effect (ADR 0018 on the machine: four cuts in
+                // 2.5 min chased a curve that was already turning).
+                if let Some(c) = self.last_change {
+                    if c.direction == delta.signum() && r.t - c.t < tu.repeat_after_s && !gross_miss
+                    {
+                        return None;
+                    }
                 }
                 let burner = (r.burner + delta).clamp(0.0, tu.max_burner).round();
                 ((burner - r.burner).abs() >= 1.0)
@@ -307,6 +334,7 @@ impl PreheatController {
     fn change(&mut self, r: PreheatInput, burner: f64, reason: PreheatReason) -> PreheatDecision {
         self.last_change = Some(Change {
             t: r.t,
+            direction: (burner - r.burner).signum(),
             burner_before: r.burner,
             ror_before: r.ror,
             learned: false,

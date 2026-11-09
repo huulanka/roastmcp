@@ -35,6 +35,8 @@ or drum movement the beans can ignite.
 | AI lease expires (no AI activity for the lease time, default 60 s) | Autopilot stops, actuators hold, loud alert: "AI disconnected — you have control" |
 | Presence confirmation missed while AI/autopilot is in control (interval default 3 min, 10 min for the preheat before CHARGE, + 30 s grace) | Safe state, alarm |
 | Critical step requested by AI/autopilot (start, DROP, step larger than the normal limit) | Waits for human confirmation |
+| DROP (detected or marked) | Burner 0 and bean cooling on, as safety-layer commands; an AI's lease ends ("handed control back"), which is not a takeover and suspends nothing |
+| The bean temperature will reach the planned DROP (the plan's drop temperature, else the reference's) within 30 s | Bean cooling on, once per roast, so the tray turns when the beans arrive; switched off by the person, it stays off until DROP |
 | Bean temperature above the machine's limit, or implausible rise | Burner cut by the safety layer, alarm |
 | Roaster link lost / stale data | Alarm with the machine's tested advice; reconnect attempts for as long as the connection is wanted; AI control suspended |
 | Roaster connects or reconnects | Safe state set at once (a machine may start at its own defaults: the Cubean+ heats at 100 %); the person sets the heat again |

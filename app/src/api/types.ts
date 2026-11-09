@@ -105,6 +105,8 @@ export interface Recording {
   /** Absent on daemons without the inventory (ADR 0014). */
   lot_id?: string | null;
   plan?: RoastPlan | null;
+  /** The batch number for the label; never set in the simulator. */
+  batch_no?: string | null;
 }
 export type RoastGoal = "espresso" | "filter" | "omni" | "other";
 /** What a roast aims for (ADR 0014); guidance only, never read by the safety layer. */
