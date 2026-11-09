@@ -34,6 +34,26 @@ function errText(e: unknown): string {
   return e instanceof ApiError ? e.message : String(e);
 }
 
+/** A number field with its unit inside, on the right: "200 g", "210 °C". */
+export function UnitInput({
+  unit,
+  className,
+  ...props
+}: React.ComponentProps<"input"> & { unit: string }) {
+  return (
+    <span className="flex h-touch items-center gap-2 rounded-lg border border-border-strong bg-background pr-3 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/40">
+      <input
+        className={cn(
+          "h-full w-full min-w-0 rounded-lg bg-transparent pl-3 text-right tabular text-[15px] text-foreground outline-none select-text",
+          className,
+        )}
+        {...props}
+      />
+      <span className="shrink-0 text-[14px] text-muted-foreground">{unit}</span>
+    </span>
+  );
+}
+
 export function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="flex flex-col gap-2 text-[13px] text-muted-foreground">
@@ -144,83 +164,6 @@ export function ConnectDialog({
             {busy ? t("Connecting…") : t("Connect")}
           </Button>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-export function StartDialog({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-}) {
-  const { t } = useTranslation();
-  const [title, setTitle] = useState("");
-  const [weight, setWeight] = useState("");
-  const [beans, setBeans] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const start = async () => {
-    setBusy(true);
-    try {
-      const w = parseFloat(weight.replace(",", "."));
-      applySnapshot(
-        await api.startRecording({
-          title: title.trim() || undefined,
-          green_weight_g: Number.isFinite(w) ? w : undefined,
-          beans: beans.trim() || undefined,
-        }),
-      );
-      onOpenChange(false);
-      setTitle("");
-      setWeight("");
-      setBeans("");
-    } catch (e) {
-      toast("critical", errText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <form
-          className="flex flex-col gap-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void start();
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>{t("Start recording")}</DialogTitle>
-            <DialogDescription>{t("All fields are optional.")}</DialogDescription>
-          </DialogHeader>
-          <Field label={t("Title")}>
-            <input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} />
-          </Field>
-          <Field label={t("Green weight (g)")}>
-            <input
-              className={inputCls}
-              inputMode="decimal"
-              value={weight}
-              onChange={(e) => setWeight(e.target.value)}
-            />
-          </Field>
-          <Field label={t("Beans")}>
-            <input className={inputCls} value={beans} onChange={(e) => setBeans(e.target.value)} />
-          </Field>
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-              {t("Cancel")}
-            </Button>
-            <Button type="submit" disabled={busy}>
-              {t("Start")}
-            </Button>
-          </DialogFooter>
-        </form>
       </DialogContent>
     </Dialog>
   );

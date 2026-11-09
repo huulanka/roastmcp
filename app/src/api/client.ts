@@ -3,9 +3,11 @@ import type {
   CommandOutcome,
   EventKind,
   Live,
+  Lot,
   ReferenceCurve,
   Roast,
   RoastEvent,
+  RoastPlan,
   RoastSummary,
   Snapshot,
 } from "./types.ts";
@@ -111,8 +113,14 @@ export const api = {
   resetEmergencyStop: () => request<Snapshot>("POST", "/api/emergency-stop/reset"),
   presence: () => request<Snapshot>("POST", "/api/presence"),
   resumeAi: () => request<Snapshot>("POST", "/api/ai/resume"),
-  startRecording: (body: { title?: string; green_weight_g?: number; beans?: string }) =>
-    request<Snapshot>("POST", "/api/recording/start", body),
+  startRecording: (body: {
+    title?: string;
+    green_weight_g?: number;
+    beans?: string;
+    lot_id?: string;
+    plan?: RoastPlan;
+  }) => request<Snapshot>("POST", "/api/recording/start", body),
+  lots: (archived = false) => request<Lot[]>("GET", `/api/lots${archived ? "?archived=true" : ""}`),
   stopRecording: () =>
     request<{ id: string; json_path: string; alog_path: string }>("POST", "/api/recording/stop"),
   markEvent: (kind: EventKind) =>

@@ -14,7 +14,9 @@ import { ActionLog } from "@/components/ActionLog.tsx";
 import { CoachCard } from "@/components/CoachCard.tsx";
 import { Controls } from "@/components/Controls.tsx";
 import { CurveLegend, PhaseLine, RoastScaleBar, type ScaleMarker } from "@/components/Curve.tsx";
-import { SavedDialog, StartDialog, StopDialog } from "@/components/Dialogs.tsx";
+import { SavedDialog, StopDialog } from "@/components/Dialogs.tsx";
+import { PlanCard } from "@/components/PlanCard.tsx";
+import { StartDialog } from "@/components/StartDialog.tsx";
 import { EventSegments, PrimaryButton } from "@/components/EventRow.tsx";
 import { PreheatCard } from "@/components/Preheat.tsx";
 import { Readouts } from "@/components/Readouts.tsx";
@@ -29,6 +31,7 @@ import {
   developmentBand,
   mergeReference,
 } from "@/lib/chartData.ts";
+import { planProgress } from "@/lib/plan.ts";
 import { isRecording, latestAiNote, nextAction, rorAlert, rorDelta } from "@/lib/roast.ts";
 import { formatClock, formatNumber } from "@/lib/units.ts";
 import {
@@ -146,6 +149,32 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
         : t("First crack ~ {{bt}}°", { bt: formatNumber(next.bt, 0) })
     : null;
 
+  // The plan's targets (ADR 0014). Its drop temperature is the drop milestone
+  // on the chart, in place of the reference's.
+  const plan = recording ? (snapshot?.recording?.plan ?? null) : null;
+  const firstCrackT = events?.find((e) => e.kind === "first_crack_start")?.t ?? null;
+  const planProg = planProgress(plan, {
+    t: snapshot?.t ?? null,
+    bt: snapshot?.bt ?? null,
+    ror: snapshot?.ror ?? null,
+    chargeT: base,
+    firstCrackT,
+  });
+  const planDrop = planProg.drop;
+  const showDrop =
+    planDrop !== null &&
+    planDrop.remaining > 0 &&
+    (firstCrackT !== null || !next || next.kind === "drop");
+  const dropBt = showDrop ? planDrop.target : null;
+  const dropLabel = showDrop
+    ? planDrop.eta_s !== null
+      ? t("Target drop {{bt}}° ~ in {{eta}}", {
+          bt: formatNumber(planDrop.target, 0),
+          eta: formatClock(planDrop.eta_s),
+        })
+      : t("Target drop {{bt}}°", { bt: formatNumber(planDrop.target, 0) })
+    : null;
+
   const overlay = useMemo<ChartOverlay>(() => {
     const t0 = snapshot?.t ?? null;
     const bt = snapshot?.bt ?? null;
@@ -156,9 +185,28 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
     return {
       now: { x, bt },
       projected: bt60 !== null ? { x: x + 60, bt: bt60 } : null,
-      target: base !== null && next && nextLabel ? { bt: next.bt, label: nextLabel } : null,
+      target:
+        base === null
+          ? null
+          : dropBt !== null && dropLabel !== null
+            ? { bt: dropBt, label: dropLabel }
+            : // With a planned drop temperature, the reference's drop is no target.
+              next && nextLabel && !(planDrop && next.kind === "drop")
+              ? { bt: next.bt, label: nextLabel }
+              : null,
     };
-  }, [snapshot?.t, snapshot?.bt, recording, base, projection?.bt_60s, next, nextLabel]);
+  }, [
+    snapshot?.t,
+    snapshot?.bt,
+    recording,
+    base,
+    projection?.bt_60s,
+    next,
+    nextLabel,
+    dropBt,
+    dropLabel,
+    planDrop,
+  ]);
 
   const refEvents = refCurve?.events ?? refStatus?.events ?? [];
   const refDrop = refEvents.find((e) => e.kind === "drop");
@@ -258,7 +306,12 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
             label={chartLabel}
           />
         </div>
-        {base !== null && <PhaseLine phases={snapshot.phases} />}
+        {base !== null && (
+          <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+            <PhaseLine phases={snapshot.phases} />
+            {plan && <PlanCard plan={plan} progress={planProg} />}
+          </div>
+        )}
         <RoastScaleBar bt={snapshot.bt} target={scaleTarget} reference={scaleRef} />
         <EventSegments snapshot={snapshot} />
         <div className="flex flex-wrap items-center justify-end gap-3">

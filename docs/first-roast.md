@@ -120,7 +120,13 @@ latched the safe state.
    the first run closely; its control gains are untested on the machine.
    Optionally pick an earlier roast as the reference (archive → "Als
    Referenz"; your imported Artisan roasts are there).
-2. Press **Start recording** (title, green weight) and charge the beans.
+2. Press **Start recording**: pick the bean from the inventory (its stock is
+   shown and debited when the roast is saved), the green weight, the goal and,
+   as the plan, an earlier roast (by default the last one of this bean); its
+   drop temperature and DTR become the targets, editable. During the roast the
+   plan is the dashed curve, the target drop temperature the line with its
+   countdown, and the target line under the phases shows drop and DTR. Then
+   charge the beans.
    CHARGE, turning point, DRY END and DROP are detected from the bean
    temperature, as Artisan's auto CHARGE/DROP: CHARGE when it falls at least
    5 °C within 8 s from above 100 °C, DROP when, after DRY END and at least

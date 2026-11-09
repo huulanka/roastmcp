@@ -102,6 +102,27 @@ export interface Recording {
   started_at: string;
   green_weight_g: number | null;
   beans: string | null;
+  /** Absent on daemons without the inventory (ADR 0014). */
+  lot_id?: string | null;
+  plan?: RoastPlan | null;
+}
+export type RoastGoal = "espresso" | "filter" | "omni" | "other";
+/** What a roast aims for (ADR 0014); guidance only, never read by the safety layer. */
+export interface RoastPlan {
+  goal?: RoastGoal;
+  reference_id?: string;
+  drop_bt_c?: number;
+  dtr_pct?: number;
+}
+/** A green coffee lot with its stock (grams; negative when more was roasted than bought). */
+export interface Lot {
+  id: string;
+  name: string;
+  archived: boolean;
+  created_at: string;
+  purchase_date?: string;
+  stock_g: number;
+  [detail: string]: unknown;
 }
 /** The reference roast as seen from the live roast (same time since CHARGE). */
 export interface ReferenceStatus {
@@ -184,6 +205,12 @@ export interface RoastSummary {
   drop_bt: number | null;
   green_weight_g: number | null;
   roasted_weight_g: number | null;
+  simulated?: boolean;
+  beans?: string | null;
+  lot_id?: string | null;
+  first_crack_s?: number | null;
+  dtr_pct?: number | null;
+  goal?: RoastGoal | null;
 }
 export interface RoastSample {
   t: number;
