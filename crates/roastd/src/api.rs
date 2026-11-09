@@ -376,8 +376,25 @@ async fn find(st: &AppState, id: &str) -> Result<(PathBuf, roast_core::Roast), F
         .ok_or_else(|| Fail::not_found("no such roast"))
 }
 
-async fn roast(State(st): State<AppState>, Path(id): Path<String>) -> ApiResult<roast_core::Roast> {
-    find(&st, &id).await.map(|(_, r)| Json(r))
+async fn roast(State(st): State<AppState>, Path(id): Path<String>) -> ApiResult<serde_json::Value> {
+    let (_, r) = find(&st, &id).await?;
+    with_ror(&r).map(Json)
+}
+
+/// A roast as JSON with each sample's rate of rise (`ror`, °C/min, one
+/// decimal), computed exactly as the live value, so a saved curve looks like
+/// it did during the roast. The files themselves carry no RoR.
+fn with_ror(r: &roast_core::Roast) -> Result<serde_json::Value, Fail> {
+    let rors = roast_core::ror_series(&r.samples, &roast_core::RorConfig::default());
+    let mut v = serde_json::to_value(r).map_err(|e| Fail::internal(e.to_string()))?;
+    if let Some(samples) = v.get_mut("samples").and_then(|s| s.as_array_mut()) {
+        for (s, ror) in samples.iter_mut().zip(rors) {
+            if let (Some(obj), Some(ror)) = (s.as_object_mut(), ror) {
+                obj.insert("ror".into(), ((ror * 10.0).round() / 10.0).into());
+            }
+        }
+    }
+    Ok(v)
 }
 
 #[derive(Deserialize)]
@@ -392,7 +409,7 @@ async fn roast_patch(
     State(st): State<AppState>,
     Path(id): Path<String>,
     Json(p): Json<RoastPatch>,
-) -> ApiResult<roast_core::Roast> {
+) -> ApiResult<serde_json::Value> {
     let (path, mut r) = find(&st, &id).await?;
     if let Some(t) = p.title.filter(|t| !t.trim().is_empty()) {
         r.title = t;
@@ -423,7 +440,7 @@ async fn roast_patch(
             .await
             .map_err(|e| engine_gone(&e))??;
     }
-    Ok(Json(r))
+    with_ror(&r).map(Json)
 }
 
 // ------------------------------------------------------------- inventory
@@ -607,5 +624,41 @@ mod tests {
         let (status, cc) = cache_header(app, "/assets/index-abc123.js").await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(cc.as_deref(), Some("public, max-age=31536000, immutable"));
+    }
+
+    #[test]
+    fn a_saved_roast_comes_with_the_live_rate_of_rise() {
+        let r = roast_core::Roast {
+            id: uuid::Uuid::new_v4(),
+            title: "t".into(),
+            roasted_at: chrono::Utc::now(),
+            machine: None,
+            sampling_interval_s: 1.5,
+            batch: roast_core::BatchInfo::default(),
+            ambient: None,
+            roast_degree: None,
+            green_lot_id: None,
+            plan: None,
+            profile_version_id: None,
+            experiment_id: None,
+            origin: roast_core::RoastOrigin::Recorded,
+            samples: (0..40)
+                .map(|i| {
+                    let t = f64::from(i) * 1.5;
+                    roast_core::Sample::bt(t, 150.0 + 0.2 * t)
+                })
+                .collect(),
+            events: Vec::new(),
+            control_log: Vec::new(),
+            notes: Vec::new(),
+        };
+        let v = with_ror(&r).unwrap();
+        let samples = v["samples"].as_array().unwrap();
+        assert!(samples[0].get("ror").is_none(), "too few readings at first");
+        let last = samples.last().unwrap()["ror"].as_f64().unwrap();
+        assert!(
+            (last - 12.0).abs() < 0.05,
+            "0.2 °C/s is 12 °C/min, got {last}"
+        );
     }
 }

@@ -4,6 +4,7 @@ import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 
 import type { ChartBand, ChartData, ChartMarker, Series } from "@/lib/chartData.ts";
+import { rorRange, rorTicks } from "@/lib/chartData.ts";
 import { formatClock } from "@/lib/units.ts";
 import { useResolvedTheme } from "@/state/theme.ts";
 
@@ -17,8 +18,6 @@ export interface ChartOverlay {
   target: { bt: number; label: string } | null;
 }
 
-export const ROR_MIN = 0;
-export const ROR_MAX = 30;
 const PCT_MAX = 300;
 const NO_OVERLAY: ChartOverlay = { now: null, projected: null, target: null };
 
@@ -32,10 +31,7 @@ function uiFont(px: number): string {
 
 function toUPlot(d: ChartData, actuators: boolean): uPlot.AlignedData {
   const empty = () => d.x.map(() => undefined);
-  const ror = d.ror.map((v) =>
-    v === null || v === undefined ? v : Math.min(ROR_MAX + 2, Math.max(ROR_MIN - 2, v)),
-  );
-  const cols = [d.x, d.bt, ror, d.refBt ?? empty(), d.refRor ?? empty()];
+  const cols = [d.x, d.bt, d.ror, d.refBt ?? empty(), d.refRor ?? empty()];
   if (actuators) cols.push(d.burner, d.air);
   return cols as uPlot.AlignedData;
 }
@@ -130,7 +126,7 @@ export function RoastChart({
             ];
           },
         },
-        ror: { range: [ROR_MIN, ROR_MAX] },
+        ror: { range: (_u, min, max) => rorRange(min, max) },
         pct: { range: [0, PCT_MAX] },
       },
       axes: [
@@ -166,7 +162,7 @@ export function RoastChart({
           ticks: { show: false },
           gap: 10,
           size: 40,
-          splits: () => [5, 10, 15, 20, 25],
+          splits: (u) => rorTicks(u.scales.ror.min ?? 0, u.scales.ror.max ?? 30),
         },
       ],
       series,
@@ -223,6 +219,22 @@ export function RoastChart({
             const { top, height, left, width } = u.bbox;
             const dpr = uPlot.pxRatio;
             ctx.save();
+
+            // RoR zero line, when the axis shows a negative rate of rise.
+            const rorMin = u.scales.ror.min ?? 0;
+            if (rorMin < 0) {
+              const y = Math.round(u.valToPos(0, "ror", true));
+              ctx.strokeStyle = css("--chart-ror-axis");
+              ctx.globalAlpha = 0.5;
+              ctx.lineWidth = dpr;
+              ctx.setLineDash([2 * dpr, 4 * dpr]);
+              ctx.beginPath();
+              ctx.moveTo(left, y);
+              ctx.lineTo(left + width, y);
+              ctx.stroke();
+              ctx.setLineDash([]);
+              ctx.globalAlpha = 1;
+            }
 
             // Event lines with their labels above the plot.
             ctx.font = uiFont(13 * dpr);
