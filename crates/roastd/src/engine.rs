@@ -11,10 +11,12 @@ use std::sync::mpsc as std_mpsc;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
+
+use crate::inventory::InventoryStore;
 use roast_core::{
     Actuator, ActuatorValues, BatchInfo, CommandOutcome, CommandRequest, CommandSource,
     ControlLogEntry, EventDetector, EventKind, EventOrigin, Note, Phases, Projection,
-    ReferenceCurve, RejectReason, Roast, RoastEvent, RoastOrigin, RoastState, RorConfig,
+    ReferenceCurve, RejectReason, Roast, RoastEvent, RoastOrigin, RoastPlan, RoastState, RorConfig,
     RorTracker, Sample, phases, project,
 };
 use roast_driver::{RoasterDriver, SimulatedMachine, simulator_profile};
@@ -78,6 +80,8 @@ pub struct EngineOptions {
     pub roasts_dir: PathBuf,
     /// Append-only action log (JSON lines).
     pub audit_path: PathBuf,
+    /// The green coffee inventory (ADR 0014).
+    pub inventory_path: PathBuf,
     /// Simulator speed factor.
     pub sim_speed: f64,
 }
@@ -96,14 +100,14 @@ pub struct Fail {
 }
 
 impl Fail {
-    fn bad(msg: impl Into<String>) -> Self {
+    pub(crate) fn bad(msg: impl Into<String>) -> Self {
         Fail {
             status: 400,
             error: msg.into(),
             reason: None,
         }
     }
-    fn conflict(msg: impl Into<String>, reason: Option<RejectReason>) -> Self {
+    pub(crate) fn conflict(msg: impl Into<String>, reason: Option<RejectReason>) -> Self {
         Fail {
             status: 409,
             error: msg.into(),
@@ -213,6 +217,8 @@ struct RecordingInfo {
     started_at: DateTime<Utc>,
     green_weight_g: Option<f64>,
     beans: Option<String>,
+    lot_id: Option<uuid::Uuid>,
+    plan: Option<RoastPlan>,
 }
 
 /// The state shown by the UI and the AI.
@@ -284,7 +290,12 @@ pub struct RecordingMeta {
     title: Option<String>,
     green_weight_g: Option<f64>,
     roasted_weight_g: Option<f64>,
+    /// Free-text bean name, for a roast without a lot.
     beans: Option<String>,
+    /// The green coffee lot roasted (ADR 0014); its stock is debited on save.
+    lot_id: Option<uuid::Uuid>,
+    /// Goal, reference roast and targets.
+    plan: Option<RoastPlan>,
 }
 
 /// Paths of a saved roast.
@@ -344,6 +355,8 @@ pub struct Engine {
     audit: Option<File>,
     reference: Option<ReferenceCurve>,
     preheat: Option<Preheat>,
+    /// Green coffee lots and their stock (ADR 0014).
+    pub(crate) inventory: InventoryStore,
     /// Holder and time of a control request refused for a missing presence
     /// confirmation.
     control_request: Option<(String, Instant)>,
@@ -354,6 +367,7 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
     let (tx, mut rx) = mpsc::unbounded_channel();
     let (updates, _) = broadcast::channel(256);
     let audit = files::open_append(&opts.audit_path).ok();
+    let inventory = InventoryStore::load(opts.inventory_path.clone());
     let mut engine = Engine {
         safety: Safety::new(SafetyConfig::from_profile(&opts.profile)),
         opts,
@@ -385,7 +399,11 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
         audit,
         reference: None,
         preheat: None,
+        inventory,
     };
+    if let Some(problem) = engine.inventory.problem().map(str::to_owned) {
+        engine.alarm("critical", "inventory", problem);
+    }
     engine.recover_autosave();
 
     tokio::spawn(async move {
@@ -460,6 +478,8 @@ impl Engine {
                 started_at: r.roasted_at,
                 green_weight_g: r.batch.green_weight_g,
                 beans: r.batch.beans.clone(),
+                lot_id: r.green_lot_id,
+                plan: r.plan.clone(),
             }),
             t,
             charge_t,
@@ -1227,10 +1247,20 @@ impl Engine {
         if self.roast.is_some() {
             return Err(Fail::conflict("a recording is already running", None));
         }
+        let lot = match meta.lot_id {
+            Some(id) => Some(self.inventory.lot(id)?.lot),
+            None => None,
+        };
+        let plan = meta.plan.filter(|p| !p.is_empty());
+        if let Some(reference) = plan.as_ref().and_then(|p| p.reference_id) {
+            // The plan's reference roast is the plan line on the chart.
+            self.set_reference(Some(reference))?;
+        }
         let now = chrono::Local::now();
         let title = meta
             .title
             .filter(|t| !t.trim().is_empty())
+            .or_else(|| lot.as_ref().map(|l| l.name.clone()))
             .unwrap_or_else(|| format!("Roast {}", now.format("%Y-%m-%d %H:%M")));
         let profile = self.profile.as_ref();
         self.roast = Some(Roast {
@@ -1242,11 +1272,13 @@ impl Engine {
             batch: BatchInfo {
                 green_weight_g: meta.green_weight_g,
                 roasted_weight_g: meta.roasted_weight_g,
-                beans: meta.beans,
+                // The lot's name, so files and .alog stay readable on their own.
+                beans: lot.as_ref().map(|l| l.name.clone()).or(meta.beans),
             },
             ambient: None,
             roast_degree: None,
-            green_lot_id: None,
+            green_lot_id: lot.as_ref().map(|l| l.id),
+            plan,
             profile_version_id: None,
             experiment_id: None,
             origin: if self.machine.as_ref().is_some_and(|m| m.simulated) {
@@ -1285,6 +1317,24 @@ impl Engine {
         if meta.beans.is_some() {
             roast.batch.beans = meta.beans;
         }
+        if let Some(id) = meta.lot_id {
+            let lot = self.inventory.lot(id)?.lot;
+            let roast = self
+                .roast
+                .as_mut()
+                .ok_or_else(|| Fail::conflict("no recording is running", None))?;
+            roast.green_lot_id = Some(lot.id);
+            roast.batch.beans = Some(lot.name);
+        }
+        if let Some(plan) = meta.plan {
+            let reference = plan.reference_id;
+            if let Some(roast) = self.roast.as_mut() {
+                roast.plan = Some(plan).filter(|p| !p.is_empty());
+            }
+            if reference.is_some() {
+                self.set_reference(reference)?;
+            }
+        }
         self.publish(None);
         Ok(self.snapshot())
     }
@@ -1314,6 +1364,16 @@ impl Engine {
             }
         };
         files::clear_autosave(&self.opts.roasts_dir);
+        if let Err(e) = self.inventory.sync_roast_debit(&roast) {
+            self.alarm(
+                "warning",
+                "inventory",
+                format!(
+                    "The roast is saved, but its green weight was not taken off the stock: {}",
+                    e.error
+                ),
+            );
+        }
         self.audit(serde_json::json!({"type": "recording_saved", "path": json_path}));
         self.alarm("info", "saved", format!("Saved \"{}\".", roast.title));
         self.publish_reset();

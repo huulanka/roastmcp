@@ -26,3 +26,4 @@
 - [0011](adr/0011-real-logs-as-fixtures.md) — Sanitized real roast logs as test fixtures
 - [0012](adr/0012-guided-roast-flow.md) — A guided roast as three short steps around one live screen, not a modal wizard
 - [0013](adr/0013-bluetooth-rfcomm-on-macos.md) — Bluetooth roasters over a direct RFCOMM channel on macOS
+- [0014](adr/0014-green-coffee-inventory-and-roast-plan.md) — Green coffee inventory and the roast plan, the same for app and AI

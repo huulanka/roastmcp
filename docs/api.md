@@ -36,6 +36,17 @@ type CommandOutcome =
   | { outcome: "awaiting_confirmation"; confirmation_id: string };
 
 interface RoastEvent { t: number; kind: EventKind; origin: EventOrigin; bt: number | null }
+// ADR 0014: what a roast aims for; guidance only, the safety layer never reads it.
+interface RoastPlan { goal?: "espresso" | "filter" | "omni" | "other"; reference_id?: string;
+                      drop_bt_c?: number; dtr_pct?: number }
+// A green coffee lot (roast-core GreenLot) with its stock: the sum of its movements.
+interface Lot { id: string; name: string; origin_country?: string; region?: string;
+  producer?: string; variety?: string; process?: "washed" | "natural" | "honey" | "anaerobic"
+  | "wet_hulled" | "other"; process_detail?: string; supplier?: string; purchase_date?: string;
+  price_per_kg?: { amount: number; currency: string }; notes?: string; archived: boolean;
+  created_at: string; stock_g: number /* negative when more was roasted than bought */ }
+interface StockMovement { id: string; lot_id: string; at: string; grams: number /* signed */;
+  kind: "purchase" | "roast_debit" | "adjustment"; roast_id?: string; note?: string }
 interface Point { t: number; bt: number | null; et: number | null; ror: number | null;
                   actuators: Partial<Record<Actuator, number>> }
 interface Phases { drying_s: number; maillard_s: number | null; development_s: number | null;
@@ -103,15 +114,26 @@ interface Snapshot {
 | `POST /api/ai/resume` | | `Snapshot` (a person allows AI control again) |
 | `POST /api/ai/lease` | `{ holder }` | `{ holder, expires_in_s }` or 409 `{ error, reason }` |
 | `DELETE /api/ai/lease` | | `Snapshot` |
-| `POST /api/recording/start` | `{ title?, green_weight_g?, beans? }` | `Snapshot` |
-| `PATCH /api/recording` | `{ title?, green_weight_g?, roasted_weight_g?, beans? }` | `Snapshot` |
+| `POST /api/recording/start` | `{ title?, green_weight_g?, beans?, lot_id?, plan?: RoastPlan }` | `Snapshot`; the lot's name becomes `beans` (and the title if none), the plan's reference becomes the reference curve; 404 for an unknown lot |
+| `PATCH /api/recording` | `{ title?, green_weight_g?, roasted_weight_g?, beans?, lot_id?, plan? }` | `Snapshot` |
 | `POST /api/recording/stop` | | `{ id, json_path, alog_path }` (saves the roast) |
 | `POST /api/events` | `{ kind, origin? }` | `RoastEvent` (marks at the latest `t`; replaces an earlier event of the same kind) |
 | `DELETE /api/events/{kind}` | | `Snapshot` (undo a mark) |
 | `POST /api/notes` | `{ text }` | `Snapshot` |
 | `GET /api/roasts` | | `{ id, title, roasted_at, total_s, drop_bt, green_weight_g, roasted_weight_g }[]`, newest first |
 | `GET /api/roasts/{id}` | | the roast (`.roast.json` content) |
-| `PATCH /api/roasts/{id}` | `{ title?, roasted_weight_g?, notes? }` | the roast |
+| `PATCH /api/roasts/{id}` | `{ title?, roasted_weight_g?, green_weight_g?, notes? }` | the roast; a changed green weight replaces the roast's stock debit |
+| `GET /api/lots?archived=true` | | `Lot[]`, newest first; archived lots only with `archived=true` |
+| `POST /api/lots` | `{ name, purchase_g?, purchase_date?, origin_country?, region?, producer?, variety?, process?, process_detail?, supplier?, price_per_kg?, notes? }` | `Lot` (with its opening purchase) |
+| `GET /api/lots/{id}` / `PATCH /api/lots/{id}` | patch: the same fields plus `archived` | `Lot` |
+| `GET /api/lots/{id}/movements` | | `StockMovement[]`, newest first |
+| `POST /api/lots/{id}/purchases` | `{ grams, date?, note? }` | `Lot` |
+| `POST /api/lots/{id}/adjustments` | `{ grams /* signed */, note? }` | `Lot` |
+
+A roast debits its green weight from its lot once, when it is saved after
+CHARGE (not when stopped before). The inventory lives in `inventory.json`
+(previous version in `inventory.json.bak`); if the file cannot be read, every
+change is refused with 409 and nothing is overwritten.
 | `GET /api/roasts/{id}/alog` | | Artisan `.alog` text (download) |
 | `GET /api/reference` | | `null` or `{ id, title, points: {t, bt, ror}[], events }` — `t` in seconds since the reference's CHARGE |
 | `PUT /api/reference` | `{ id: string \| null }` | `Snapshot` (sets or clears the reference curve; 404 for an unknown id) |
@@ -135,5 +157,8 @@ The server sends JSON text messages:
 `roastmcp mcp` is an MCP server on stdio that forwards to this API using
 `daemon.json`. Tools: `get_status`, `get_curve`, `wait` (up to 30 s, then
 status), `mark_event`, `add_note`, `request_control`, `release_control`,
-`set_burner`, `set_air`, `set_drum`, `emergency_stop`. Presence can only be
-confirmed in the app.
+`set_burner`, `set_air`, `set_drum`, `emergency_stop`, `list_roasts`,
+`get_roast`, `set_reference`, and the inventory and start dialog of the app
+(ADR 0014): `list_lots`, `add_lot`, `add_purchase`, `start_recording` (lot by
+id or name, green weight, goal, reference, drop temperature, DTR). Presence
+can only be confirmed in the app.

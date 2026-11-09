@@ -39,7 +39,8 @@ pub use cupping::{
 pub use event::{EventKind, EventOrigin, Note, RoastEvent};
 pub use experiment::{ChangedVariable, Experiment, ExperimentStatus, VariableChange};
 pub use inventory::{
-    Altitude, GreenLot, Price, Process, StockMovement, StockMovementKind, stock_g,
+    Altitude, GreenLot, Inventory, InventoryError, Price, Process, StockMovement,
+    StockMovementKind, stock_g,
 };
 pub use maintenance::{DueReason, MaintenanceLogEntry, MaintenanceTask};
 pub use profile::{
@@ -48,7 +49,8 @@ pub use profile::{
 };
 pub use reference::{Milestone, Projection, RefPoint, ReferenceCurve, project};
 pub use roast::{
-    Ambient, BatchInfo, ColorScale, ROAST_FILE_SCHEMA_VERSION, Roast, RoastDegree, RoastOrigin,
+    Ambient, BatchInfo, ColorScale, ROAST_FILE_SCHEMA_VERSION, Roast, RoastDegree, RoastGoal,
+    RoastOrigin, RoastPlan,
 };
 pub use ror::{RorConfig, RorTracker, ror_series};
 pub use sample::Sample;

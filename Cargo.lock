@@ -1368,6 +1368,7 @@ dependencies = [
  "roast-safety",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tower-http",
  "tracing",
@@ -1386,6 +1387,7 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
  "ureq",
+ "uuid",
 ]
 
 [[package]]

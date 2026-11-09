@@ -130,6 +130,7 @@ pub(crate) fn roast() -> Roast {
         ambient: None,
         roast_degree: None,
         green_lot_id: None,
+        plan: None,
         profile_version_id: None,
         experiment_id: None,
         origin: RoastOrigin::Simulated,

@@ -6,6 +6,7 @@ pub mod api;
 mod driver_thread;
 pub mod engine;
 pub mod files;
+pub mod inventory;
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -120,6 +121,7 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
         profile,
         roasts_dir: roasts_dir.clone(),
         audit_path: opts.data_dir.join("logs").join("actions.jsonl"),
+        inventory_path: opts.data_dir.join("inventory.json"),
         sim_speed: opts.sim_speed,
     });
 

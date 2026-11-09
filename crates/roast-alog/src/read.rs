@@ -149,6 +149,7 @@ pub fn from_py_value(alog: &PyValue) -> Result<Roast, AlogError> {
         ambient: ambient(alog, to_c),
         roast_degree: roast_degree(alog),
         green_lot_id: None,
+        plan: None,
         profile_version_id: None,
         experiment_id: None,
         origin: RoastOrigin::ImportedAlog {

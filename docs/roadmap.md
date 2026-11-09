@@ -80,7 +80,9 @@ real roast is useful.
 
 ## M4: inventory, cupping, care
 
-- Green coffee inventory with automatic debiting; cupping; rest-time reminders.
+- Green coffee inventory with automatic debiting (brought forward: lots,
+  purchases and debits are in the daemon and MCP since ADR 0014; the inventory
+  view in the app follows); cupping; rest-time reminders.
 - Maintenance log and reminders; pre-roast safety checklist.
 - Backups to a chosen folder with rotation and integrity check; tested restore.
 

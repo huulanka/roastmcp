@@ -185,7 +185,9 @@ Initial tools:
 | `list_roasts` / `get_roast` / `compare_roasts` | Archive access and analysis |
 | `list_profiles` / `get_profile` / `save_profile_version` | Profile development |
 | `record_experiment` / `add_roast_note` | Hypotheses and observations |
-| `list_green_lots` / `get_cuppings` | Inventory and tasting data |
+| `list_lots` / `add_lot` / `add_purchase` | Green coffee inventory (ADR 0014) |
+| `start_recording` | The start dialog: lot, green weight, goal, reference, targets |
+| `get_cuppings` | Tasting data |
 
 Prompts: `debrief_roast`, `plan_next_roast`. Every AI tool call renews the AI
 lease; read-only tools never require one.

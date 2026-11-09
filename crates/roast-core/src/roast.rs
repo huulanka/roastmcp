@@ -27,6 +27,10 @@ pub struct Roast {
     pub roast_degree: Option<RoastDegree>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub green_lot_id: Option<Uuid>,
+    /// What the roaster aimed for (ADR 0014); guidance only, the safety layer
+    /// never reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<RoastPlan>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_version_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -121,6 +125,43 @@ pub struct RoastDegree {
     pub ground: Option<f64>,
 }
 
+/// What a roast is meant for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoastGoal {
+    Espresso,
+    Filter,
+    /// For espresso and filter alike.
+    Omni,
+    Other,
+}
+
+/// The plan of a roast: its goal, the reference roast it follows and the two
+/// targets that matter while roasting (ADR 0014). Every part is optional.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RoastPlan {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<RoastGoal>,
+    /// The saved roast whose curve is the plan line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_id: Option<Uuid>,
+    /// Bean temperature to drop at, °C.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drop_bt_c: Option<f64>,
+    /// Development time ratio to drop at: time from first crack to DROP in
+    /// percent of the time from CHARGE to DROP.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dtr_pct: Option<f64>,
+}
+
+impl RoastPlan {
+    /// Whether nothing is set.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self == &RoastPlan::default()
+    }
+}
+
 /// How a roast came into the archive.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -157,6 +198,7 @@ mod tests {
             ambient: None,
             roast_degree: None,
             green_lot_id: None,
+            plan: None,
             profile_version_id: None,
             experiment_id: None,
             origin: RoastOrigin::Recorded,
