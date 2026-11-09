@@ -4,7 +4,9 @@
 Accepted (2026-11-09). Replaces the preheat PI controller of the first desktop
 app. The same rules (a deliberate step, then a wait for the machine's lag)
 are meant for the autopilot of [ADR 0004](0004-ai-sets-targets-controller-executes.md)
-and for limits on AI commands; this ADR only builds the preheat.
+and for limits on AI commands; this ADR only builds the preheat. [ADR 0018](0018-preheat-air-presence-calm-hold.md)
+amends it after the first run on the machine (air from the plan, a calmer
+hold, a better starting estimate).
 
 ## Context
 The first preheat on the real Cubean+ (2026-11-09, empty drum, air 30 %,

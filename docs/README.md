@@ -31,3 +31,4 @@
 - [0015](adr/0015-preheat-step-wait-learn.md) — Preheat by step, wait and learn instead of a fast PI loop
 - [0016](adr/0016-batch-numbers-and-deleting-roasts.md) — Batch numbers per lot, and deleting roasts into a trash folder
 - [0017](adr/0017-profile-designer.md) — Profiles from milestones and a recipe, announced while roasting
+- [0018](adr/0018-preheat-air-presence-calm-hold.md) — Preheat at the roast's start air, a presence warning, a calmer hold
