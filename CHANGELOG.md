@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/huulanka/roastmcp/compare/v1.3.0...v1.4.0) (2026-11-09)
+
+
+### Features
+
+* compute the rate of rise over 20 s, like Artisan ([#21](https://github.com/huulanka/roastmcp/issues/21)) ([ab05fcb](https://github.com/huulanka/roastmcp/commit/ab05fcbfdacbb4b0e1ed20eaad8497b0122a7ec8))
+
 # [1.3.0](https://github.com/huulanka/roastmcp/compare/v1.2.0...v1.3.0) (2026-11-08)
 
 
