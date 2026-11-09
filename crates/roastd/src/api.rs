@@ -80,10 +80,43 @@ pub fn router(state: AppState, ui_dir: Option<PathBuf>) -> Router {
 
     let mut app = Router::new().nest("/api", api);
     if let Some(dir) = ui_dir {
-        let index = dir.join("index.html");
-        app = app.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index)));
+        app = app.merge(ui_router(dir));
     }
     app.with_state(state)
+}
+
+/// The web UI: files from `dir`, `index.html` for any other path (the app
+/// routes on the client), with cache headers.
+fn ui_router<S: Clone + Send + Sync + 'static>(dir: PathBuf) -> Router<S> {
+    let index = dir.join("index.html");
+    Router::new()
+        .fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index)))
+        .layer(middleware::from_fn(ui_cache_headers))
+}
+
+/// Cache rule for a path of the web UI. The build puts content-hashed files
+/// under `/assets/`; they never change, so they may be cached for good.
+/// Everything else (`index.html`, and the page served for any other path)
+/// must be revalidated, or the desktop app's web view keeps showing the old
+/// UI after an update.
+fn ui_cache_control(path: &str) -> &'static str {
+    if path.starts_with("/assets/") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    }
+}
+
+async fn ui_cache_headers(req: Request, next: Next) -> Response {
+    let rule = ui_cache_control(req.uri().path());
+    let mut res = next.run(req).await;
+    if res.status().is_success() || res.status() == StatusCode::NOT_MODIFIED {
+        res.headers_mut().insert(
+            header::CACHE_CONTROL,
+            header::HeaderValue::from_static(rule),
+        );
+    }
+    res
 }
 
 #[derive(Deserialize)]
@@ -537,5 +570,42 @@ impl Fail {
             error: msg.to_owned(),
             reason: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use tower::ServiceExt;
+
+    async fn cache_header(app: Router, path: &str) -> (StatusCode, Option<String>) {
+        let res = app
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let cc = res
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .map(|v| v.to_str().unwrap().to_owned());
+        (res.status(), cc)
+    }
+
+    #[tokio::test]
+    async fn the_page_is_revalidated_and_hashed_assets_are_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("index.html"), "<!doctype html>").unwrap();
+        std::fs::create_dir(dir.path().join("assets")).unwrap();
+        std::fs::write(dir.path().join("assets/index-abc123.js"), "").unwrap();
+        let app: Router = ui_router(dir.path().to_path_buf());
+
+        for path in ["/", "/index.html", "/archive"] {
+            let (status, cc) = cache_header(app.clone(), path).await;
+            assert_eq!(status, StatusCode::OK, "{path}");
+            assert_eq!(cc.as_deref(), Some("no-cache"), "{path}");
+        }
+        let (status, cc) = cache_header(app, "/assets/index-abc123.js").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(cc.as_deref(), Some("public, max-age=31536000, immutable"));
     }
 }
