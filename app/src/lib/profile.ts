@@ -1,4 +1,12 @@
-import type { Actuator, PlannedAction, ProfileTarget, Roast, TargetPoint } from "@/api/types.ts";
+import type {
+  ActionTrigger,
+  Actuator,
+  PlannedAction,
+  ProfileTarget,
+  Roast,
+  TargetPoint,
+} from "@/api/types.ts";
+import { formatClock } from "@/lib/units.ts";
 
 /**
  * The profile designer's model: a target curve shaped by milestones, and a
@@ -225,10 +233,34 @@ export function fromTarget(target: ProfileTarget): { curve: CurvePoint[]; milest
   };
 }
 
-/** Time steps first in time order, then temperature steps by temperature. */
+/** A step's trigger as the daemon names it: "1:30", "FC +0:30", "185 °C". */
+export function triggerLabel(trigger: ActionTrigger): string {
+  switch (trigger.at) {
+    case "time":
+      return formatClock(trigger.roast_time_s);
+    case "bt":
+      return `${Math.round(trigger.bt_c)} °C`;
+    case "event":
+      return `${trigger.event === "dry_end" ? "DE" : "FC"} +${formatClock(trigger.offset_s)}`;
+  }
+}
+
+/**
+ * Time steps first in time order, then temperature steps by temperature,
+ * then steps after dry end and after first crack by their offset (as the
+ * daemon sorts them).
+ */
 export function sortActions(actions: readonly PlannedAction[]): PlannedAction[] {
-  const key = (a: PlannedAction) =>
-    a.trigger.at === "time" ? a.trigger.roast_time_s : 10_000 + a.trigger.bt_c;
+  const key = (a: PlannedAction) => {
+    switch (a.trigger.at) {
+      case "time":
+        return a.trigger.roast_time_s;
+      case "bt":
+        return 10_000 + a.trigger.bt_c;
+      case "event":
+        return (a.trigger.event === "dry_end" ? 20_000 : 30_000) + a.trigger.offset_s;
+    }
+  };
   return [...actions].sort((p, q) => key(p) - key(q));
 }
 

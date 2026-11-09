@@ -44,6 +44,7 @@ import {
   sortActions,
   templateCurve,
   toTarget,
+  triggerLabel,
   turningPoint,
   warp,
 } from "@/lib/profile.ts";
@@ -574,9 +575,7 @@ function Editor({ id, onChanged }: { id: string; onChanged: () => void }) {
                     }
                   />
                 ) : (
-                  <span className="text-right tabular text-[15px]">
-                    {formatNumber(s.trigger.bt_c, 0)} °C
-                  </span>
+                  <span className="text-right tabular text-[15px]">{triggerLabel(s.trigger)}</span>
                 )}
                 <Select
                   value={s.actuator}

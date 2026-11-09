@@ -219,7 +219,9 @@ function AiStatus({ snapshot }: { snapshot: Snapshot }) {
   const { t } = useTranslation();
   const s = snapshot.safety;
   const presence = presenceView(s);
-  const asking = s.lease_holder ? null : (snapshot.control_request ?? null);
+  // While the preheat holds, an AI may ask to take over before CHARGE (ADR 0019).
+  const asking =
+    s.lease_holder && s.lease_holder !== PREHEAT_HOLDER ? null : (snapshot.control_request ?? null);
   if (asking) {
     return (
       <Button

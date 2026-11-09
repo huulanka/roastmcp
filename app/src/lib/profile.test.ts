@@ -11,8 +11,10 @@ import {
   phaseShares,
   recipeFromRoast,
   rorOf,
+  sortActions,
   templateCurve,
   toTarget,
+  triggerLabel,
   warp,
 } from "./profile.ts";
 
@@ -152,5 +154,21 @@ describe("recipe cues", () => {
     expect(nextRecipeCue(recipe, 100, { burner: 85, air: 20 })?.at).toBe(290);
     expect(nextRecipeCue(recipe, 130, { burner: 70, air: 20 })?.at).toBe(290);
     expect(nextRecipeCue(recipe, 400, { burner: 70, air: 30 })).toBeNull();
+  });
+});
+
+describe("steps after an event", () => {
+  it("are named and sorted like the daemon does", () => {
+    const fc = { at: "event", event: "first_crack_start", offset_s: 30 } as const;
+    const de = { at: "event", event: "dry_end", offset_s: 0 } as const;
+    expect(triggerLabel(fc)).toBe("FC +0:30");
+    expect(triggerLabel(de)).toBe("DE +0:00");
+    expect(triggerLabel({ at: "bt", bt_c: 185 })).toBe("185 °C");
+    const sorted = sortActions([
+      { trigger: fc, actuator: "burner", value: 60 },
+      { trigger: de, actuator: "air", value: 40 },
+      { trigger: { at: "time", roast_time_s: 90 }, actuator: "burner", value: 85 },
+    ]);
+    expect(sorted.map((s) => triggerLabel(s.trigger))).toEqual(["1:30", "DE +0:00", "FC +0:30"]);
   });
 });
