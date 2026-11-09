@@ -1,3 +1,10 @@
+# [1.14.0](https://github.com/huulanka/roastmcp/compare/v1.13.1...v1.14.0) (2026-11-09)
+
+
+### Features
+
+* a profile designer, and profiles as the plan with recipe cues ([#33](https://github.com/huulanka/roastmcp/issues/33)) ([eedb130](https://github.com/huulanka/roastmcp/commit/eedb13039451606fdc358888858e8429904a6986))
+
 ## [1.13.1](https://github.com/huulanka/roastmcp/compare/v1.13.0...v1.13.1) (2026-11-09)
 
 
