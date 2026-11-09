@@ -1,3 +1,10 @@
+## [1.13.1](https://github.com/huulanka/roastmcp/compare/v1.13.0...v1.13.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **app:** following the curve tracks the live value, not the reference's end ([#32](https://github.com/huulanka/roastmcp/issues/32)) ([ebc8d5e](https://github.com/huulanka/roastmcp/commit/ebc8d5e2ef0f5775c538dc7c4fbec71c41bf7791))
+
 # [1.13.0](https://github.com/huulanka/roastmcp/compare/v1.12.0...v1.13.0) (2026-11-09)
 
 
