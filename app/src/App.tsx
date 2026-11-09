@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { AlarmWatcher, Banners, Toasts } from "@/components/Banners.tsx";
 import { ConnectDialog } from "@/components/Dialogs.tsx";
+import { PresenceWatcher } from "@/components/PresenceWatcher.tsx";
 import { TopBar } from "@/components/TopBar.tsx";
 import type { Screen } from "@/state/helpers.ts";
 import { ArchiveScreen } from "@/screens/ArchiveScreen.tsx";
@@ -40,6 +41,7 @@ export function App() {
       )}
       <ConnectDialog open={connectOpen} onOpenChange={setConnectOpen} />
       <AlarmWatcher />
+      <PresenceWatcher />
       <SaveWatcher />
       <Toasts />
     </div>

@@ -528,6 +528,11 @@ pub struct Limits {
     /// Shortest time between two AI/autopilot air changes, seconds.
     #[serde(serialize_with = "whole_as_int")]
     pub ai_air_min_interval_s: f64,
+    /// How often a person confirms presence while the preheat runs before
+    /// CHARGE, seconds (180–900; 600 if not set). Everything else keeps the
+    /// 3 min interval (ADR 0018).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preheat_presence_interval_s: Option<f64>,
 }
 
 /// What the machine can do beyond its actuators.

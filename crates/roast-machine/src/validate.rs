@@ -395,6 +395,16 @@ impl MachineProfile {
                 c.push(field, format!("{v} s is outside 1..=600 s"));
             }
         }
+        // Never shorter than the normal 3 min, never so long that nobody
+        // looks at an unattended hot drum for a quarter of an hour.
+        if let Some(v) = l.preheat_presence_interval_s
+            && !in_range(v, 180.0, 900.0)
+        {
+            c.push(
+                "limits.preheat_presence_interval_s",
+                format!("{v} s is outside 180..=900 s"),
+            );
+        }
     }
 
     fn check_capabilities(&self, c: &mut Checker) {

@@ -203,6 +203,17 @@ export const de: Record<string, string> = {
   "max. {{bt}} °C": "max. {{bt}} °C",
   "not recording": "keine Aufzeichnung",
   off: "aus",
+  "per plan": "laut Plan",
+  "Start preheat": "Aufheizen starten",
+  "Stop preheat": "Aufheizen stoppen",
+  "% air": "% Luft",
+  "Air while preheating: the air the roast starts with":
+    "Luft beim Aufheizen: die Luft, mit der die Röstung beginnt",
+  "Presence due in {{s}} s: press Space or “I'm at the roaster”.":
+    "Anwesenheit in {{s}} s fällig: Leertaste oder „Ich bin am Röster“ drücken.",
+  "Confirms that you are at the roaster. Space does the same.":
+    "Bestätigt, dass du am Röster bist. Die Leertaste tut dasselbe.",
+  Space: "Leertaste",
   recording: "Aufzeichnung",
   "since charge": "seit Charge",
   "{{delta}}° to reference": "{{delta}}° zur Referenz",

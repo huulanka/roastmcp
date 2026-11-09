@@ -248,11 +248,23 @@ export interface StockMovement {
 export interface ReferenceStatus {
   id: string;
   title: string;
+  /** An earlier roast, or a profile's plan with its recipe. */
+  kind?: "roast" | "profile";
+  /** Its bean temperature at CHARGE (0:00): where to preheat to. */
+  charge_bt?: number | null;
   bt_now: number | null;
   /** Live BT minus the reference BT now. */
   delta_bt: number | null;
   ror_now: number | null;
+  /** Live RoR minus the reference RoR now. */
+  delta_ror?: number | null;
   events: RoastEvent[];
+  /** A profile's next recipe step the machine does not have yet. */
+  next_step?: {
+    at_s: number;
+    in_s: number | null;
+    set: { actuator: Actuator; value: number; current: number | null }[];
+  } | null;
 }
 export interface Projection {
   /** BT expected 60 s from now. */
@@ -267,8 +279,11 @@ export interface Preheat {
 export interface ReferenceCurve {
   id: string;
   title: string;
+  kind?: "roast" | "profile";
   points: { t: number; bt: number | null; ror: number | null }[];
   events: RoastEvent[];
+  /** A profile's recipe. */
+  actions?: PlannedAction[];
 }
 export interface Snapshot {
   version: string;

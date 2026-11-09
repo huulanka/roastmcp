@@ -1,4 +1,4 @@
-import type { Lot, RoastGoal, RoastPlan, RoastSummary } from "@/api/types.ts";
+import type { Lot, PlannedAction, RoastGoal, RoastPlan, RoastSummary } from "@/api/types.ts";
 
 /**
  * The roast plan's two targets (ADR 0014) against the live roast: how far the
@@ -119,4 +119,26 @@ export function pickableLots(lots: readonly Lot[]): Lot[] {
 export function parseNumber(text: string): number | null {
   const v = parseFloat(text.replace(",", ".").trim());
   return Number.isFinite(v) ? v : null;
+}
+
+/**
+ * What the plan says about the preheat (ADR 0018): the target is the plan's
+ * bean temperature at CHARGE, the air its recipe's air at CHARGE (a step in
+ * the first 10 s counts). Null where the plan says nothing.
+ */
+export function planPreheat(
+  chargeBt: number | null | undefined,
+  actions: readonly PlannedAction[] | undefined,
+): { target: number | null; air: number | null } {
+  const air = (actions ?? [])
+    .filter((a) => a.actuator === "air" && a.trigger.at === "time" && a.trigger.roast_time_s <= 10)
+    .sort(
+      (p, q) =>
+        (p.trigger.at === "time" ? p.trigger.roast_time_s : 0) -
+        (q.trigger.at === "time" ? q.trigger.roast_time_s : 0),
+    )[0];
+  return {
+    target: typeof chargeBt === "number" ? Math.round(chargeBt) : null,
+    air: air ? Math.round(air.value) : null,
+  };
 }

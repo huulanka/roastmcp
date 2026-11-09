@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "@/api/client.ts";
 import type { Snapshot } from "@/api/types.ts";
 import { Button } from "@/components/ui/button.tsx";
+import { Kbd } from "@/components/ui/kbd.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover.tsx";
 import { setLang } from "@/i18n/index.ts";
 import { isRecording, PREHEAT_HOLDER, presenceView } from "@/lib/roast.ts";
@@ -253,8 +254,15 @@ function AiStatus({ snapshot }: { snapshot: Snapshot }) {
           t("AI paused")
         )}
       </span>
-      {presence.urgent && (
-        <Button onClick={() => void confirmPresence()}>{t("I'm at the roaster")}</Button>
+      {s.lease_holder && presence.ask && (
+        <Button
+          variant={presence.urgent ? "default" : "secondary"}
+          title={t("Confirms that you are at the roaster. Space does the same.")}
+          onClick={() => void confirmPresence()}
+        >
+          {t("I'm at the roaster")}
+          <Kbd className="ml-1 hidden sm:inline-flex">{t("Space")}</Kbd>
+        </Button>
       )}
     </span>
   );

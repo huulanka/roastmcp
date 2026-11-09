@@ -33,7 +33,7 @@ or drum movement the beans can ignite.
 | Human command while AI/autopilot is in control | Human command applied; AI control suspended until a human resumes it |
 | AI command outside range / step / rate | Clamped to the limit (reported to the AI) or rejected |
 | AI lease expires (no AI activity for the lease time, default 60 s) | Autopilot stops, actuators hold, loud alert: "AI disconnected — you have control" |
-| Presence confirmation missed while AI/autopilot is in control (interval default 3 min + 30 s grace) | Safe state, alarm |
+| Presence confirmation missed while AI/autopilot is in control (interval default 3 min, 10 min for the preheat before CHARGE, + 30 s grace) | Safe state, alarm |
 | Critical step requested by AI/autopilot (start, DROP, step larger than the normal limit) | Waits for human confirmation |
 | Bean temperature above the machine's limit, or implausible rise | Burner cut by the safety layer, alarm |
 | Roaster link lost / stale data | Alarm with the machine's tested advice; reconnect attempts for as long as the connection is wanted; AI control suspended |
@@ -50,9 +50,24 @@ state is a single driver call.
 ## Presence confirmation
 
 While the AI or the autopilot is in control, the app asks for a short
-confirmation at a regular interval (default every 3 minutes; configurable,
-cannot be disabled) — one key or one click. It is also required before every
-critical step. The AI cannot confirm presence; only the app's UI can.
+confirmation at a regular interval (default every 3 minutes; cannot be
+disabled) — one key or one click. It is also required before every critical
+step. The AI cannot confirm presence; only the app's UI can.
+
+- **Warning (ADR 0018):** whenever an AI or the preheat holds the lease, a
+  gong sounds 60 s and 20 s before the confirmation is due (twice at 20 s),
+  with a notice, and the top bar offers "I'm at the roaster" from two minutes
+  before. The safe state comes only after the due time plus 30 s grace.
+- **Space bar:** while the app has focus, Space confirms presence whenever
+  someone holds or asks for control or a confirmation is due soon; not in a
+  text field. The press is taken whole, so it never also presses a focused
+  button.
+- **Preheat before CHARGE:** while the preheat holds the lease, the interval
+  is the machine profile's `limits.preheat_presence_interval_s` (180–900 s,
+  600 s if not set). The empty drum is bounded there by the preheat's own
+  limits. Anyone else, an AI that takes over included, keeps the normal
+  interval and needs a confirmation within it.
+
 When an AI asks for control without a fresh confirmation, the request is
 refused and the app shows "I'm at the roaster" in the top bar (with an alarm
 sound) for two minutes; the AI then asks again.
@@ -62,15 +77,25 @@ sound) for two minutes; the AI then asks again.
 Preheating to a target temperature (started by a person in the app) is an
 autopilot: it holds the lease as `preheat`, its burner commands pass the safety
 layer under the AI rules (bounded raises, cuts free, never above the profile's
-`max_bt_c - 10`), and presence must be confirmed while it runs. Starting it
-counts as a presence confirmation and allows automation again. It ends at
-CHARGE or on any manual command, and then the burner holds its value and the
-person has control. An emergency stop, a lost link or a missed presence
-confirmation end it with the safe state. The controller ([ADR 0015](adr/0015-preheat-step-wait-learn.md))
+`max_bt_c - 10`), and presence must be confirmed while it runs (every 10 min,
+see above). Starting it counts as a presence confirmation and allows
+automation again. It runs at the air the roast starts with: the app fills in
+target and air from the plan (its BT and air at CHARGE), and starting sets
+that air first as the person's own command (ADR 0018). The MCP has no preheat
+tool, because starting it confirms presence. It ends at CHARGE or on any
+manual command, an air change included, and then the burner holds its value
+and the person has control. An emergency stop, a lost link or a missed
+presence confirmation end it with the safe state. The controller
+([ADR 0015](adr/0015-preheat-step-wait-learn.md), [ADR 0018](adr/0018-preheat-air-presence-calm-hold.md))
 heats fully, steps down once to the holding power before the target, then
-corrects rarely: it waits 45 s after each change, ignores errors within
-±2 °C and turns the burner off at once above target + 10 °C. What it learns
-about a machine is kept in `control.json` in the data folder.
+corrects rarely: it waits 45 s after each change, corrects only when the
+measured and the predicted temperature are both more than 2 °C off on the
+same side, by at most 10 points, and turns the burner off at once above
+target + 10 °C. What it learns about a machine is kept per air setting in
+`control.json` in the data folder.
+
+An AI cannot mark CHARGE without a running recording (it would start one
+without beans, weight or plan); the app's CHARGE button still starts one.
 
 ## Limits (defaults, per machine profile)
 

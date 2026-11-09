@@ -19,8 +19,8 @@ use roast_control::{PreheatController, PreheatInput, PreheatPhase, PreheatReason
 use roast_core::{
     Actuator, ActuatorValues, BatchInfo, CommandOutcome, CommandRequest, CommandSource,
     ControlLogEntry, EventDetector, EventKind, EventOrigin, Note, Phases, Projection,
-    ReferenceCurve, RejectReason, Roast, RoastEvent, RoastOrigin, RoastPlan, RoastState, RorConfig,
-    RorTracker, Sample, phases, project,
+    ReferenceCurve, ReferenceKind, RejectReason, Roast, RoastEvent, RoastOrigin, RoastPlan,
+    RoastState, RorConfig, RorTracker, Sample, phases, project,
 };
 use roast_driver::{RoasterDriver, SimulatedMachine, simulator_profile};
 use roast_machine::MachineProfile;
@@ -254,19 +254,50 @@ pub struct Snapshot {
 /// How long an AI's refused control request keeps the presence prompt up.
 const CONTROL_REQUEST_SHOWN_FOR: Duration = Duration::from_secs(120);
 
-/// The reference curve at the current moment of the roast.
+/// The reference curve at the current moment of the roast: an earlier
+/// roast, or a profile's plan with its recipe.
 #[derive(Debug, Clone, Serialize)]
 struct ReferenceStatus {
     id: uuid::Uuid,
     title: String,
+    kind: ReferenceKind,
+    /// Its bean temperature at CHARGE (0:00), °C: where to preheat to.
+    charge_bt: Option<f64>,
     /// Reference bean temperature at the same time since CHARGE.
     bt_now: Option<f64>,
     /// Live bean temperature minus `bt_now`.
     delta_bt: Option<f64>,
     ror_now: Option<f64>,
+    /// Live rate of rise minus `ror_now`.
+    delta_ror: Option<f64>,
     /// Reference events, `t` relative to its CHARGE.
     events: Vec<RoastEvent>,
+    /// A profile's next recipe step the machine does not have yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_step: Option<NextStep>,
 }
+
+/// The next step of a profile's recipe.
+#[derive(Debug, Clone, Serialize)]
+struct NextStep {
+    /// Roast time it is planned for, s since CHARGE.
+    at_s: f64,
+    /// Seconds until then (negative: due since); `None` before CHARGE.
+    in_s: Option<f64>,
+    /// What changes then, and to which value, %.
+    set: Vec<StepValue>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct StepValue {
+    actuator: Actuator,
+    value: f64,
+    /// The value now, %.
+    current: Option<f64>,
+}
+
+/// A recipe step stays due this long after its time, s (as in the app).
+const RECIPE_GRACE_S: f64 = 30.0;
 
 /// The curve so far.
 #[derive(Debug, Clone, Serialize)]
@@ -506,7 +537,7 @@ impl Engine {
                 .roast
                 .as_ref()
                 .and_then(|r| phases(r, t.unwrap_or(0.0))),
-            reference: self.reference_status(t, charge_t),
+            reference: self.reference_status(t, charge_t, now),
             projection: self.projection(&events, charge_t),
             control_request: self
                 .control_request
@@ -527,19 +558,46 @@ impl Engine {
         }
     }
 
-    fn reference_status(&self, t: Option<f64>, charge_t: Option<f64>) -> Option<ReferenceStatus> {
+    fn reference_status(
+        &self,
+        t: Option<f64>,
+        charge_t: Option<f64>,
+        now: f64,
+    ) -> Option<ReferenceStatus> {
         let r = self.reference.as_ref()?;
-        let (bt_now, ror_now) = match (t, charge_t) {
-            (Some(t), Some(c)) => r.at(t - c),
-            _ => (None, None),
-        };
+        let since = t.zip(charge_t).map(|(t, c)| t - c);
+        let (bt_now, ror_now) = since.map_or((None, None), |s| r.at(s));
+        let current = self.safety.status(now).actuators;
+        let next_step = roast_core::design::next_recipe_cue(
+            &r.actions,
+            since.unwrap_or(0.0),
+            &current,
+            RECIPE_GRACE_S,
+        )
+        .map(|cue| NextStep {
+            at_s: cue.at,
+            in_s: since.map(|s| cue.at - s),
+            set: cue
+                .steps
+                .iter()
+                .map(|a| StepValue {
+                    actuator: a.actuator,
+                    value: a.value,
+                    current: current.get(&a.actuator).copied(),
+                })
+                .collect(),
+        });
         Some(ReferenceStatus {
             id: r.id,
             title: r.title.clone(),
+            kind: r.kind,
+            charge_bt: r.at(0.0).0,
             bt_now,
             delta_bt: self.last_bt.zip(bt_now).map(|(live, rf)| live - rf),
             ror_now,
+            delta_ror: self.last_ror.zip(ror_now).map(|(live, rf)| live - rf),
             events: r.events.clone(),
+            next_step,
         })
     }
 
@@ -565,25 +623,45 @@ impl Engine {
 
     // ---------------------------------------------------------------- preheat
 
-    /// Starts preheating to `target_c` (bean probe). A person starts it in
-    /// the app, which confirms presence and allows automation; it ends at
-    /// CHARGE, on any manual command, an emergency stop or a lost link.
-    pub fn start_preheat(&mut self, target_c: f64) -> Result<Snapshot, Fail> {
+    /// Starts preheating to `target_c` (bean probe) at `air` (ADR 0018: the
+    /// air the roast starts with; `None` keeps the air that is applied). A
+    /// person starts it in the app, which confirms presence and allows
+    /// automation; the air is set first as that person's own command. It ends
+    /// at CHARGE, on any manual command, an emergency stop or a lost link.
+    pub fn start_preheat(&mut self, target_c: f64, air: Option<f64>) -> Result<Snapshot, Fail> {
         let max = self.safety.config().max_bt_c - 10.0;
         if !(50.0..=max).contains(&target_c) {
             return Err(Fail::bad(format!(
                 "the preheat target must be between 50 and {max:.0} °C"
             )));
         }
+        if air.is_some_and(|a| !(0.0..=100.0).contains(&a)) {
+            return Err(Fail::bad("the preheat air must be between 0 and 100 %"));
+        }
         if self.roast.as_ref().is_some_and(|r| r.charge_t().is_some()) {
             return Err(Fail::conflict("the roast has started (CHARGE)", None));
+        }
+        if let Some(air) = air {
+            // The person's own command, through the safety layer like any other.
+            let outcome = self.command(CommandRequest {
+                actuator: Actuator::Air,
+                value: air,
+                source: CommandSource::Human,
+                reason: Some(format!("preheat at air {air:.0} %")),
+            });
+            if let CommandOutcome::Rejected { reason } = outcome {
+                return Err(Fail::conflict(reject_text(reason), Some(reason)));
+            }
         }
         let now = self.now();
         self.safety.resume_ai();
         self.safety.confirm_presence(now);
-        self.safety
-            .acquire_lease(PREHEAT_HOLDER, now)
-            .map_err(|r| Fail::conflict(reject_text(r), Some(r)))?;
+        // Before CHARGE the preheat confirms less often (ADR 0018).
+        self.safety.set_preheat_holder(Some(PREHEAT_HOLDER));
+        if let Err(r) = self.safety.acquire_lease(PREHEAT_HOLDER, now) {
+            self.safety.set_preheat_holder(None);
+            return Err(Fail::conflict(reject_text(r), Some(r)));
+        }
         let status = self.safety.status(now);
         let air = status.actuators.get(&Actuator::Air).copied().unwrap_or(0.0);
         let machine_key = self.machine.as_ref().map_or_else(String::new, |m| {
@@ -607,12 +685,15 @@ impl Engine {
             "target_c": target_c,
             "air": air,
             "ror_per_pct": plant.ror_per_pct,
-            "hold_pct_per_c": plant.hold_pct_per_c,
+            "hold_pct_200": plant.hold_pct_200,
         }));
+        let every_min = self.safety.config().preheat_presence_interval_s / 60.0;
         self.alarm(
             "info",
             "preheat",
-            format!("Preheating to {target_c:.0} °C. Confirm presence while it runs."),
+            format!(
+                "Preheating to {target_c:.0} °C at air {air:.0} %. Confirm presence every {every_min:.0} min while it runs (a gong sounds before)."
+            ),
         );
         self.preheat_step(now);
         self.publish(None);
@@ -629,6 +710,7 @@ impl Engine {
         let Some(p) = self.preheat.take() else {
             return;
         };
+        self.safety.set_preheat_holder(None);
         let learned = p.ctl.plant();
         if let Err(e) = self.learned.set_preheat(&p.machine_key, p.air, learned) {
             tracing::warn!("could not save what the preheat learned: {e}");
@@ -640,7 +722,7 @@ impl Engine {
             "type": "preheat_ended",
             "message": message,
             "ror_per_pct": learned.ror_per_pct,
-            "hold_pct_per_c": learned.hold_pct_per_c,
+            "hold_pct_200": learned.hold_pct_200,
         }));
         self.alarm("info", "preheat", message.to_owned());
         self.publish(None);
@@ -982,6 +1064,10 @@ impl Engine {
         self.safety.observe(&r.actuators);
         self.last_reading = Some(Instant::now());
         self.stale_alarmed = false;
+        // A reading arrived: a passing driver error (one bad line) is over.
+        if self.conn == Conn::Connected && self.conn_error.is_some() {
+            self.conn_error = None;
+        }
         if self.conn != Conn::Connected {
             self.conn = Conn::Connected;
             self.conn_error = None;
@@ -1482,10 +1568,17 @@ impl Engine {
         })
     }
 
-    /// Marks an event at the latest reading. Starts a recording on CHARGE if
-    /// none is running.
+    /// Marks an event at the latest reading. A person's CHARGE starts a
+    /// recording if none is running; an AI's is refused, because that
+    /// recording would have no beans, weight or plan (ADR 0018).
     pub fn mark_event(&mut self, kind: EventKind, origin: EventOrigin) -> Result<RoastEvent, Fail> {
         if self.roast.is_none() {
+            if kind == EventKind::Charge && origin == EventOrigin::Ai {
+                return Err(Fail::conflict(
+                    "start a recording first (start_recording with the lot, weight and plan)",
+                    None,
+                ));
+            }
             if kind == EventKind::Charge {
                 self.start_recording(RecordingMeta::default())?;
             } else {
@@ -1623,5 +1716,142 @@ pub fn reject_text(r: RejectReason) -> &'static str {
         RejectReason::NotSupported => "The machine has no such actuator.",
         RejectReason::Disconnected => "No roaster is connected.",
         RejectReason::Overheat => "Bean temperature is above the limit.",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+
+    fn options(dir: &std::path::Path) -> EngineOptions {
+        let profile = MachineProfile::load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../machines/skywalker-cubean-plus.toml"
+        ))
+        .unwrap();
+        EngineOptions {
+            profile,
+            roasts_dir: dir.join("roasts"),
+            audit_path: dir.join("actions.jsonl"),
+            inventory_path: dir.join("inventory.json"),
+            control_path: dir.join("control.json"),
+            profiles_path: dir.join("profiles.json"),
+            sim_speed: 10.0,
+        }
+    }
+
+    /// The engine connected to the simulator, after its first reading.
+    async fn simulator(dir: &std::path::Path) -> EngineHandle {
+        let h = start(options(dir));
+        h.call(|e| {
+            e.connect(ConnectReq {
+                simulator: true,
+                port: None,
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        for _ in 0..100 {
+            if h.call(|e| e.conn == Conn::Connected).await.unwrap() {
+                return h;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("the simulator did not connect");
+    }
+
+    #[tokio::test]
+    async fn the_preheat_sets_its_air_as_a_persons_command_and_confirms_less_often() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        // Connecting applied the safe state: air 100 %.
+        let air = |s: &Snapshot| s.safety.actuators.get(&Actuator::Air).copied();
+        let before = h.call(|e| e.snapshot()).await.unwrap();
+        assert_eq!(air(&before), Some(100.0));
+
+        let s = h
+            .call(|e| e.start_preheat(200.0, Some(20.0)))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(air(&s), Some(20.0));
+        assert!(s.preheat.is_some());
+        assert_eq!(s.safety.lease_holder.as_deref(), Some(PREHEAT_HOLDER));
+        let due = s.safety.presence_due_in_s.unwrap();
+        assert!(due > 590.0, "presence due in {due} s");
+        let log = h
+            .call(|e| std::fs::read_to_string(&e.opts.audit_path).unwrap())
+            .await
+            .unwrap();
+        assert!(log.contains(r#""source":"human""#), "{log}");
+
+        // A person's command ends it, and the normal interval is back.
+        h.call(|e| {
+            e.command(CommandRequest {
+                actuator: Actuator::Air,
+                value: 30.0,
+                source: CommandSource::Human,
+                reason: None,
+            })
+        })
+        .await
+        .unwrap();
+        let s = h
+            .call(|e| {
+                e.on_tick();
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert!(s.preheat.is_none());
+        assert!(s.safety.presence_due_in_s.unwrap() < 181.0);
+        assert!(!s.safety.ai_suspended, "no AI was in control");
+    }
+
+    #[tokio::test]
+    async fn an_ais_charge_needs_a_recording_a_persons_starts_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let ai = h
+            .call(|e| e.mark_event(EventKind::Charge, EventOrigin::Ai))
+            .await
+            .unwrap();
+        let err = ai.unwrap_err();
+        assert_eq!(err.status, 409);
+        assert!(err.error.contains("start a recording first"));
+        assert!(h.call(|e| e.roast.is_none()).await.unwrap());
+
+        let person = h
+            .call(|e| e.mark_event(EventKind::Charge, EventOrigin::Human))
+            .await
+            .unwrap();
+        assert!(person.is_ok());
+        assert!(h.call(|e| e.roast.is_some()).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_passing_driver_error_clears_with_the_next_reading() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        h.call(|e| e.on_driver(DriverEvent::Error("bad line".into())))
+            .await
+            .unwrap();
+        assert!(
+            h.call(|e| e.snapshot().connection_error.is_some())
+                .await
+                .unwrap()
+        );
+        for _ in 0..100 {
+            if h.call(|e| e.snapshot().connection_error.is_none())
+                .await
+                .unwrap()
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("connection_error stuck after new readings");
     }
 }

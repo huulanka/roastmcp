@@ -48,5 +48,7 @@ step is announced, and the person sets it.
 - Dragging milestones on the curve (as well as the table) and temperature
   triggers in the recipe ("air to 30 % at 160 °C", already in the model) come
   next.
-- AI clients can list profiles and start a roast with one; creating versions
-  over MCP follows once the warp also lives in the daemon.
+- AI clients can list profiles and start a roast with one. Since ADR 0018's
+  build they also create profiles and versions (`create_profile`,
+  `add_profile_version`): the warp lives in `roast-core::design` as well,
+  so a plan an AI writes looks like one made in the app.

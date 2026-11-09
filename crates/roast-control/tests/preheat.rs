@@ -1,5 +1,7 @@
 //! The preheat controller against two machines: a model fitted to the first
-//! real Cubean+ preheat (2026-11-09, empty drum, air 30 %), and the built-in
+//! real Cubean+ preheat (2026-11-09, empty drum, air 30 %) whose losses grow
+//! with the temperature so that it holds 200 °C at about 39 % like the
+//! roaster's Artisan preheats (ADR 0018), and the built-in
 //! simulator's empty drum, which heats about three times as fast and has a
 //! slow probe. Readings every 1.5 s, the daemon's rate of rise, and the safety
 //! layer's pace for automatic raises (10 points per 10 s).
@@ -14,7 +16,11 @@ trait Plant {
 }
 
 /// Two first-order paths from the burner to the probe plus a short delay:
-/// fitted to the real run with 0.8 °C RMS error.
+/// fitted to the real run with 0.8 °C RMS error. The fit is linear, so it
+/// would hold 200 °C at 24 %; the real machine needs about 39 % (and 21 %
+/// for 150 °C). The losses therefore scale with the temperature so that the
+/// steady state follows `39 % × (ΔT / 178)^1.8`, while the burner acts as
+/// fitted.
 struct Cubean {
     y_fast: f64,
     y_slow: f64,
@@ -26,6 +32,11 @@ struct Cubean {
 
 impl Cubean {
     const AMBIENT: f64 = 25.0;
+
+    /// Burner that holds `above` °C above ambient at gain 1, %.
+    fn hold(above: f64) -> f64 {
+        39.0 * (above / 178.0).powf(1.8)
+    }
 
     fn new(start_c: f64, gain: f64, extra_delay_s: f64) -> Self {
         let above = start_c - Self::AMBIENT;
@@ -53,8 +64,10 @@ impl Plant for Cubean {
         let n = 10;
         for _ in 0..n {
             let h = dt / f64::from(n);
-            self.y_fast += h * (0.67 * self.gain * u - self.y_fast) / 252.0;
-            self.y_slow += h * (6.75 * self.gain * u - self.y_slow) / 2013.0;
+            let above = (self.y_fast + self.y_slow).max(1.0);
+            let loss = 7.42 * Self::hold(above) / above;
+            self.y_fast += h * (0.67 * self.gain * u - loss * self.y_fast) / 252.0;
+            self.y_slow += h * (6.75 * self.gain * u - loss * self.y_slow) / 2013.0;
         }
         Self::AMBIENT + self.y_fast + self.y_slow
     }
@@ -90,10 +103,24 @@ struct Run {
 impl Run {
     /// Burner changes after `from` seconds.
     fn changes_after(&self, from: f64) -> usize {
+        self.changes_between(from, f64::MAX)
+    }
+
+    /// Burner changes between `from` and `to` seconds.
+    fn changes_between(&self, from: f64, to: f64) -> usize {
         self.trace
             .windows(2)
-            .filter(|w| w[1].0 >= from && w[1].2 != w[0].2)
+            .filter(|w| w[1].0 >= from && w[1].0 <= to && w[1].2 != w[0].2)
             .count()
+    }
+
+    /// The largest single burner change after `from` seconds, points.
+    fn largest_change_after(&self, from: f64) -> f64 {
+        self.trace
+            .windows(2)
+            .filter(|w| w[1].0 >= from)
+            .map(|w| (w[1].2 - w[0].2).abs())
+            .fold(0.0, f64::max)
     }
 
     /// Highest and lowest bean temperature after `from` seconds.
@@ -170,15 +197,14 @@ fn cubean_reaches_200_without_overshoot_and_then_rests() {
     let reached = r.reached.expect("reaches the target");
     assert!(reached < 700.0, "reached after {reached} s");
     let (hi, lo) = r.range_after(reached);
-    assert!(hi <= 202.5, "peak {hi}");
+    assert!(hi <= 203.5, "peak {hi}");
     assert!(lo >= 197.5, "low {lo}");
     assert!((r.final_bt() - 200.0).abs() <= 2.0);
-    // The real run of the old controller: 39 changes in 7 min.
-    let changes = r.changes_after(reached - 200.0);
-    assert!(
-        changes <= 6,
-        "{changes} burner changes around and after the target"
-    );
+    // ADR 0018 on the machine: at most 3 changes while holding (a preheat
+    // holds a few minutes before CHARGE). The old controller: 39 in 7 min.
+    let changes = r.changes_between(reached, reached + 300.0);
+    assert!(changes <= 3, "{changes} burner changes while holding");
+    assert!(r.largest_change_after(reached) <= 10.0);
 }
 
 #[test]
@@ -193,11 +219,15 @@ fn cubean_stays_calm_when_the_machine_differs_from_the_estimate() {
         );
         let reached = r.reached.expect("reaches the target");
         let (hi, lo) = r.range_after(reached);
-        assert!(hi <= 203.0, "gain {gain}, delay {delay}: peak {hi}");
+        // Corrections of at most 10 points (ADR 0018) let a much stronger
+        // machine overshoot by a few degrees; calm wins over a tight peak.
+        assert!(hi <= 206.0, "gain {gain}, delay {delay}: peak {hi}");
         assert!(lo >= 197.0, "gain {gain}, delay {delay}: low {lo}");
+        // Over the 20+ min after reaching the target: at most one change in
+        // about three minutes, even with the estimate off by 40 %.
         let changes = r.changes_after(reached);
         assert!(
-            changes <= 6,
+            changes <= 8,
             "gain {gain}, delay {delay}: {changes} changes"
         );
     }
@@ -240,7 +270,7 @@ fn simulator_holds_and_learns_its_much_stronger_burner() {
         first.plant
     );
     assert!(
-        first.plant.hold_pct_per_c > 0.2,
+        first.plant.hold_pct_200 > 42.0,
         "learned a higher holding power: {:?}",
         first.plant
     );
@@ -314,4 +344,72 @@ fn inside_the_dead_band_nothing_changes() {
         });
         assert!(d.is_none(), "changed at {t}: {d:?}");
     }
+}
+
+#[test]
+fn holding_corrects_only_when_measured_and_predicted_agree() {
+    let mut ctl = PreheatController::new(
+        200.0,
+        22.0,
+        PreheatTuning::default(),
+        PlantEstimate::default(),
+    );
+    let step = ctl
+        .step(PreheatInput {
+            t: 0.0,
+            bt: 199.0,
+            ror: Some(0.5),
+            burner: 90.0,
+        })
+        .expect("the step to the holding power");
+    let burner = step.burner;
+    // In the band, but the rate of rise points 3 °C out: no correction.
+    assert!(
+        ctl.step(PreheatInput {
+            t: 60.0,
+            bt: 201.0,
+            ror: Some(6.0),
+            burner,
+        })
+        .is_none()
+    );
+    // Below the band, but rising back into it: no correction either.
+    assert!(
+        ctl.step(PreheatInput {
+            t: 61.5,
+            bt: 197.0,
+            ror: Some(8.0),
+            burner,
+        })
+        .is_none()
+    );
+    // Both out on the same side: one correction of at most 10 points.
+    let d = ctl
+        .step(PreheatInput {
+            t: 63.0,
+            bt: 203.0,
+            ror: Some(8.0),
+            burner,
+        })
+        .expect("a correction");
+    assert!(d.burner < burner && burner - d.burner <= 10.0, "{d:?}");
+}
+
+#[test]
+fn the_holding_power_grows_faster_than_the_temperature() {
+    let e = PlantEstimate::default();
+    // Anchored on the roaster's Artisan preheats at air 20 %: about 39 %.
+    assert!((e.hold_burner(178.0) - 39.0).abs() < 0.01);
+    // 150 °C took about 21 % on the machine.
+    let at_150 = e.hold_burner(128.0);
+    assert!((20.0..23.0).contains(&at_150), "{at_150}");
+}
+
+#[test]
+fn a_linear_estimate_from_before_adr_0018_is_read_as_the_power_at_200() {
+    let old: PlantEstimate =
+        serde_json::from_str(r#"{"ror_per_pct": 0.393, "hold_pct_per_c": 0.231}"#).unwrap();
+    assert!((old.hold_pct_200 - 41.1).abs() < 0.1, "{old:?}");
+    let new: PlantEstimate = serde_json::from_str(&serde_json::to_string(&old).unwrap()).unwrap();
+    assert_eq!(new, old);
 }

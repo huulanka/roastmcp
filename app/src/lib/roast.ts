@@ -153,6 +153,29 @@ export function presenceView(safety: SafetyStatus): PresenceView {
   };
 }
 
+/**
+ * The gong to sound between two snapshots (ADR 0018): 60 s and 20 s before a
+ * presence confirmation is due, whenever an AI or the preheat holds control.
+ * A confirmation or a jump far past a mark sounds nothing.
+ */
+export function presenceGong(
+  prevDue: number | null,
+  due: number | null,
+  holder: string | null,
+): 60 | 20 | null {
+  if (holder === null || prevDue === null || due === null) return null;
+  for (const at of [20, 60] as const) {
+    if (prevDue > at && due <= at && due > at - 15) return at;
+  }
+  return null;
+}
+
+/** Whether the space bar confirms presence now: someone holds or asks for control, or it is due soon. */
+export function spaceConfirms(s: Pick<Snapshot, "safety" | "control_request">): boolean {
+  if (!s.safety.connected || s.safety.emergency_stop) return false;
+  return s.safety.lease_holder !== null || !!s.control_request || presenceView(s.safety).ask;
+}
+
 /** The id of a roast that just ended after its CHARGE, given two snapshots in a row. */
 export function endedRoast(
   prev: Pick<Snapshot, "recording" | "state"> | null,

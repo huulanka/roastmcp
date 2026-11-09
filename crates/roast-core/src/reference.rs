@@ -10,7 +10,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::event::{EventKind, EventOrigin, RoastEvent};
-use crate::profile::{DropRule, EventTarget, Profile, ProfileVersion};
+use crate::profile::{DropRule, EventTarget, PlannedAction, Profile, ProfileVersion};
 use crate::roast::Roast;
 use crate::ror::{RorConfig, ror_series};
 
@@ -22,14 +22,29 @@ pub struct RefPoint {
     pub ror: Option<f64>,
 }
 
-/// An earlier roast prepared as a reference: times relative to its CHARGE.
+/// What a reference curve comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReferenceKind {
+    /// An earlier roast.
+    Roast,
+    /// A profile version's target curve (the plan).
+    Profile,
+}
+
+/// An earlier roast or a profile's plan prepared as a reference: times
+/// relative to its CHARGE.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ReferenceCurve {
     pub id: Uuid,
     pub title: String,
+    pub kind: ReferenceKind,
     pub points: Vec<RefPoint>,
     /// Events with `t` relative to CHARGE.
     pub events: Vec<RoastEvent>,
+    /// A profile's recipe: burner and air steps (empty for a roast).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<PlannedAction>,
 }
 
 impl ReferenceCurve {
@@ -66,8 +81,10 @@ impl ReferenceCurve {
         ReferenceCurve {
             id: roast.id,
             title: roast.title.clone(),
+            kind: ReferenceKind::Roast,
             points,
             events,
+            actions: Vec::new(),
         }
     }
 
@@ -120,8 +137,10 @@ impl ReferenceCurve {
         ReferenceCurve {
             id: version.id,
             title: format!("{} · v{}", profile.name, version.version),
+            kind: ReferenceKind::Profile,
             points,
             events,
+            actions: target.actions.clone(),
         }
     }
 

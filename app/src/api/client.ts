@@ -152,7 +152,9 @@ export const api = {
   markEvent: (kind: EventKind) =>
     request<RoastEvent>("POST", "/api/events", { kind, origin: "human" }),
   deleteEvent: (kind: EventKind) => request<Snapshot>("DELETE", `/api/events/${kind}`),
-  preheat: (target_c: number) => request<Snapshot>("POST", "/api/preheat", { target_c }),
+  /** Preheat to `target_c` at `air` % (ADR 0018); the daemon sets the air first as your command. */
+  preheat: (target_c: number, air: number | null) =>
+    request<Snapshot>("POST", "/api/preheat", air === null ? { target_c } : { target_c, air }),
   stopPreheat: () => request<Snapshot>("DELETE", "/api/preheat"),
   reference: () => request<ReferenceCurve | null>("GET", "/api/reference"),
   setReference: (id: string | null) => request<Snapshot>("PUT", "/api/reference", { id }),

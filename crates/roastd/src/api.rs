@@ -158,13 +158,20 @@ async fn auth(
 #[derive(Deserialize)]
 struct PreheatBody {
     target_c: f64,
+    /// The air to preheat at, % (ADR 0018); without it the applied air stays.
+    #[serde(default)]
+    air: Option<f64>,
 }
 
 async fn preheat_start(
     State(st): State<AppState>,
     Json(b): Json<PreheatBody>,
 ) -> impl IntoResponse {
-    match st.engine.call(move |e| e.start_preheat(b.target_c)).await {
+    match st
+        .engine
+        .call(move |e| e.start_preheat(b.target_c, b.air))
+        .await
+    {
         Ok(Ok(s)) => Json(s).into_response(),
         Ok(Err(f)) => f.into_response(),
         Err(e) => engine_gone(&e).into_response(),
@@ -180,7 +187,12 @@ async fn preheat_stop(State(st): State<AppState>) -> impl IntoResponse {
 
 #[derive(Deserialize)]
 struct ReferenceBody {
+    /// A saved roast; neither this nor a profile version clears the reference.
+    #[serde(default)]
     id: Option<uuid::Uuid>,
+    /// A profile version: its target curve and recipe become the plan line.
+    #[serde(default)]
+    profile_version_id: Option<uuid::Uuid>,
 }
 
 async fn reference(State(st): State<AppState>) -> impl IntoResponse {
@@ -194,7 +206,11 @@ async fn set_reference(
     State(st): State<AppState>,
     Json(b): Json<ReferenceBody>,
 ) -> impl IntoResponse {
-    match st.engine.call(move |e| e.set_reference(b.id)).await {
+    let set = move |e: &mut crate::engine::Engine| match b.profile_version_id {
+        Some(v) => e.set_reference_profile(v),
+        None => e.set_reference(b.id),
+    };
+    match st.engine.call(set).await {
         Ok(Ok(s)) => Json(s).into_response(),
         Ok(Err(f)) => f.into_response(),
         Err(e) => engine_gone(&e).into_response(),

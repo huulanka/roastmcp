@@ -53,6 +53,9 @@ pub struct SafetyConfig {
     pub presence_interval_s: f64,
     /// Grace period after the presence interval before the safe state, s.
     pub presence_grace_s: f64,
+    /// The longer presence interval while the preheat holds the lease before
+    /// CHARGE (empty drum, bounded by its own limits; ADR 0018), s.
+    pub preheat_presence_interval_s: f64,
 }
 
 impl SafetyConfig {
@@ -102,9 +105,16 @@ impl SafetyConfig {
             lease_s: 60.0,
             presence_interval_s: 180.0,
             presence_grace_s: 30.0,
+            preheat_presence_interval_s: l
+                .preheat_presence_interval_s
+                .unwrap_or(DEFAULT_PREHEAT_PRESENCE_INTERVAL_S),
         }
     }
 }
+
+/// Presence interval while preheating before CHARGE when the machine profile
+/// sets none, s.
+pub const DEFAULT_PREHEAT_PRESENCE_INTERVAL_S: f64 = 600.0;
 
 /// Why the safety layer acted on its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,6 +186,8 @@ pub struct Safety {
     ai_suspended: bool,
     lease: Option<Lease>,
     presence_at: Option<f64>,
+    /// The lease holder that gets the longer preheat presence interval.
+    preheat_holder: Option<String>,
     last_ai_change: BTreeMap<Actuator, f64>,
     current: ActuatorValues,
     connected: bool,
@@ -192,6 +204,7 @@ impl Safety {
             ai_suspended: false,
             lease: None,
             presence_at: None,
+            preheat_holder: None,
             last_ai_change: BTreeMap::new(),
             current: ActuatorValues::new(),
             connected: false,
@@ -215,7 +228,7 @@ impl Safety {
             lease_remaining_s: self.lease.as_ref().map(|l| l.expires_at - now),
             presence_due_in_s: self
                 .presence_at
-                .map(|p| p + self.cfg.presence_interval_s - now),
+                .map(|p| p + self.presence_interval(self.lease_holder()) - now),
             overheat: self.overheat,
             connected: self.connected,
             actuators: self.current.clone(),
@@ -342,7 +355,7 @@ impl Safety {
         if !self.lease.as_ref().is_some_and(|l| l.expires_at > now) {
             return Err(RejectReason::NoLease);
         }
-        if !self.presence_fresh(now) {
+        if !self.presence_fresh(now, self.lease_holder()) {
             return Err(RejectReason::PresenceRequired);
         }
         if let Some(limit) = self.cfg.ai_limits.get(&a).copied() {
@@ -391,9 +404,31 @@ impl Safety {
         (c, (c != v).then_some(v))
     }
 
-    fn presence_fresh(&self, now: f64) -> bool {
+    fn lease_holder(&self) -> Option<&str> {
+        self.lease.as_ref().map(|l| l.holder.as_str())
+    }
+
+    /// How often `holder` needs a presence confirmation: the longer preheat
+    /// interval for the preheat before CHARGE, the normal one for anyone else.
+    fn presence_interval(&self, holder: Option<&str>) -> f64 {
+        if holder.is_some() && holder == self.preheat_holder.as_deref() {
+            self.cfg.preheat_presence_interval_s
+        } else {
+            self.cfg.presence_interval_s
+        }
+    }
+
+    fn presence_fresh(&self, now: f64, holder: Option<&str>) -> bool {
         self.presence_at
-            .is_some_and(|p| now - p <= self.cfg.presence_interval_s + self.cfg.presence_grace_s)
+            .is_some_and(|p| now - p <= self.presence_interval(holder) + self.cfg.presence_grace_s)
+    }
+
+    /// Gives the lease holder `holder` the longer preheat presence interval
+    /// (ADR 0018), or nobody. The daemon names its preheat while it runs
+    /// before CHARGE; any other holder keeps the normal interval, so an AI
+    /// that takes over needs a recent confirmation of its own.
+    pub fn set_preheat_holder(&mut self, holder: Option<&str>) {
+        self.preheat_holder = holder.map(str::to_owned);
     }
 
     fn safe_state_commands(&mut self) -> Vec<ActuatorCommand> {
@@ -450,7 +485,7 @@ impl Safety {
         if !self.connected {
             return Err(RejectReason::Disconnected);
         }
-        if !self.presence_fresh(now) {
+        if !self.presence_fresh(now, Some(holder)) {
             return Err(RejectReason::PresenceRequired);
         }
         let lease = Lease {
@@ -509,7 +544,7 @@ impl Safety {
         }
 
         if let Some(lease) = &self.lease {
-            if !self.presence_fresh(now) {
+            if !self.presence_fresh(now, Some(&lease.holder)) {
                 self.lease = None;
                 self.ai_suspended = true;
                 out.push(SafetyReaction {
@@ -569,6 +604,7 @@ mod tests {
             lease_s: 60.0,
             presence_interval_s: 180.0,
             presence_grace_s: 30.0,
+            preheat_presence_interval_s: 600.0,
         }
     }
 
@@ -794,6 +830,29 @@ mod tests {
                 .any(|c| c.actuator == Actuator::Burner && c.value == 0.0)
         );
         assert!(!s.ai_in_control(212.0));
+    }
+
+    #[test]
+    fn the_preheat_gets_the_longer_presence_interval_and_nobody_else() {
+        let mut s = connected();
+        s.set_preheat_holder(Some("preheat"));
+        s.confirm_presence(0.0);
+        s.acquire_lease("preheat", 0.0).unwrap();
+        assert_eq!(s.status(0.0).presence_due_in_s, Some(600.0));
+        // Renewed by its own activity, the preheat runs past 3.5 min.
+        for t in [50.0, 100.0, 150.0, 200.0, 250.0, 300.0] {
+            s.acquire_lease("preheat", t).unwrap();
+            assert!(s.tick(t, None).is_empty(), "at {t}");
+        }
+        // An AI that takes over needs a confirmation within the normal interval.
+        assert_eq!(
+            s.acquire_lease("claude", 300.0).unwrap_err(),
+            RejectReason::PresenceRequired
+        );
+        // And the preheat itself still misses it after 10 min + grace.
+        s.acquire_lease("preheat", 600.0).unwrap();
+        let r = s.tick(631.0, None);
+        assert_eq!(r[0].kind, ReactionKind::PresenceMissed);
     }
 
     #[test]

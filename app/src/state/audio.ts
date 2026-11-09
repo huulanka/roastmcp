@@ -14,6 +14,34 @@ export function installAudioUnlock(): void {
   window.addEventListener("keydown", unlock, { once: true });
 }
 
+/**
+ * A soft gong: a low tone with two inharmonic partials that ring out over two
+ * seconds. Calls a person back to the roaster before presence is due
+ * (ADR 0018); `urgent` strikes twice.
+ */
+export function gong(urgent: boolean): void {
+  if (!ctx || ctx.state !== "running") return;
+  const strikes = urgent ? 2 : 1;
+  for (let k = 0; k < strikes; k++) {
+    const start = ctx.currentTime + k * 0.9;
+    for (const [ratio, level] of [
+      [1, 0.32],
+      [2.76, 0.12],
+      [5.4, 0.05],
+    ] as const) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 330 * ratio;
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(level, start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 2.2 / ratio ** 0.5);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + 2.3);
+    }
+  }
+}
+
 export function beep(critical: boolean): void {
   if (!ctx || ctx.state !== "running") return;
   const count = critical ? 3 : 1;

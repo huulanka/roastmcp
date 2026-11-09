@@ -41,18 +41,29 @@ function errText(e: unknown): string {
 export function UnitInput({
   unit,
   className,
+  compact = false,
   ...props
-}: React.ComponentProps<"input"> & { unit: string }) {
+}: React.ComponentProps<"input"> & { unit: string; compact?: boolean }) {
   return (
-    <span className="flex h-touch items-center gap-2 rounded-lg border border-border-strong bg-background pr-3 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/40">
+    <span
+      className={cn(
+        "flex h-touch items-center rounded-lg border border-border-strong bg-background transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/40",
+        compact ? "gap-1 pr-2" : "gap-2 pr-3",
+      )}
+    >
       <input
         className={cn(
-          "h-full w-full min-w-0 rounded-lg bg-transparent pl-3 text-right tabular text-[15px] text-foreground outline-none select-text",
+          "h-full w-full min-w-0 rounded-lg bg-transparent text-right tabular text-foreground outline-none select-text",
+          compact ? "pl-2 text-[14px]" : "pl-3 text-[15px]",
           className,
         )}
         {...props}
       />
-      <span className="shrink-0 text-[14px] text-muted-foreground">{unit}</span>
+      <span
+        className={cn("shrink-0 text-muted-foreground", compact ? "text-[13px]" : "text-[14px]")}
+      >
+        {unit}
+      </span>
     </span>
   );
 }

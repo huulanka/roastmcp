@@ -33,7 +33,7 @@ import {
   developmentBand,
   mergeReference,
 } from "@/lib/chartData.ts";
-import { planProgress } from "@/lib/plan.ts";
+import { planPreheat, planProgress } from "@/lib/plan.ts";
 import {
   isRecording,
   latestAiNote,
@@ -315,6 +315,8 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
   }
 
   const preRoast = connected && base === null && snapshot.preheat !== undefined;
+  // The plan's CHARGE temperature and air are the preheat's (ADR 0018).
+  const preheatPlan = planPreheat(refStatus?.charge_bt, refCurve?.actions);
   // The coach speaks for an AI; without one it would only take room.
   const holder = snapshot.safety.lease_holder;
   const coachShown =
@@ -389,6 +391,7 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
               <PreheatCard
                 preheat={snapshot.preheat ?? null}
                 bt={snapshot.bt}
+                plan={preheatPlan}
                 disabled={!snapshot.safety.connected || snapshot.safety.emergency_stop}
               />
             ) : recipe && base !== null && typeof snapshot.t === "number" ? (
