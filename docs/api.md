@@ -139,8 +139,8 @@ interface Snapshot {
 | `DELETE /api/events/{kind}` | | `Snapshot` (undo a mark) |
 | `POST /api/notes` | `{ text }` | `Snapshot` |
 | `GET /api/roasts` | | `{ id, title, roasted_at, total_s, drop_bt, green_weight_g, roasted_weight_g }[]`, newest first |
-| `GET /api/roasts/{id}` | | the roast (`.roast.json` content) |
-| `PATCH /api/roasts/{id}` | `{ title?, roasted_weight_g?, green_weight_g?, notes? }` | the roast; a changed green weight replaces the roast's stock debit |
+| `GET /api/roasts/{id}` | | the roast (`.roast.json` content); each sample also carries `ror` (°C/min), computed as the live value |
+| `PATCH /api/roasts/{id}` | `{ title?, roasted_weight_g?, green_weight_g?, notes? }` | the roast, as `GET`; a changed green weight replaces the roast's stock debit |
 | `GET /api/lots?archived=true` | | `Lot[]`, newest first; archived lots only with `archived=true` |
 | `POST /api/lots` | `{ name, purchase_g?, purchase_date?, …offer-sheet fields of Lot }` | `Lot` (with its opening purchase); blank text is dropped, a honey grade kept only with `process: "honey"` |
 | `GET /api/lots/{id}` / `PATCH /api/lots/{id}` | patch: `{ name?, archived?, details? }`; `details` (all offer-sheet fields) replaces the lot's details whole | `Lot` |

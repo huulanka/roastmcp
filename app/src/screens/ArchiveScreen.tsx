@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button.tsx";
 import {
   EVENT_NAME,
   buildChartData,
+  dropTime,
+  rorStart,
   buildMarkers,
   chargeTime,
   developmentBand,
@@ -90,7 +92,7 @@ function Detail({ id, onChanged }: { id: string; onChanged: () => void }) {
     }));
     const last = points[points.length - 1]?.t ?? null;
     return {
-      data: buildChartData(points, base),
+      data: buildChartData(points, base, rorStart(events, base), dropTime(events)),
       markers: buildMarkers(events, base, (k) => t(EVENT_NAME[k])),
       band: developmentBand(events, base, last),
     };

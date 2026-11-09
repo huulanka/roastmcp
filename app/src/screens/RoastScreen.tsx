@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button.tsx";
 import {
   EVENT_NAME,
   buildChartData,
+  rorStart,
   buildMarkers,
   chargeTime,
   developmentBand,
@@ -115,9 +116,15 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
   const connected = snapshot?.connection === "connected";
   const recording = snapshot ? isRecording(snapshot.state) : false;
 
-  const live = useMemo(() => buildChartData(points, base), [points, base]);
+  const live = useMemo(
+    () => buildChartData(points, base, rorStart(events ?? [], base)),
+    [points, base, events],
+  );
   const data = useMemo(
-    () => (base !== null && refCurve ? mergeReference(live, refCurve.points) : live),
+    () =>
+      base !== null && refCurve
+        ? mergeReference(live, refCurve.points, rorStart(refCurve.events, 0))
+        : live,
     [live, base, refCurve],
   );
   const markers = useMemo(
