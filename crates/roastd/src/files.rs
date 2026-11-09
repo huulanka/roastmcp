@@ -34,6 +34,14 @@ pub struct Summary {
     green_weight_g: Option<f64>,
     roasted_weight_g: Option<f64>,
     simulated: bool,
+    /// Bean name (the lot's, or free text from an import).
+    beans: Option<String>,
+    lot_id: Option<uuid::Uuid>,
+    /// First crack, seconds after CHARGE.
+    first_crack_s: Option<f64>,
+    /// Development time ratio at the drop, percent.
+    dtr_pct: Option<f64>,
+    goal: Option<roast_core::RoastGoal>,
 }
 
 /// Opens a file for appending, creating it and its directory.
@@ -216,6 +224,14 @@ pub fn summary(roast: &Roast) -> Summary {
         _ => None,
     };
     let drop_bt = roast.event(EventKind::Drop).and_then(|e| e.bt);
+    let first_crack_s = match (at(EventKind::Charge), at(EventKind::FirstCrackStart)) {
+        (Some(c), Some(f)) => Some(f - c),
+        _ => None,
+    };
+    let dtr_pct = match (total_s, first_crack_s) {
+        (Some(total), Some(fc)) if total > 0.0 && fc < total => Some((total - fc) / total * 100.0),
+        _ => None,
+    };
     Summary {
         id: roast.id,
         title: roast.title.clone(),
@@ -225,6 +241,11 @@ pub fn summary(roast: &Roast) -> Summary {
         green_weight_g: roast.batch.green_weight_g,
         roasted_weight_g: roast.batch.roasted_weight_g,
         simulated: matches!(roast.origin, roast_core::RoastOrigin::Simulated),
+        beans: roast.batch.beans.clone(),
+        lot_id: roast.green_lot_id,
+        first_crack_s,
+        dtr_pct,
+        goal: roast.plan.as_ref().and_then(|p| p.goal),
     }
 }
 
