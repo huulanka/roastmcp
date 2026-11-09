@@ -64,9 +64,9 @@ autopilot: it holds the lease as `preheat`, its burner commands pass the safety
 layer under the AI rules (bounded raises, cuts free, never above the profile's
 `max_bt_c - 10`), and presence must be confirmed while it runs. Starting it
 counts as a presence confirmation and allows automation again. It ends at
-CHARGE, on any manual command, an emergency stop, a lost link or a missed
-presence confirmation; the burner then holds its value and the person has
-control. The controller ([ADR 0015](adr/0015-preheat-step-wait-learn.md))
+CHARGE or on any manual command, and then the burner holds its value and the
+person has control. An emergency stop, a lost link or a missed presence
+confirmation end it with the safe state. The controller ([ADR 0015](adr/0015-preheat-step-wait-learn.md))
 heats fully, steps down once to the holding power before the target, then
 corrects rarely: it waits 45 s after each change, ignores errors within
 ±2 °C and turns the burner off at once above target + 10 °C. What it learns

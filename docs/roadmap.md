@@ -19,8 +19,10 @@ Next, in order:
    link-loss test (results in the Cubean+ profile under `[link_loss]`) and AI
    control over MCP (lease after the person's confirmation, burner step and
    rate limits, air limit, human override, emergency stop); still
-   open is tuning the preheat gains on the real machine, and the hardware
-   checks for Bluetooth direct ([ADR 0013](adr/0013-bluetooth-rfcomm-on-macos.md));
+   open are the preheat changes of
+   [ADR 0018](adr/0018-preheat-air-presence-calm-hold.md) (air and target
+   from the plan, a presence warning, a calmer hold; first run on the machine
+   on 2026-11-09), and the hardware checks for Bluetooth direct ([ADR 0013](adr/0013-bluetooth-rfcomm-on-macos.md));
    when they pass, Bluetooth direct becomes the preselected connection.
 2. **UI finish and QA**: anything the redesign deferred; keyboard map
    (digits for burner/air, Enter for the next event, Esc stop), RoR trend with

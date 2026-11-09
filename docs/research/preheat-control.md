@@ -87,3 +87,48 @@ On the fitted model, from cold to 200 °C (`crates/roast-control/tests/preheat.r
 the new preheat peaks at 201.5 °C and changes the burner 5 times around and
 after the target; the old one changed it 39 times in 7 min on the machine and
 52 times in the simulator.
+
+## The second real preheat (200 °C)
+
+2026-11-09 afternoon, Skywalker Cubean+, empty drum, target 200 °C, app
+1.13.1, the step-wait-learn preheat of ADR 0015. An AI session watched it
+over MCP without sending commands. Background for
+[ADR 0018](../adr/0018-preheat-air-presence-calm-hold.md).
+
+- Both runs started at **air 100 %**: connecting and the missed presence
+  confirmation before the second run each applied the safe state, and the
+  preheat keeps the air it finds.
+- The first run (from 23 °C) ended after 3.5 min at about 120 °C, when the
+  presence confirmation was missed. The second started at about 120 °C:
+  - **Ramp:** the burner reached 90 % after 84 s under the raise pace. BT
+    fell about 5 °C meanwhile at air 100 %. Then it rose from 118 to 190 °C
+    in 3.5 min, about 20 °C/min.
+  - **Step to hold:** at 190.5 °C, 90 → 51 %. BT stood at 193.8 °C for about
+    a minute, and a correction to 59 % followed.
+  - **Peak and hold:** the peak was 200.5 °C. BT stayed within 198.5–200.5 °C
+    for 5.5 min, starting about 2 min after the step.
+  - **Burner changes:** 9 ramp steps (from the raise pace only), then 6
+    changes in 7 min: 51 → 59 → 56 → 40 → 50 → 41 %. The last three came
+    while BT was already in the band.
+- **Learned (air 100 %):** 0.393 °C/min per burner percent (estimate 0.22)
+  and 0.231 % per °C above ambient to hold (estimate 0.165). That is about
+  41 % for 200 °C.
+- **Presence:** the confirmation was missed twice, each time 210 s (3 min
+  plus 30 s grace) after the last one. The app sounded only with the alarm.
+
+## The roaster's Artisan preheats
+
+From the roaster's 23 Artisan files of the Cubean+ (June–November 2026):
+
+- **At CHARGE:** BT 194–204 °C, air 20 % in 21 files (10 % and 0 % in the
+  other two). Before CHARGE the air was never above 20 %.
+- **Two files record the whole preheat, both at air 20 % throughout:**
+  - BR010: burner 100 % to about 195 °C after 8.5 min, then 43–47 % with BT
+    rising slowly, 200–202 °C.
+  - CR001: burner 100 % to about 191 °C after 7 min, then a PID swinging
+    between 21 and 63 % while holding about 199–200 °C, on average about
+    34 %.
+- **Holding power:** about 34–44 % for 200 °C at air 20 %, against the
+  ADR 0015 estimate of 29 % (0.165 × 178 °C). Holding 150 °C at air 30 %
+  took about 21 % (the first run). The holding power grows faster than the
+  temperature above ambient.
