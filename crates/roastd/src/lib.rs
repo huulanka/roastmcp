@@ -3,11 +3,13 @@
 //! `roastmcp mcp`) the MCP tools.
 
 pub mod api;
+pub mod backup;
 mod driver_thread;
 pub mod engine;
 pub mod files;
 pub mod inventory;
 pub mod learned;
+mod legacy;
 pub mod profiles;
 
 use std::net::SocketAddr;
@@ -62,6 +64,12 @@ pub fn default_data_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(APP_ID)
+}
+
+/// Path of the database in a data directory.
+#[must_use]
+pub fn database_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("roastmcp.sqlite")
 }
 
 /// Path of `daemon.json` in a data directory.
@@ -119,8 +127,14 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
         None => MachineProfile::from_toml_str(DEFAULT_PROFILE)?,
     };
     let roasts_dir = opts.data_dir.join("roasts");
+    let db_path = database_path(&opts.data_dir);
+    let store = Arc::new(
+        roast_store::Store::open(&db_path)
+            .with_context(|| format!("cannot open the database {}", db_path.display()))?,
+    );
     let engine = engine::start(engine::EngineOptions {
         profile,
+        store: Arc::clone(&store),
         roasts_dir: roasts_dir.clone(),
         audit_path: opts.data_dir.join("logs").join("actions.jsonl"),
         inventory_path: opts.data_dir.join("inventory.json"),
@@ -154,9 +168,22 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     let state = api::AppState {
         engine: engine.clone(),
         token: Arc::from(token.as_str()),
-        roasts_dir,
+        archive: files::Archive::new(Arc::clone(&store), roasts_dir),
+        store: Arc::clone(&store),
         shutdown: shutdown.clone(),
     };
+    // The daily backup (ADR 0003); a roast being saved makes one as well.
+    let daily = Arc::clone(&store);
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
+        loop {
+            tick.tick().await;
+            if backup::due(&daily, chrono::Utc::now()) {
+                let store = Arc::clone(&daily);
+                let _ = tokio::task::spawn_blocking(move || backup::run(&store)).await;
+            }
+        }
+    });
     let app = api::router(state, ui_dir.clone());
 
     if opts.simulator || opts.serial_port.is_some() {

@@ -1,6 +1,6 @@
 [package]
 name = "roast-store"
-description = "SQLite storage, roast files and backups"
+description = "SQLite storage and backups"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +11,16 @@ publish.workspace = true
 
 [dependencies]
 roast-core.workspace = true
+chrono.workspace = true
+# SQLite is compiled in, so there is nothing to install on any platform.
+rusqlite = { version = "0.41", features = ["bundled"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
 
 [lints]
 workspace = true

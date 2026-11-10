@@ -1,5 +1,6 @@
 import type {
   Actuator,
+  BackupStatus,
   CommandOutcome,
   EventKind,
   Live,
@@ -165,6 +166,10 @@ export const api = {
     id: string,
     body: { title?: string; roasted_weight_g?: number; roast_degree?: RoastDegree },
   ) => request<Roast>("PATCH", `/api/roasts/${encodeURIComponent(id)}`, body),
+  backup: () => request<BackupStatus>("GET", "/api/backup"),
+  setBackup: (body: { dir: string | null; keep?: number }) =>
+    request<BackupStatus>("PUT", "/api/backup", body),
+  runBackup: () => request<BackupStatus>("POST", "/api/backup/run"),
   /** Uploads an Artisan `.alog` into the archive. */
   async importAlog(file: File): Promise<{ id: string; title: string; already_there: boolean }> {
     let res: Response;

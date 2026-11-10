@@ -106,7 +106,7 @@ corrects rarely: it waits 45 s after each change, corrects only when the
 measured and the predicted temperature are both more than 2 °C off on the
 same side, by at most 10 points, and turns the burner off at once above
 target + 10 °C. What it learns about a machine is kept per air setting in
-`control.json` in the data folder.
+the database.
 
 An AI cannot mark CHARGE without a running recording (it would start one
 without beans, weight or plan); the app's CHARGE button still starts one.

@@ -20,6 +20,7 @@ roast-core.workspace = true
 roast-driver.workspace = true
 roast-machine.workspace = true
 roast-safety.workspace = true
+roast-store.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

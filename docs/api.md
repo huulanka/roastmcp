@@ -178,14 +178,18 @@ interface Snapshot {
 | `POST /api/lots/{id}/adjustments` | `{ grams /* signed */, note? }` | `Lot` |
 
 A roast debits its green weight from its lot once, when it is saved after
-CHARGE (not when stopped before). The inventory lives in `inventory.json`
-(previous version in `inventory.json.bak`); if the file cannot be read, every
-change is refused with 409 and nothing is overwritten.
+CHARGE (not when stopped before). The inventory lives in the database; a
+change is saved whole or not at all. If an `inventory.json` of a version up
+to 1.16 cannot be read when it is taken over, every change is refused with
+409 and nothing is overwritten.
 | `GET /api/roasts/{id}/alog` | | Artisan `.alog` text (download) |
 | `GET /api/reference` | | `null` or `{ id, title, kind, points: {t, bt, ror}[], events, actions? }` — `t` in seconds since the reference's CHARGE; `actions` is a profile's recipe |
 | `PUT /api/reference` | `{ id?: string, profile_version_id?: string }` | `Snapshot` (a saved roast, or a profile version with its recipe; neither clears it; 404 for an unknown id) |
 | `POST /api/preheat` | `{ target_c, air? }` | `Snapshot` — sets `air` (%) first as the person's command, then preheats to `target_c` (bean probe) and holds it (ADR 0018); without `air` the applied air stays; 400 outside 50 … `max_bt_c - 10` or air outside 0–100, 409 after CHARGE or when automation is not allowed (`reason`) |
 | `DELETE /api/preheat` | | `Snapshot` — stop preheating; the burner holds |
+| `GET /api/backup` | | `{ dir, keep, last }` — the backup folder (`null`: none), how many backups stay there, and how the last one went: `{ at, ok, path?, bytes?, error? }` or `null` |
+| `PUT /api/backup` | `{ dir: string \| null, keep?: number }` | as `GET`; `dir` is a full path and is created right away (400 if that fails), `null` or empty turns backups off |
+| `POST /api/backup/run` | | as `GET`, after a backup made now; 400 with the reason if none is set or it failed |
 | `POST /api/shutdown` | | 202; the daemon exits as on Ctrl-C (safe state if the burner is on, recording saved) |
 
 ## WebSocket `GET /api/ws?token=…`

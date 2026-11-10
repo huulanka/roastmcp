@@ -44,6 +44,19 @@ enum Command {
     Mcp,
     /// List serial ports.
     Ports,
+    /// Write a checked backup of the database: into the folder set in the
+    /// app, or into `--to`.
+    Backup {
+        /// Folder for the backup (default: the one set in the app).
+        #[arg(long)]
+        to: Option<PathBuf>,
+    },
+    /// Put a backup back in place of the database. RoastMCP must not be
+    /// running; the database that was there is kept beside it.
+    Restore {
+        /// The backup file (`roastmcp-<time>.sqlite`).
+        file: PathBuf,
+    },
     /// Import Artisan `.alog` files (or folders of them) into the archive.
     /// The files themselves are only read.
     Import {
@@ -71,14 +84,75 @@ fn find_alogs(path: &std::path::Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn import(roasts_dir: &std::path::Path, paths: &[PathBuf]) -> anyhow::Result<()> {
+fn open_store(data_dir: &std::path::Path) -> anyhow::Result<std::sync::Arc<roast_store::Store>> {
+    use anyhow::Context as _;
+    let path = roastd::database_path(data_dir);
+    let store = roast_store::Store::open(&path)
+        .with_context(|| format!("cannot open the database {}", path.display()))?;
+    Ok(std::sync::Arc::new(store))
+}
+
+/// Whether a daemon is serving this data directory right now.
+fn daemon_running(data_dir: &std::path::Path) -> bool {
+    roastd::read_daemon_info(data_dir).is_ok_and(|info| {
+        std::net::TcpStream::connect_timeout(
+            &std::net::SocketAddr::from(([127, 0, 0, 1], info.port)),
+            std::time::Duration::from_millis(500),
+        )
+        .is_ok()
+    })
+}
+
+fn backup(data_dir: &std::path::Path, to: Option<PathBuf>) -> anyhow::Result<()> {
+    let store = open_store(data_dir)?;
+    let report = match to {
+        Some(dir) => {
+            let dir = std::path::absolute(dir)?;
+            store.backup(&dir, roastd::backup::config(&store).keep)?
+        }
+        None => {
+            let done = roastd::backup::run(&store)
+                .map_err(|e| anyhow::anyhow!("{e} (set one in the app, or pass --to <folder>)"))?;
+            roast_store::BackupReport {
+                path: done.path.unwrap_or_default(),
+                bytes: done.bytes.unwrap_or_default(),
+                removed: 0,
+            }
+        }
+    };
+    println!(
+        "Backup written and checked: {} ({} kB)",
+        report.path.display(),
+        report.bytes / 1024
+    );
+    Ok(())
+}
+
+fn restore(data_dir: &std::path::Path, file: &std::path::Path) -> anyhow::Result<()> {
+    if daemon_running(data_dir) {
+        anyhow::bail!("RoastMCP is running; quit the app (or stop the daemon) and try again");
+    }
+    let db = roastd::database_path(data_dir);
+    let kept = roast_store::restore(&db, file)?;
+    println!("Restored {} from {}", db.display(), file.display());
+    if let Some(kept) = kept {
+        println!("The database that was there is kept as {}", kept.display());
+    }
+    Ok(())
+}
+
+fn import(data_dir: &std::path::Path, paths: &[PathBuf]) -> anyhow::Result<()> {
+    let roasts_dir = data_dir.join("roasts");
+    let archive = roastd::files::Archive::new(open_store(data_dir)?, roasts_dir.clone());
+    // Roast files the database does not know yet (a first start) come first.
+    archive.sync()?;
     let mut files = Vec::new();
     for p in paths {
         find_alogs(p, &mut files);
     }
     let (mut saved, mut there, mut failed) = (0, 0, 0);
     for f in &files {
-        match roastd::files::import_alog(roasts_dir, f) {
+        match archive.import_alog(f) {
             Ok(roastd::files::Imported::Saved(_)) => saved += 1,
             Ok(roastd::files::Imported::AlreadyThere(_)) => there += 1,
             Err(e) => {
@@ -138,6 +212,8 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Command::Import { paths } => import(&data_dir.join("roasts"), &paths),
+        Command::Import { paths } => import(&data_dir, &paths),
+        Command::Backup { to } => backup(&data_dir, to),
+        Command::Restore { file } => restore(&data_dir, &file),
     }
 }

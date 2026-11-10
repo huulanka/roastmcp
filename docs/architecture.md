@@ -41,7 +41,7 @@ crates/
   roast-safety          arbitration, limits, rate limits, AI lease, presence, overheat, e-stop
   roast-control         autopilot controller (profile follower)
   roast-audio           microphone capture, first-crack detector
-  roast-store           SQLite schema and repositories, roast files, backups
+  roast-store           SQLite schema, storage and backups
   roast-api             API and event types shared by daemon, app and MCP (exported to TypeScript)
   roastd                the daemon: session engine, HTTP/WebSocket API, MCP server
   roastmcp              the command line: `roastmcp daemon | mcp | import | sim | aset`
@@ -139,23 +139,31 @@ main way the community adds roasters ([ADR 0006](adr/0006-machine-profiles.md)).
 
 ## Storage
 
-SQLite on the local disk, owned exclusively by the daemon (`sqlx`, migrations in
-`crates/roast-store/migrations`) ([ADR 0003](adr/0003-local-sqlite-with-backups.md)).
+SQLite on the local disk (`roastmcp.sqlite` in the data folder), opened by
+the daemon (`roast-store`, `rusqlite` with SQLite compiled in; the schema is
+`crates/roast-store/src/schema.sql`, later versions run as migrations on
+open) ([ADR 0003](adr/0003-local-sqlite-with-backups.md)).
 
-Main tables: `machines`, `green_lots`, `stock_movements`, `profiles`,
-`profile_versions`, `experiments`, `roasts`, `roast_curves` (columnar arrays per
-roast), `roast_events`, `control_log` (audit), `cuppings`, `maintenance_tasks`,
-`maintenance_log`, `settings`.
+Tables: `roasts`, `lots`, `stock_movements`, `profiles`, `profile_versions`,
+`settings`. Each row keeps its full `roast-core` value as JSON beside the
+columns that are listed, searched or referred to; the archive listing reads a
+stored summary per roast and never the curves.
 
-Each finished roast is also written as an open, documented JSON file
-(`roasts/<year>/<date>_<time>_<slug>.roast.json`) and can be exported as
-`.alog` ([ADR 0008](adr/0008-open-roast-files-and-alog.md)).
+Each roast also has an open, documented JSON file
+(`roasts/<date>_<time>_<slug>.roast.json`) with an `.alog` beside it
+([ADR 0008](adr/0008-open-roast-files-and-alog.md)). On start the daemon takes
+roast files the database does not know into it, so a file put into the folder
+(or moved back from `roasts/trash/`) appears in the archive. The JSON files of
+versions up to 1.16 (`inventory.json`, `profiles.json`, `control.json`) are
+taken over once and kept as `*.migrated`.
 
-**Backups:** after every roast and daily, the database is copied with SQLite's
-online backup (`VACUUM INTO`) together with new roast files into the backup
-folder (for example a NAS share), with rotation (14 daily, 8 weekly, 12
-monthly). Every backup is opened and checked (`PRAGMA integrity_check`) after
-writing. Restore is a documented, tested command.
+**Backups:** after every saved roast and once a day the database is copied
+with `VACUUM INTO` into the backup folder the person set in the app (for
+example a NAS share). Every backup is opened and checked (`PRAGMA
+integrity_check`, `foreign_key_check`) before it gets its name; the newest 30
+stay. `roastmcp backup [--to <folder>]` makes one by hand, `roastmcp restore
+<file>` puts one back (the app must be closed; the database that was there is
+kept beside it).
 
 ## API
 
@@ -202,13 +210,13 @@ step, wait and learn ([ADR 0015](adr/0015-preheat-step-wait-learn.md)): full
 heat, one step to the holding power before the target, then rare corrections
 after a settle time, outside a dead band. The daemon feeds it each reading and
 sends its decisions as source `Autopilot`; what it learns per machine and air
-setting is kept in `control.json`.
+setting is kept in the database (setting `control`).
 
 ## Profiles
 
 A profile ([ADR 0017](adr/0017-profile-designer.md)) is a versioned plan: a
 target curve, dry end / first crack / drop targets and a recipe of burner and
-air steps, kept in `profiles.json`. The app's designer starts one from a roast
+air steps, kept in the database. The app's designer starts one from a roast
 and warps its curve when a milestone moves; a roast that follows a version
 shows its curve as the plan line, and the app announces the next recipe step
 for the person to set. A step comes at a roast time, at a bean temperature

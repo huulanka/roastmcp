@@ -14,8 +14,9 @@ use roast_core::{CommandRequest, CommandSource, EventKind, EventOrigin};
 use serde::Deserialize;
 use tower_http::services::{ServeDir, ServeFile};
 
+use crate::backup::{self, BackupConfig, BackupStatus};
 use crate::engine::{ConnectReq, EngineHandle, Fail, RecordingMeta};
-use crate::files;
+use crate::files::{self, Archive};
 use crate::inventory::{AdjustReq, LotPatch, NewLot, PurchaseReq};
 
 /// Shared state of the handlers.
@@ -25,8 +26,10 @@ pub struct AppState {
     pub engine: EngineHandle,
     /// The bearer token.
     pub token: Arc<str>,
-    /// Where roasts are saved.
-    pub roasts_dir: PathBuf,
+    /// The saved roasts.
+    pub archive: Archive,
+    /// The database (ADR 0003).
+    pub store: Arc<roast_store::Store>,
     /// Signalled by `POST /api/shutdown`.
     pub shutdown: Arc<tokio::sync::Notify>,
 }
@@ -83,6 +86,8 @@ pub fn router(state: AppState, ui_dir: Option<PathBuf>) -> Router {
         .route("/profiles/{id}", get(profile_get).patch(profile_patch))
         .route("/profiles/{id}/versions", post(profile_version_add))
         .route("/profile-versions/{id}", get(profile_version_get))
+        .route("/backup", get(backup_status).put(backup_set))
+        .route("/backup/run", post(backup_run))
         .route("/lots", get(lots).post(lot_add))
         .route("/lots/{id}", get(lot).patch(lot_patch))
         .route("/lots/{id}/movements", get(lot_movements))
@@ -406,30 +411,31 @@ async fn recipe_adjust(
     )
 }
 
-async fn roasts(State(st): State<AppState>) -> impl IntoResponse {
-    let dir = st.roasts_dir.clone();
-    let list = tokio::task::spawn_blocking(move || {
-        files::list(&dir)
-            .iter()
-            .map(|(_, r)| files::summary(r))
-            .collect::<Vec<_>>()
-    })
-    .await
-    .unwrap_or_default();
-    Json(list)
-}
-
-async fn find(st: &AppState, id: &str) -> Result<(PathBuf, roast_core::Roast), Fail> {
-    let id: uuid::Uuid = id.parse().map_err(|_| Fail::not_found("no such roast"))?;
-    let dir = st.roasts_dir.clone();
-    tokio::task::spawn_blocking(move || files::find(&dir, id))
+/// Runs a blocking archive or database call off the async threads.
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> std::io::Result<T> + Send + 'static,
+) -> Result<T, Fail> {
+    tokio::task::spawn_blocking(f)
         .await
         .map_err(|e| Fail::internal(e.to_string()))?
+        .map_err(|e| Fail::internal(e.to_string()))
+}
+
+async fn roasts(State(st): State<AppState>) -> ApiResult<Vec<serde_json::Value>> {
+    let archive = st.archive.clone();
+    blocking(move || archive.summaries()).await.map(Json)
+}
+
+async fn find(st: &AppState, id: &str) -> Result<roast_core::Roast, Fail> {
+    let id: uuid::Uuid = id.parse().map_err(|_| Fail::not_found("no such roast"))?;
+    let archive = st.archive.clone();
+    blocking(move || archive.find(id))
+        .await?
         .ok_or_else(|| Fail::not_found("no such roast"))
 }
 
 async fn roast(State(st): State<AppState>, Path(id): Path<String>) -> ApiResult<serde_json::Value> {
-    let (_, r) = find(&st, &id).await?;
+    let r = find(&st, &id).await?;
     with_ror(&r).map(Json)
 }
 
@@ -449,20 +455,16 @@ async fn roast_import(
     Query(q): Query<ImportQuery>,
     body: axum::body::Bytes,
 ) -> ApiResult<serde_json::Value> {
-    let dir = st.roasts_dir.clone();
-    let imported =
-        tokio::task::spawn_blocking(move || files::import_alog_bytes(&dir, &q.name, &body))
-            .await
-            .map_err(|e| Fail::internal(e.to_string()))?
-            .map_err(|e| Fail::bad(format!("not a readable .alog file: {e}")))?;
-    let (path, already_there) = match imported {
-        files::Imported::Saved(p) => (p, false),
-        files::Imported::AlreadyThere(p) => (p, true),
-    };
-    let r = tokio::task::spawn_blocking(move || files::read(&path))
+    let archive = st.archive.clone();
+    let imported = tokio::task::spawn_blocking(move || archive.import_alog_bytes(&q.name, &body))
         .await
         .map_err(|e| Fail::internal(e.to_string()))?
-        .map_err(|e| Fail::internal(e.to_string()))?;
+        .map_err(|e| Fail::bad(format!("not a readable .alog file: {e}")))?;
+    let (id, already_there) = match imported {
+        files::Imported::Saved(id) => (id, false),
+        files::Imported::AlreadyThere(id) => (id, true),
+    };
+    let r = find(&st, &id.to_string()).await?;
     Ok(Json(serde_json::json!({
         "id": r.id,
         "title": r.title,
@@ -492,12 +494,13 @@ async fn roast_delete(
     State(st): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<serde_json::Value> {
-    let (path, r) = find(&st, &id).await?;
-    let moved = tokio::task::spawn_blocking(move || files::trash(&path))
+    let r = find(&st, &id).await?;
+    let (rid, title) = (r.id, r.title.clone());
+    let archive = st.archive.clone();
+    let moved = tokio::task::spawn_blocking(move || archive.trash(rid))
         .await
         .map_err(|e| Fail::internal(e.to_string()))?
         .map_err(|e| Fail::internal(format!("the roast could not be moved to the trash: {e}")))?;
-    let (rid, title) = (r.id, r.title.clone());
     let credited_g = st
         .engine
         .call(move |e| e.roast_deleted(rid, &title))
@@ -524,7 +527,7 @@ async fn roast_patch(
     Path(id): Path<String>,
     Json(p): Json<RoastPatch>,
 ) -> ApiResult<serde_json::Value> {
-    let (path, mut r) = find(&st, &id).await?;
+    let mut r = find(&st, &id).await?;
     if let Some(t) = p.title.filter(|t| !t.trim().is_empty()) {
         r.title = t;
     }
@@ -546,10 +549,8 @@ async fn roast_patch(
         });
     }
     let saved = r.clone();
-    tokio::task::spawn_blocking(move || files::overwrite(&path, &saved))
-        .await
-        .map_err(|e| Fail::internal(e.to_string()))?
-        .map_err(|e| Fail::internal(e.to_string()))?;
+    let archive = st.archive.clone();
+    blocking(move || archive.update(&saved)).await?;
     if p.green_weight_g.is_some() {
         // One debit per roast: a corrected green weight replaces it.
         let debit = r.clone();
@@ -559,6 +560,52 @@ async fn roast_patch(
             .map_err(|e| engine_gone(&e))??;
     }
     with_ror(&r).map(Json)
+}
+
+// --------------------------------------------------------------- backup
+
+async fn backup_status(State(st): State<AppState>) -> Json<BackupStatus> {
+    Json(backup::status(&st.store))
+}
+
+#[derive(Deserialize)]
+struct BackupSet {
+    /// The backup folder (a full path); `null` or empty turns backups off.
+    dir: Option<String>,
+    /// How many backups stay in the folder.
+    keep: Option<usize>,
+}
+
+async fn backup_set(
+    State(st): State<AppState>,
+    Json(req): Json<BackupSet>,
+) -> ApiResult<BackupStatus> {
+    let store = Arc::clone(&st.store);
+    tokio::task::spawn_blocking(move || {
+        let config = BackupConfig {
+            dir: req
+                .dir
+                .map(|d| d.trim().to_owned())
+                .filter(|d| !d.is_empty())
+                .map(PathBuf::from),
+            keep: req.keep.unwrap_or_else(|| backup::config(&store).keep),
+        };
+        backup::set_config(&store, &config).map_err(Fail::bad)?;
+        Ok(Json(backup::status(&store)))
+    })
+    .await
+    .map_err(|e| Fail::internal(e.to_string()))?
+}
+
+/// Makes a backup now.
+async fn backup_run(State(st): State<AppState>) -> ApiResult<BackupStatus> {
+    let store = Arc::clone(&st.store);
+    tokio::task::spawn_blocking(move || {
+        backup::run(&store).map_err(Fail::bad)?;
+        Ok(Json(backup::status(&store)))
+    })
+    .await
+    .map_err(|e| Fail::internal(e.to_string()))?
 }
 
 // ------------------------------------------------------------- profiles
@@ -726,7 +773,7 @@ async fn lot_adjust(
 
 async fn roast_alog(State(st): State<AppState>, Path(id): Path<String>) -> Response {
     match find(&st, &id).await {
-        Ok((_, r)) => {
+        Ok(r) => {
             let name = format!("{}.alog", r.title.replace(['"', '/', '\\'], "_"));
             (
                 [

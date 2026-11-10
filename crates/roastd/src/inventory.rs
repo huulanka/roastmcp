@@ -1,19 +1,20 @@
 //! The green coffee inventory as the daemon keeps it (ADR 0014): lots and
-//! stock movements in `inventory.json`, written atomically with the previous
-//! version kept as `inventory.json.bak`.
+//! stock movements in the database (ADR 0003), every change all or nothing.
 //!
-//! A file that cannot be read is never overwritten: the store then refuses
-//! every change until the file is fixed or restored from the backup.
+//! An inventory that cannot be read is never overwritten: the store then
+//! refuses every change until that is fixed.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDate, Utc};
 use roast_core::{GreenLot, Inventory, InventoryError, LotDetails, Roast, StockMovement};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use roast_store::Store;
+
 use crate::engine::Fail;
-use crate::files;
 
 /// A lot with its current stock.
 #[derive(Debug, Clone, Serialize)]
@@ -79,11 +80,11 @@ pub struct AdjustReq {
     pub note: Option<String>,
 }
 
-/// The inventory and the file it lives in.
+/// The inventory and the database it lives in.
 pub struct InventoryStore {
-    path: PathBuf,
+    store: Arc<Store>,
     data: Inventory,
-    /// Why the file could not be read; changes are refused while set.
+    /// Why the inventory could not be read; changes are refused while set.
     broken: Option<String>,
 }
 
@@ -100,40 +101,38 @@ fn refused(e: &InventoryError) -> Fail {
 }
 
 impl InventoryStore {
-    /// Loads `path`; a missing file is an empty inventory.
+    /// The inventory in `store`. An `inventory.json` of the time before the
+    /// database (`legacy`) is taken over first.
     #[must_use]
-    pub fn load(path: PathBuf) -> Self {
-        match std::fs::read(&path) {
-            Ok(bytes) => match serde_json::from_slice::<Inventory>(&bytes) {
-                Ok(data) => InventoryStore {
-                    path,
-                    data,
-                    broken: None,
-                },
-                Err(e) => {
-                    let msg = format!(
-                        "{} could not be read ({e}); fix it or restore {}.bak",
-                        path.display(),
-                        path.display()
-                    );
-                    tracing::error!("{msg}");
-                    InventoryStore {
-                        path,
-                        data: Inventory::default(),
-                        broken: Some(msg),
-                    }
+    pub fn open(store: Arc<Store>, legacy: &Path) -> Self {
+        let loaded = store
+            .inventory()
+            .map_err(|e| e.to_string())
+            .and_then(|inv| {
+                if !inv.lots.is_empty() {
+                    return Ok(inv);
                 }
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => InventoryStore {
-                path,
-                data: Inventory::default(),
+                match crate::legacy::read::<Inventory>(legacy)? {
+                    Some(old) => {
+                        store.save_inventory(&old).map_err(|e| {
+                            format!("{} could not be taken over: {e}", legacy.display())
+                        })?;
+                        crate::legacy::retire(legacy);
+                        Ok(old)
+                    }
+                    None => Ok(inv),
+                }
+            });
+        match loaded {
+            Ok(data) => InventoryStore {
+                store,
+                data,
                 broken: None,
             },
-            Err(e) => {
-                let msg = format!("{} could not be read ({e})", path.display());
+            Err(msg) => {
                 tracing::error!("{msg}");
                 InventoryStore {
-                    path,
+                    store,
                     data: Inventory::default(),
                     broken: Some(msg),
                 }
@@ -141,7 +140,7 @@ impl InventoryStore {
         }
     }
 
-    /// Why the inventory file could not be read, if it could not.
+    /// Why the inventory could not be read, if it could not.
     #[must_use]
     pub fn problem(&self) -> Option<&str> {
         self.broken.as_deref()
@@ -206,7 +205,7 @@ impl InventoryStore {
         }
         let before = self.data.clone();
         let out = f(&mut self.data).map_err(|e| refused(&e))?;
-        if let Err(e) = save(&self.path, &self.data) {
+        if let Err(e) = self.store.save_inventory(&self.data) {
             self.data = before;
             return Err(Fail::internal(format!(
                 "the inventory could not be saved: {e}"
@@ -382,24 +381,15 @@ fn clean(mut d: LotDetails) -> LotDetails {
     d
 }
 
-fn save(path: &Path, inv: &Inventory) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    if path.exists() {
-        let mut bak = path.as_os_str().to_owned();
-        bak.push(".bak");
-        std::fs::copy(path, PathBuf::from(bak))?;
-    }
-    let json = serde_json::to_vec_pretty(inv).map_err(std::io::Error::other)?;
-    files::write_atomic(path, &json)
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use roast_core::{BatchInfo, EventKind, EventOrigin, RoastEvent, RoastOrigin};
+
+    fn db(dir: &Path) -> Arc<Store> {
+        Arc::new(Store::open(&dir.join("roastmcp.sqlite")).unwrap())
+    }
 
     fn roast(lot: Uuid, grams: f64, charged: bool) -> Roast {
         Roast {
@@ -441,7 +431,7 @@ mod tests {
     fn lots_purchases_and_debits_survive_a_restart() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("inventory.json");
-        let mut store = InventoryStore::load(path.clone());
+        let mut store = InventoryStore::open(db(dir.path()), &path);
         let lot = store
             .add_lot(NewLot {
                 name: "GL-BR-001 Brasilien Amarelo".into(),
@@ -468,18 +458,36 @@ mod tests {
             .sync_roast_debit(&roast(lot.lot.id, 200.0, false))
             .unwrap();
 
-        let again = InventoryStore::load(path.clone());
+        let again = InventoryStore::open(db(dir.path()), &path);
         assert!((again.lot(lot.lot.id).unwrap().stock_g - 5773.0).abs() < 1e-9);
-        let mut bak = path.as_os_str().to_owned();
-        bak.push(".bak");
-        assert!(PathBuf::from(bak).exists());
+    }
+
+    #[test]
+    fn an_inventory_file_of_an_earlier_version_is_taken_over_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("inventory.json");
+        let lot = GreenLot::new("Yellow Bourbon", Utc::now());
+        let old = Inventory {
+            movements: vec![StockMovement::purchase(lot.id, 5000.0, Utc::now())],
+            lots: vec![lot.clone()],
+        };
+        std::fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+
+        let store = InventoryStore::open(db(dir.path()), &path);
+        assert!(store.problem().is_none());
+        assert!((store.lot(lot.id).unwrap().stock_g - 5000.0).abs() < 1e-9);
+        assert!(!path.exists(), "the file is no longer live");
+        assert!(dir.path().join("inventory.json.migrated").exists());
+
+        let again = InventoryStore::open(db(dir.path()), &path);
+        assert_eq!(again.data(), &old);
     }
 
     #[test]
     fn details_are_stored_cleaned_and_replaced_whole() {
         use roast_core::{Fermentation, HoneyGrade, Process};
         let dir = tempfile::tempdir().unwrap();
-        let mut store = InventoryStore::load(dir.path().join("inventory.json"));
+        let mut store = InventoryStore::open(db(dir.path()), &dir.path().join("inventory.json"));
         let req: NewLot = serde_json::from_value(serde_json::json!({
             "name": " 88graines Castillo Washed ",
             "purchase_g": 2000,
@@ -528,7 +536,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("inventory.json");
         std::fs::write(&path, b"{ not json").unwrap();
-        let mut store = InventoryStore::load(path.clone());
+        let mut store = InventoryStore::open(db(dir.path()), &path);
         assert!(store.problem().is_some());
         let err = store
             .add_lot(NewLot {
@@ -543,7 +551,7 @@ mod tests {
     #[test]
     fn refusals_change_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        let mut store = InventoryStore::load(dir.path().join("inventory.json"));
+        let mut store = InventoryStore::open(db(dir.path()), &dir.path().join("inventory.json"));
         let lot = store
             .add_lot(NewLot {
                 name: "A".into(),

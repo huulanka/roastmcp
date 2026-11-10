@@ -1,12 +1,15 @@
+import { useEffect, useState } from "react";
 import { Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { api } from "@/api/client.ts";
-import type { Snapshot } from "@/api/types.ts";
+import type { BackupStatus, Snapshot } from "@/api/types.ts";
+import { BackupDialog } from "@/components/BackupDialog.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Kbd } from "@/components/ui/kbd.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover.tsx";
 import { setLang } from "@/i18n/index.ts";
+import { backupLine } from "@/lib/backup.ts";
 import { isRecording, PREHEAT_HOLDER, presenceView } from "@/lib/roast.ts";
 import { cn } from "@/lib/utils.ts";
 import { formatClock, formatNumber } from "@/lib/units.ts";
@@ -75,6 +78,21 @@ function Segmented<T extends string>({
 function SettingsMenu() {
   const { t, i18n } = useTranslation();
   const theme = useThemeMode();
+  const [backup, setBackup] = useState<BackupStatus | null>(null);
+  const [backupOpen, setBackupOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  // A failed backup must not go unseen: look now and then, and on opening.
+  useEffect(() => {
+    const load = () =>
+      void api
+        .backup()
+        .then(setBackup)
+        .catch(() => undefined);
+    load();
+    const timer = setInterval(load, 10 * 60_000);
+    return () => clearInterval(timer);
+  }, [menuOpen]);
+  const backupFailed = backup?.last ? !backup.last.ok : false;
   const keys: [string, string][] = [
     ["↵", t("Next event")],
     ["Esc", t("Emergency stop")],
@@ -82,58 +100,97 @@ function SettingsMenu() {
     ["W / S", t("Air ±5")],
   ];
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label={t("Settings")}>
-          <Settings />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 gap-4 p-4">
-        <div className="flex flex-col gap-2">
-          <span className="text-[13px] text-muted-foreground">{t("Language")}</span>
-          <Segmented
-            label={t("Language")}
-            value={i18n.language.startsWith("de") ? "de" : "en"}
-            options={[
-              { value: "de", label: "Deutsch" },
-              { value: "en", label: "English" },
-            ]}
-            onChange={(v) => setLang(v)}
-          />
-        </div>
-        <div className="flex flex-col gap-2">
-          <span className="text-[13px] text-muted-foreground">{t("Theme")}</span>
-          <Segmented<ThemeMode>
-            label={t("Theme")}
-            value={theme}
-            options={[
-              { value: "system", label: t("System") },
-              { value: "light", label: t("Light") },
-              { value: "dark", label: t("Dark") },
-            ]}
-            onChange={setThemeMode}
-          />
-        </div>
-        <div className="flex flex-col gap-2 border-t border-border pt-3">
-          <span className="text-[13px] text-muted-foreground">{t("Keyboard")}</span>
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-sm">
-            {keys.map(([k, v]) => (
-              <div key={k} className="contents">
-                <dt>
-                  <kbd className="rounded-sm border border-border-strong px-1.5 py-0.5 font-sans text-[13px]">
-                    {k}
-                  </kbd>
-                </dt>
-                <dd>{v}</dd>
-              </div>
-            ))}
-          </dl>
-          <p className="text-[13px] text-muted-foreground">
-            {t("Shift + button = ±5 on − and +.")}
-          </p>
-        </div>
-      </PopoverContent>
-    </Popover>
+    <>
+      <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="relative"
+            aria-label={backupFailed ? t("Settings: the last backup failed") : t("Settings")}
+          >
+            <Settings />
+            {backupFailed && (
+              <span className="absolute top-1.5 right-1.5 size-2.5 rounded-full bg-destructive ring-2 ring-background" />
+            )}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-80 gap-4 p-4">
+          <div className="flex flex-col gap-2">
+            <span className="text-[13px] text-muted-foreground">{t("Language")}</span>
+            <Segmented
+              label={t("Language")}
+              value={i18n.language.startsWith("de") ? "de" : "en"}
+              options={[
+                { value: "de", label: "Deutsch" },
+                { value: "en", label: "English" },
+              ]}
+              onChange={(v) => setLang(v)}
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <span className="text-[13px] text-muted-foreground">{t("Theme")}</span>
+            <Segmented<ThemeMode>
+              label={t("Theme")}
+              value={theme}
+              options={[
+                { value: "system", label: t("System") },
+                { value: "light", label: t("Light") },
+                { value: "dark", label: t("Dark") },
+              ]}
+              onChange={setThemeMode}
+            />
+          </div>
+          <div className="flex flex-col gap-2 border-t border-border pt-3">
+            <span className="text-[13px] text-muted-foreground">{t("Backup")}</span>
+            <div className="flex items-center justify-between gap-3">
+              <span
+                className={cn(
+                  "min-w-0 text-[13px]",
+                  backupFailed ? "text-danger-text" : "text-foreground",
+                )}
+              >
+                {backupLine(backup, t, i18n.language)}
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setBackupOpen(true);
+                }}
+              >
+                {t("Set up")}
+              </Button>
+            </div>
+          </div>
+          <div className="flex flex-col gap-2 border-t border-border pt-3">
+            <span className="text-[13px] text-muted-foreground">{t("Keyboard")}</span>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-sm">
+              {keys.map(([k, v]) => (
+                <div key={k} className="contents">
+                  <dt>
+                    <kbd className="rounded-sm border border-border-strong px-1.5 py-0.5 font-sans text-[13px]">
+                      {k}
+                    </kbd>
+                  </dt>
+                  <dd>{v}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="text-[13px] text-muted-foreground">
+              {t("Shift + button = ±5 on − and +.")}
+            </p>
+          </div>
+        </PopoverContent>
+      </Popover>
+      <BackupDialog
+        open={backupOpen}
+        onOpenChange={setBackupOpen}
+        status={backup}
+        onStatus={setBackup}
+      />
+    </>
   );
 }
 
