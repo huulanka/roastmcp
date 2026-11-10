@@ -12,6 +12,7 @@ import type {
   ProfileVersion,
   ReferenceCurve,
   Roast,
+  RoastDegree,
   RoastEvent,
   RoastPlan,
   RoastSummary,
@@ -160,8 +161,34 @@ export const api = {
   setReference: (id: string | null) => request<Snapshot>("PUT", "/api/reference", { id }),
   roasts: () => request<RoastSummary[]>("GET", "/api/roasts"),
   roast: (id: string) => request<Roast>("GET", `/api/roasts/${encodeURIComponent(id)}`),
-  patchRoast: (id: string, body: { title?: string; roasted_weight_g?: number }) =>
-    request<Roast>("PATCH", `/api/roasts/${encodeURIComponent(id)}`, body),
+  patchRoast: (
+    id: string,
+    body: { title?: string; roasted_weight_g?: number; roast_degree?: RoastDegree },
+  ) => request<Roast>("PATCH", `/api/roasts/${encodeURIComponent(id)}`, body),
+  /** Uploads an Artisan `.alog` into the archive. */
+  async importAlog(file: File): Promise<{ id: string; title: string; already_there: boolean }> {
+    let res: Response;
+    try {
+      res = await fetch(`${baseUrl()}/api/roasts/import?name=${encodeURIComponent(file.name)}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token ?? ""}`,
+          "Content-Type": "application/octet-stream",
+        },
+        body: await file.arrayBuffer(),
+      });
+    } catch {
+      throw new ApiError(0, "Daemon not reachable");
+    }
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      id: string;
+      title: string;
+      already_there: boolean;
+    };
+    if (!res.ok) throw new ApiError(res.status, data.error ?? res.statusText);
+    return data;
+  },
   profiles: (archived = false) =>
     request<ProfileSummary[]>("GET", `/api/profiles${archived ? "?archived=true" : ""}`),
   profile: (id: string) => request<ProfileDetail>("GET", `/api/profiles/${encodeURIComponent(id)}`),

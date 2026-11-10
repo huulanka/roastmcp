@@ -67,6 +67,10 @@ pub fn router(state: AppState, ui_dir: Option<PathBuf>) -> Router {
         .route("/recipe/adjust", post(recipe_adjust))
         .route("/roasts", get(roasts))
         .route(
+            "/roasts/import",
+            post(roast_import).layer(axum::extract::DefaultBodyLimit::max(IMPORT_MAX_BYTES)),
+        )
+        .route(
             "/roasts/{id}",
             get(roast).patch(roast_patch).delete(roast_delete),
         )
@@ -429,6 +433,43 @@ async fn roast(State(st): State<AppState>, Path(id): Path<String>) -> ApiResult<
     with_ror(&r).map(Json)
 }
 
+/// Largest `.alog` an import accepts (a long roast is well under 1 MB).
+const IMPORT_MAX_BYTES: usize = 16 * 1024 * 1024;
+
+#[derive(Deserialize)]
+struct ImportQuery {
+    /// The uploaded file's name; it titles a roast without a title.
+    #[serde(default)]
+    name: String,
+}
+
+/// Imports an uploaded Artisan `.alog` into the archive.
+async fn roast_import(
+    State(st): State<AppState>,
+    Query(q): Query<ImportQuery>,
+    body: axum::body::Bytes,
+) -> ApiResult<serde_json::Value> {
+    let dir = st.roasts_dir.clone();
+    let imported =
+        tokio::task::spawn_blocking(move || files::import_alog_bytes(&dir, &q.name, &body))
+            .await
+            .map_err(|e| Fail::internal(e.to_string()))?
+            .map_err(|e| Fail::bad(format!("not a readable .alog file: {e}")))?;
+    let (path, already_there) = match imported {
+        files::Imported::Saved(p) => (p, false),
+        files::Imported::AlreadyThere(p) => (p, true),
+    };
+    let r = tokio::task::spawn_blocking(move || files::read(&path))
+        .await
+        .map_err(|e| Fail::internal(e.to_string()))?
+        .map_err(|e| Fail::internal(e.to_string()))?;
+    Ok(Json(serde_json::json!({
+        "id": r.id,
+        "title": r.title,
+        "already_there": already_there,
+    })))
+}
+
 /// A roast as JSON with each sample's rate of rise (`ror`, °C/min, one
 /// decimal), computed exactly as the live value, so a saved curve looks like
 /// it did during the roast. The files themselves carry no RoR.
@@ -474,6 +515,8 @@ struct RoastPatch {
     roasted_weight_g: Option<f64>,
     green_weight_g: Option<f64>,
     notes: Option<String>,
+    /// Measured roast colour; replaces the stored one.
+    roast_degree: Option<roast_core::RoastDegree>,
 }
 
 async fn roast_patch(
@@ -490,6 +533,10 @@ async fn roast_patch(
     }
     if p.green_weight_g.is_some() {
         r.batch.green_weight_g = p.green_weight_g;
+    }
+    if let Some(d) = p.roast_degree {
+        // No reading at all clears the measurement.
+        r.roast_degree = (d.whole_bean.is_some() || d.ground.is_some()).then_some(d);
     }
     if let Some(text) = p.notes.filter(|t| !t.trim().is_empty()) {
         r.notes.push(roast_core::Note {

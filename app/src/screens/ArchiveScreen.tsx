@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
-import { Copy, Download, Ellipsis, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Copy, Download, Ellipsis, Trash2, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { api, ApiError } from "@/api/client.ts";
 import type { Roast, RoastGoal, RoastSummary } from "@/api/types.ts";
-import { inputCls } from "@/components/Dialogs.tsx";
+import { UnitInput } from "@/components/Dialogs.tsx";
 import { RoastChart } from "@/components/RoastChart.tsx";
 import {
   AlertDialog,
@@ -24,6 +24,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu.tsx";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select.tsx";
 import { labelText } from "@/lib/batch.ts";
 import {
   EVENT_NAME,
@@ -33,7 +41,9 @@ import {
   buildMarkers,
   chargeTime,
   developmentBand,
+  mergeReference,
 } from "@/lib/chartData.ts";
+import { comparisonCurve, diff, signed, signedClock } from "@/lib/compare.ts";
 import { cn } from "@/lib/utils.ts";
 import { formatClock, formatNumber, weightLossPct } from "@/lib/units.ts";
 import { attempt } from "@/state/actions.ts";
@@ -84,21 +94,65 @@ const GOAL_NAME: Record<RoastGoal, string> = {
   other: "Own",
 };
 
+const NO_COMPARE = "none";
+
+function roastLabel(r: RoastSummary): string {
+  return [r.batch_no, r.title || r.id].filter(Boolean).join(" · ");
+}
+
+function parseNumber(text: string): number | null {
+  const v = parseFloat(text.replace(",", "."));
+  return Number.isFinite(v) ? v : null;
+}
+
+/** One figure of the roast, with its difference to the compared roast below. */
+function Metric({ label, value, delta }: { label: string; value: string; delta?: string | null }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[13px] text-muted-foreground">{label}</span>
+      <span className="tabular text-value leading-none">{value}</span>
+      <span className="h-4 tabular text-[13px] leading-none text-muted-foreground">
+        {delta ?? ""}
+      </span>
+    </div>
+  );
+}
+
 function Detail({
   id,
   summary,
+  others,
   onChanged,
   onDeleted,
 }: {
   id: string;
   summary: RoastSummary | null;
+  /** The other roasts of the archive, to compare with. */
+  others: RoastSummary[];
   onChanged: () => void;
   onDeleted: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const [roast, setRoast] = useState<Roast | null>(null);
   const [weight, setWeight] = useState("");
+  const [whole, setWhole] = useState("");
+  const [ground, setGround] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [compareId, setCompareId] = useState<string | null>(null);
+  const [compared, setCompared] = useState<Roast | null>(null);
+  const other = compareId ? (others.find((r) => r.id === compareId) ?? null) : null;
+
+  useEffect(() => {
+    if (!compareId) return;
+    let alive = true;
+    api
+      .roast(compareId)
+      .then((r) => alive && setCompared(r))
+      .catch((e) => toast("critical", errText(e)));
+    return () => {
+      alive = false;
+    };
+  }, [compareId]);
 
   useEffect(() => {
     let alive = true;
@@ -108,6 +162,8 @@ function Detail({
         if (!alive) return;
         setRoast(r);
         setWeight(r.batch?.roasted_weight_g?.toString() ?? "");
+        setWhole(r.roast_degree?.whole_bean?.toString() ?? "");
+        setGround(r.roast_degree?.ground?.toString() ?? "");
       })
       .catch((e) => toast("critical", errText(e)));
     return () => {
@@ -127,21 +183,31 @@ function Detail({
       actuators: s.actuators ?? {},
     }));
     const last = points[points.length - 1]?.t ?? null;
+    const own = buildChartData(points, base, rorStart(events, base), dropTime(events));
+    const cmp = compareId && compared?.id === compareId ? comparisonCurve(compared) : null;
     return {
-      data: buildChartData(points, base, rorStart(events, base), dropTime(events)),
+      data: cmp ? mergeReference(own, cmp.points, cmp.rorFrom) : own,
       markers: buildMarkers(events, base, (k) => t(EVENT_NAME[k])),
       band: developmentBand(events, base, last),
     };
-  }, [roast, id, t]);
+  }, [roast, id, t, compareId, compared]);
 
   if (!roast || !view)
     return <p className="p-card text-[15px] text-muted-foreground">{t("Loading…")}</p>;
 
   const save = async () => {
-    const w = parseFloat(weight.replace(",", "."));
-    if (!Number.isFinite(w)) return;
+    const w = parseNumber(weight);
     try {
-      setRoast(await api.patchRoast(id, { roasted_weight_g: w }));
+      setRoast(
+        await api.patchRoast(id, {
+          ...(w !== null ? { roasted_weight_g: w } : {}),
+          roast_degree: {
+            scale: roast.roast_degree?.scale ?? "agtron",
+            whole_bean: parseNumber(whole),
+            ground: parseNumber(ground),
+          },
+        }),
+      );
       onChanged();
       toast("success", t("Saved"));
     } catch (e) {
@@ -149,6 +215,7 @@ function Detail({
     }
   };
   const loss = weightLossPct(roast.batch?.green_weight_g, roast.batch?.roasted_weight_g);
+  const otherLoss = other ? weightLossPct(other.green_weight_g, other.roasted_weight_g) : null;
   const download = (path: string, name: string, type?: string) =>
     void api.download(path, name, type).catch((e) => toast("critical", errText(e)));
   const batchNo = summary?.batch_no ?? roast.batch?.batch_no ?? null;
@@ -207,6 +274,34 @@ function Detail({
           </span>
         </div>
         <div className="flex flex-wrap gap-2">
+          {others.length > 0 && (
+            <Select
+              value={compareId ?? NO_COMPARE}
+              onValueChange={(v) => setCompareId(v === NO_COMPARE ? null : v)}
+            >
+              <SelectTrigger aria-label={t("Compare with")} className="w-56">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_COMPARE}>
+                  <span className="text-muted-foreground">{t("Compare with…")}</span>
+                </SelectItem>
+                <SelectSeparator />
+                {others.map((r) => (
+                  <SelectItem key={r.id} value={r.id}>
+                    <span className="flex min-w-0 items-baseline justify-between gap-4">
+                      <span className="truncate">{roastLabel(r)}</span>
+                      <span className="shrink-0 tabular text-[13px] text-muted-foreground">
+                        {new Date(r.roasted_at).toLocaleDateString(i18n.language, {
+                          dateStyle: "short",
+                        })}
+                      </span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           <ReferenceButton id={id} />
           <Button
             variant="outline"
@@ -271,44 +366,83 @@ function Detail({
           markers={view.markers}
           band={view.band}
           actuators
+          refName={other ? (other.batch_no ?? t("Comparison")) : undefined}
           label={t("Roast curve of {{title}}", { title: roast.title || id })}
         />
       </div>
-      <div className="flex flex-wrap items-end gap-x-10 gap-y-4 border-t border-border pt-4">
-        <div className="flex flex-col gap-1">
-          <span className="text-[13px] text-muted-foreground">{t("Green weight")}</span>
-          <span className="tabular text-value leading-none">
-            {formatNumber(roast.batch?.green_weight_g, 0)} g
-          </span>
-        </div>
-        <div className="flex flex-col gap-1">
-          <span className="text-[13px] text-muted-foreground">{t("Weight loss")}</span>
-          <span className="tabular text-value leading-none">
-            {loss === null ? "–" : `${formatNumber(loss)} %`}
-          </span>
+      <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-4 border-t border-border pt-4">
+        <div className="flex flex-wrap gap-x-8 gap-y-3">
+          <Metric
+            label={t("Duration")}
+            value={formatClock(summary?.total_s ?? null)}
+            delta={other && signedClock(diff(summary?.total_s, other.total_s))}
+          />
+          <Metric
+            label={t("First crack")}
+            value={formatClock(summary?.first_crack_s ?? null)}
+            delta={other && signedClock(diff(summary?.first_crack_s, other.first_crack_s))}
+          />
+          <Metric
+            label={t("Drop")}
+            value={`${formatNumber(summary?.drop_bt, 0)}°`}
+            delta={other && signed(diff(summary?.drop_bt, other.drop_bt), 0)}
+          />
+          <Metric
+            label={t("Development")}
+            value={`${formatNumber(summary?.dtr_pct)} %`}
+            delta={other && signed(diff(summary?.dtr_pct, other.dtr_pct))}
+          />
+          <Metric
+            label={t("Weight loss")}
+            value={loss === null ? "–" : `${formatNumber(loss)} %`}
+            delta={
+              other
+                ? signed(diff(loss, otherLoss))
+                : roast.batch?.green_weight_g
+                  ? t("of {{grams}} g", { grams: formatNumber(roast.batch.green_weight_g, 0) })
+                  : null
+            }
+          />
         </div>
         <form
-          className="flex flex-col gap-2"
+          className="flex items-end gap-2"
           onSubmit={(e) => {
             e.preventDefault();
             void save();
           }}
         >
-          <label htmlFor="roasted-weight" className="text-[13px] text-muted-foreground">
-            {t("Roasted weight (g)")}
-          </label>
-          <span className="flex gap-2">
-            <input
-              id="roasted-weight"
-              className={cn(inputCls, "w-32 tabular")}
+          <label className="flex w-28 flex-col gap-1 text-[13px] text-muted-foreground">
+            {t("Roasted weight")}
+            <UnitInput
+              unit="g"
               inputMode="decimal"
               value={weight}
               onChange={(e) => setWeight(e.target.value)}
             />
-            <Button type="submit" variant="secondary">
-              {t("Save")}
-            </Button>
-          </span>
+          </label>
+          <label className="flex w-32 flex-col gap-1 text-[13px] text-muted-foreground">
+            {t("Colour, beans")}
+            <UnitInput
+              unit="Agtron"
+              compact
+              inputMode="decimal"
+              value={whole}
+              onChange={(e) => setWhole(e.target.value)}
+            />
+          </label>
+          <label className="flex w-32 flex-col gap-1 text-[13px] text-muted-foreground">
+            {t("Colour, ground")}
+            <UnitInput
+              unit="Agtron"
+              compact
+              inputMode="decimal"
+              value={ground}
+              onChange={(e) => setGround(e.target.value)}
+            />
+          </label>
+          <Button type="submit" variant="secondary">
+            {t("Save")}
+          </Button>
         </form>
       </div>
     </div>
@@ -322,6 +456,33 @@ export function ArchiveScreen() {
   const [sel, setSel] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const refId = snapshot?.reference?.id ?? null;
+  const picker = useRef<HTMLInputElement>(null);
+
+  const importFiles = async (files: File[]) => {
+    let added = 0;
+    let known = 0;
+    let lastId: string | null = null;
+    for (const f of files) {
+      try {
+        const r = await api.importAlog(f);
+        if (r.already_there) known++;
+        else added++;
+        lastId = r.id;
+      } catch (e) {
+        toast("critical", `${f.name}: ${errText(e)}`);
+      }
+    }
+    if (added + known > 0) {
+      toast(
+        "success",
+        known > 0
+          ? t("{{added}} imported, {{known}} already in the archive", { added, known })
+          : t("{{added}} imported", { added }),
+      );
+      setTick((n) => n + 1);
+      if (lastId) setSel(lastId);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -339,8 +500,32 @@ export function ArchiveScreen() {
       <section
         aria-label={t("Roasts")}
         className="flex min-h-0 flex-col gap-3 lg:w-[26rem] lg:shrink-0"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          const files = Array.from(e.dataTransfer.files).filter((f) => f.name.endsWith(".alog"));
+          if (files.length > 0) void importFiles(files);
+        }}
       >
-        <h2 className="text-[15px] font-medium text-muted-foreground">{t("Roasts")}</h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-[15px] font-medium text-muted-foreground">{t("Roasts")}</h2>
+          <Button variant="ghost" size="sm" onClick={() => picker.current?.click()}>
+            <Upload />
+            {t("Import")}
+          </Button>
+          <input
+            ref={picker}
+            type="file"
+            accept=".alog"
+            multiple
+            hidden
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = "";
+              if (files.length > 0) void importFiles(files);
+            }}
+          />
+        </div>
         {list === null ? (
           <p className="text-[15px] text-muted-foreground">{t("Loading…")}</p>
         ) : list.length === 0 ? (
@@ -402,6 +587,7 @@ export function ArchiveScreen() {
           key={sel}
           id={sel}
           summary={list?.find((r) => r.id === sel) ?? null}
+          others={(list ?? []).filter((r) => r.id !== sel)}
           onChanged={() => setTick((n) => n + 1)}
           onDeleted={() => {
             setSel(null);

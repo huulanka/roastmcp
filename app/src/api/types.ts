@@ -395,8 +395,15 @@ export interface RoastSample {
   ror?: number | null;
   actuators?: ActuatorValues;
 }
+/** Measured roast colour (lower is darker on the Agtron scale). */
+export interface RoastDegree {
+  scale: "agtron" | "lighttells" | "other";
+  whole_bean?: number | null;
+  ground?: number | null;
+}
 export interface Roast {
   id: string;
+  roast_degree?: RoastDegree | null;
   title?: string;
   roasted_at?: string;
   machine?: unknown;

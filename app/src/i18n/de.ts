@@ -431,4 +431,16 @@ export const de: Record<string, string> = {
   "after dry end": "nach Trocken",
   "after first crack": "nach 1. Crack",
   "at a temperature": "bei Temperatur",
+  "Compare with": "Vergleichen mit",
+  "Compare with…": "Vergleichen mit …",
+  Comparison: "Vergleich",
+  Duration: "Dauer",
+  "of {{grams}} g": "von {{grams}} g",
+  "Roasted weight": "Röstgewicht",
+  "Colour, beans": "Farbe, Bohne",
+  "Colour, ground": "Farbe, gemahlen",
+  Import: "Importieren",
+  "{{added}} imported": "{{added}} importiert",
+  "{{added}} imported, {{known}} already in the archive":
+    "{{added}} importiert, {{known}} schon im Archiv",
 };
