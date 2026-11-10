@@ -51,6 +51,7 @@ export function RoastChart({
   minSpanS = 0,
   actuators = false,
   view = "whole",
+  refName,
   label,
 }: {
   data: ChartData;
@@ -63,6 +64,8 @@ export function RoastChart({
   actuators?: boolean;
   /** Whole roast (default) or a window following the latest sample. */
   view?: ChartView;
+  /** What the dashed curve is called in the read-out (default: "Reference"). */
+  refName?: string;
   /** Accessible summary of the chart. */
   label: string;
 }) {
@@ -75,6 +78,10 @@ export function RoastChart({
   const bandRef = useRef(band);
   const overlayRef = useRef(overlay);
   const viewRef = useRef(view);
+  const refNameRef = useRef(refName);
+  useEffect(() => {
+    refNameRef.current = refName;
+  }, [refName]);
   /** A range chosen by dragging or scrolling; null follows the view. */
   const zoomRef = useRef<[number, number] | null>(null);
   /** The view a zoom was made in; the "back" button shows only there. */
@@ -235,12 +242,25 @@ export function RoastChart({
             const row = (colour: string, name: string, value: string) =>
               `<span style="display:flex;justify-content:space-between;gap:12px"><span style="color:${colour}">${name}</span><span>${value}</span></span>`;
             const muted = css("--chart-axis");
+            // Two curves on different sampling grids share no x values: read
+            // each from its nearest sample around the cursor.
+            const near = (col: Series | undefined): number | null | undefined => {
+              if (!col) return undefined;
+              for (let k = 0; k <= 4; k++) {
+                const a = col[i - k];
+                if (a !== undefined) return a;
+                const b = col[i + k];
+                if (b !== undefined) return b;
+              }
+              return undefined;
+            };
+            const refBt = near(d.refBt);
             let html =
               `<b style="font-weight:600">${formatClock(d.x[i])}</b>` +
-              row(css("--chart-bt"), i18n.t("Bean"), `${f(d.bt[i])}°`) +
-              row(css("--chart-ror"), "RoR", f(d.ror[i]));
-            if (d.refBt?.[i] !== undefined)
-              html += row(muted, i18n.t("Reference"), `${f(d.refBt[i])}°`);
+              row(css("--chart-bt"), i18n.t("Bean"), `${f(near(d.bt))}°`) +
+              row(css("--chart-ror"), "RoR", f(near(d.ror)));
+            if (refBt !== undefined)
+              html += row(muted, refNameRef.current ?? i18n.t("Reference"), `${f(refBt)}°`);
             if (actuators)
               html +=
                 row(muted, i18n.t("Burner"), `${f(d.burner[i], 0)} %`) +

@@ -181,11 +181,34 @@ pub enum Imported {
 /// and the original file unchanged beside it. Importing the same file again
 /// does nothing.
 pub fn import_alog(dir: &Path, alog: &Path) -> io::Result<Imported> {
-    let mut roast = roast_alog::read_alog_file(alog).map_err(io::Error::other)?;
+    let name = alog
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    import_alog_bytes(dir, &name, &fs::read(alog)?)
+}
+
+/// As [`import_alog`], for the content of a file called `file_name` (an
+/// upload from the app). Content that is not valid UTF-8 is read as Latin-1.
+pub fn import_alog_bytes(dir: &Path, file_name: &str, bytes: &[u8]) -> io::Result<Imported> {
+    let text = match std::str::from_utf8(bytes) {
+        Ok(text) => text.to_owned(),
+        Err(_) => bytes.iter().copied().map(char::from).collect(),
+    };
+    let mut roast = roast_alog::read_alog(&text).map_err(io::Error::other)?;
+    // Only the name: an upload must not choose where its copy is written.
+    let file_name = Path::new(file_name)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if let roast_core::RoastOrigin::ImportedAlog { file_name: f, .. } = &mut roast.origin {
+        f.clone_from(&file_name);
+    }
     if roast.title.trim().is_empty() {
-        roast.title = alog
+        roast.title = Path::new(&file_name)
             .file_stem()
             .and_then(|s| s.to_str())
+            .filter(|s| !s.is_empty())
             .unwrap_or("Imported roast")
             .to_owned();
     }
@@ -204,7 +227,7 @@ pub fn import_alog(dir: &Path, alog: &Path) -> io::Result<Imported> {
         n += 1;
     }
     write_atomic(&json, &to_json(&roast)?)?;
-    write_atomic(&alog_path(&json), &fs::read(alog)?)?;
+    write_atomic(&alog_path(&json), bytes)?;
     Ok(Imported::Saved(json))
 }
 
@@ -372,6 +395,43 @@ mod tests {
         assert!(!json.exists() && !alog.exists());
         assert!(moved.exists() && alog_path(&moved).exists());
         assert_eq!(read(&moved).unwrap().id, r.id);
+    }
+
+    #[test]
+    fn an_uploaded_alog_is_imported_once_and_stays_in_the_archive_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let r: Roast = serde_json::from_value(serde_json::json!({
+            "id": uuid::Uuid::new_v4(),
+            "title": "",
+            "roasted_at": "2026-11-09T18:04:00Z",
+            "sampling_interval_s": 1.0,
+            "batch": {},
+            "origin": {"kind": "recorded"},
+            "samples": [
+                {"t": 0.0, "bt": 180.0, "et": 200.0},
+                {"t": 1.0, "bt": 179.0, "et": 200.0},
+                {"t": 2.0, "bt": 178.5, "et": 201.0},
+            ],
+            "events": [],
+            "control_log": [],
+            "notes": [],
+        }))
+        .unwrap();
+        let alog = roast_alog::write_alog(&r);
+
+        let saved = import_alog_bytes(dir.path(), "../../BR011_bourbon.alog", alog.as_bytes());
+        let Ok(Imported::Saved(json)) = saved else {
+            panic!("not saved: {saved:?}");
+        };
+        assert_eq!(json.parent(), Some(dir.path()));
+        let read_back = read(&json).unwrap();
+        assert_eq!(read_back.title, "BR011_bourbon");
+        assert_eq!(read_back.samples.len(), 3);
+        assert_eq!(summary(&read_back).batch_no.as_deref(), Some("BR011"));
+
+        let again = import_alog_bytes(dir.path(), "copy.alog", alog.as_bytes());
+        assert!(matches!(again, Ok(Imported::AlreadyThere(p)) if p == json));
+        assert!(import_alog_bytes(dir.path(), "x.alog", b"not an alog").is_err());
     }
 
     #[test]

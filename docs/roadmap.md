@@ -24,12 +24,15 @@ Next, in order:
    from the plan, a presence warning, a calmer hold; first run on the machine
    on 2026-11-09), and the hardware checks for Bluetooth direct ([ADR 0013](adr/0013-bluetooth-rfcomm-on-macos.md));
    when they pass, Bluetooth direct becomes the preselected connection.
-2. **UI finish and QA**: anything the redesign deferred; keyboard map
-   (digits for burner/air, Enter for the next event, Esc stop), RoR trend with
-   crash/flick colouring, control markers on the curve, hover read-out,
-   roast-degree scale with ranges, light/dark check, 1280×800 and 1440×900.
-3. **Archive**: overlay and compare roasts, roast degree and weights after
-   the roast, import from the UI (file picker / drag and drop).
+2. **UI finish and QA**: done — keys (Q/A burner, W/S air, Enter for the
+   next event, Esc stop, Space for presence), RoR warning, burner and air on
+   the curve, hover read-out, roast-degree scale, a curve that follows and
+   zooms.
+3. **Archive**: done — compare two roasts (the other one dashed, both from
+   CHARGE, with the differences in duration, first crack, drop, development
+   and weight loss), roasted weight and roast colour after the roast, import
+   of `.alog` files from the app (file picker or drop). Open: alignment on
+   first crack, consistency statistics.
 4. **Store and backup**: SQLite store (branch `wip/store`), backup to the NAS.
 5. **Autopilot (M7)**: the AI sets RoR targets, a controller with a model of
    the machine's lag follows them; confirmation before critical steps.

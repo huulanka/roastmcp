@@ -162,7 +162,8 @@ interface Snapshot {
 | `POST /api/notes` | `{ text }` | `Snapshot` |
 | `GET /api/roasts` | | `{ id, title, roasted_at, total_s, drop_bt, green_weight_g, roasted_weight_g, batch_no, … }[]`, newest first; `batch_no` is the roast's, or for an imported Artisan file the one its name starts with (`BR011_…`) |
 | `GET /api/roasts/{id}` | | the roast (`.roast.json` content); each sample also carries `ror` (°C/min), computed as the live value |
-| `PATCH /api/roasts/{id}` | `{ title?, roasted_weight_g?, green_weight_g?, notes? }` | the roast, as `GET`; a changed green weight replaces the roast's stock debit |
+| `PATCH /api/roasts/{id}` | `{ title?, roasted_weight_g?, green_weight_g?, notes?, roast_degree? }` | the roast, as `GET`; a changed green weight replaces the roast's stock debit; `roast_degree` is `{ scale: "agtron" \| "lighttells" \| "other", whole_bean?, ground? }` and replaces the stored colour (no reading clears it) |
+| `POST /api/roasts/import?name=<file name>` | the bytes of an Artisan `.alog` (up to 16 MB) | `{ id, title, already_there }` — the roast is saved as `.roast.json` with the original file beside it; the same roast again is not imported twice |
 | `DELETE /api/roasts/{id}` | | `{ credited_g, trash_path }` — the files move to `roasts/trash/` (restore by moving them back), the stock debit is taken back, the action log records it |
 | `GET /api/profiles?archived=true` | | `{ …Profile, latest: { id, version, created_at, change_note } \| null, versions }[]`, newest change first (ADR 0017) |
 | `POST /api/profiles` | `{ name, description?, intended_beans?, batch_size_g?, target: ProfileTarget, change_note? }` | `{ …Profile, versions: ProfileVersion[] }` with version 1; 400 for a target whose times do not rise from 0, temperatures outside 0–300 °C or recipe values outside 0–100 % |
