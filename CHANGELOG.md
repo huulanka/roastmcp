@@ -1,3 +1,10 @@
+# [1.17.0](https://github.com/huulanka/roastmcp/compare/v1.16.0...v1.17.0) (2026-11-10)
+
+
+### Features
+
+* the archive compares two roasts, takes the roast colour and imports .alog files ([#39](https://github.com/huulanka/roastmcp/issues/39)) ([52f3df3](https://github.com/huulanka/roastmcp/commit/52f3df36d0e515ee33934687136cbbf67ec7e90f))
+
 # [1.16.0](https://github.com/huulanka/roastmcp/compare/v1.15.0...v1.16.0) (2026-11-09)
 
 

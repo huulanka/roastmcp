@@ -1,6 +1,6 @@
 [package]
 name = "roastmcp-app"
-version = "1.16.0"
+version = "1.17.0"
 description = "RoastMCP desktop app: a native window around the daemon and its UI"
 edition = "2024"
 rust-version = "1.85"
