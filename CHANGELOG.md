@@ -1,3 +1,10 @@
+# [1.18.0](https://github.com/huulanka/roastmcp/compare/v1.17.0...v1.18.0) (2026-11-10)
+
+
+### Features
+
+* roasts, inventory and profiles live in a SQLite database with checked backups (ADR 0003) ([#40](https://github.com/huulanka/roastmcp/issues/40)) ([4251482](https://github.com/huulanka/roastmcp/commit/4251482f5400f5769ea14eadf662c7e0358fecc1))
+
 # [1.17.0](https://github.com/huulanka/roastmcp/compare/v1.16.0...v1.17.0) (2026-11-10)
 
 
