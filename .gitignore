@@ -35,3 +35,6 @@ app/dist/
 
 # Browser automation output
 .playwright-mcp/
+
+# Editor swap files
+*.swp
