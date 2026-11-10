@@ -395,6 +395,12 @@ export interface RoastSample {
   ror?: number | null;
   actuators?: ActuatorValues;
 }
+/** Where the database is backed up to, and how the last backup went. */
+export interface BackupStatus {
+  dir: string | null;
+  keep: number;
+  last: { at: string; ok: boolean; path?: string; bytes?: number; error?: string } | null;
+}
 /** Measured roast colour (lower is darker on the Agtron scale). */
 export interface RoastDegree {
   scale: "agtron" | "lighttells" | "other";

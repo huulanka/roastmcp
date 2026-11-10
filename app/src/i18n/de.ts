@@ -443,4 +443,16 @@ export const de: Record<string, string> = {
   "{{added}} imported": "{{added}} importiert",
   "{{added}} imported, {{known}} already in the archive":
     "{{added}} importiert, {{known}} schon im Archiv",
+  Backup: "Backup",
+  "Set up": "Einrichten",
+  "Backup folder": "Backup-Ordner",
+  "Back up now": "Jetzt sichern",
+  "Backup written": "Backup geschrieben",
+  "No backup folder set.": "Kein Backup-Ordner gewählt.",
+  "No backup made yet.": "Noch kein Backup gemacht.",
+  "Last backup failed ({{when}}): {{error}}": "Letztes Backup fehlgeschlagen ({{when}}): {{error}}",
+  "Last backup: {{when}} · {{size}} MB": "Letztes Backup: {{when}} · {{size}} MB",
+  "Settings: the last backup failed": "Einstellungen: Das letzte Backup ist fehlgeschlagen",
+  "A checked copy of all roasts, beans and profiles goes to this folder after every roast and once a day. It can be on a network drive.":
+    "Eine geprüfte Kopie aller Röstungen, Bohnen und Profile landet nach jeder Röstung und einmal am Tag in diesem Ordner. Er darf auf einem Netzlaufwerk liegen.",
 };

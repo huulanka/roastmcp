@@ -1,17 +1,18 @@
-//! Roast profiles and their versions (`roast-core::profile`), kept in
-//! `profiles.json` in the data folder like the inventory: atomic writes and
-//! the previous file as `profiles.json.bak`. Every change to a profile's plan
+//! Roast profiles and their versions (`roast-core::profile`), kept in the
+//! database like the inventory (ADR 0003). Every change to a profile's plan
 //! is a new, immutable version.
 
-use std::path::PathBuf;
+use std::path::Path;
+use std::sync::Arc;
 
 use chrono::Utc;
 use roast_core::{ActionTrigger, MAX_EVENT_OFFSET_S, Profile, ProfileTarget, ProfileVersion};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use roast_store::Store;
+
 use crate::engine::Fail;
-use crate::files;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 struct ProfilesFile {
@@ -95,7 +96,7 @@ pub struct ProfilePatch {
 /// The profiles and their file.
 #[derive(Debug)]
 pub struct ProfileStore {
-    path: PathBuf,
+    store: Arc<Store>,
     data: ProfilesFile,
     broken: Option<String>,
 }
@@ -147,36 +148,46 @@ fn check(target: &ProfileTarget) -> Result<(), Fail> {
 }
 
 impl ProfileStore {
-    /// Loads the file; a missing file means no profiles yet, an unreadable
-    /// one is reported and never overwritten.
+    /// The profiles in `store`. A `profiles.json` of the time before the
+    /// database (`legacy`) is taken over first; an unreadable one is
+    /// reported and left alone.
     #[must_use]
-    pub fn load(path: PathBuf) -> Self {
-        match std::fs::read(&path) {
-            Ok(bytes) => match serde_json::from_slice(&bytes) {
-                Ok(data) => ProfileStore {
-                    path,
-                    data,
-                    broken: None,
-                },
-                Err(e) => {
-                    let msg = format!(
-                        "{} could not be read ({e}); fix it or restore {}.bak",
-                        path.display(),
-                        path.display()
-                    );
-                    tracing::error!("{msg}");
-                    ProfileStore {
-                        path,
-                        data: ProfilesFile::default(),
-                        broken: Some(msg),
+    pub fn open(store: Arc<Store>, legacy: &Path) -> Self {
+        let loaded =
+            store
+                .profiles()
+                .map_err(|e| e.to_string())
+                .and_then(|(profiles, versions)| {
+                    if !profiles.is_empty() {
+                        return Ok(ProfilesFile { profiles, versions });
                     }
-                }
-            },
-            Err(_) => ProfileStore {
-                path,
-                data: ProfilesFile::default(),
+                    match crate::legacy::read::<ProfilesFile>(legacy)? {
+                        Some(old) => {
+                            store
+                                .save_profiles(&old.profiles, &old.versions)
+                                .map_err(|e| {
+                                    format!("{} could not be taken over: {e}", legacy.display())
+                                })?;
+                            crate::legacy::retire(legacy);
+                            Ok(old)
+                        }
+                        None => Ok(ProfilesFile { profiles, versions }),
+                    }
+                });
+        match loaded {
+            Ok(data) => ProfileStore {
+                store,
+                data,
                 broken: None,
             },
+            Err(msg) => {
+                tracing::error!("{msg}");
+                ProfileStore {
+                    store,
+                    data: ProfilesFile::default(),
+                    broken: Some(msg),
+                }
+            }
         }
     }
 
@@ -198,17 +209,9 @@ impl ProfileStore {
         Ok(out)
     }
 
-    fn save(&self) -> std::io::Result<()> {
-        if let Some(dir) = self.path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        if self.path.exists() {
-            let mut bak = self.path.as_os_str().to_owned();
-            bak.push(".bak");
-            std::fs::copy(&self.path, PathBuf::from(bak))?;
-        }
-        let json = serde_json::to_vec_pretty(&self.data).map_err(std::io::Error::other)?;
-        files::write_atomic(&self.path, &json)
+    fn save(&self) -> roast_store::Result<()> {
+        self.store
+            .save_profiles(&self.data.profiles, &self.data.versions)
     }
 
     fn versions_of(&self, id: Uuid) -> Vec<ProfileVersion> {
@@ -399,6 +402,10 @@ mod tests {
     use super::*;
     use roast_core::TargetPoint;
 
+    fn db(dir: &Path) -> Arc<Store> {
+        Arc::new(Store::open(&dir.join("roastmcp.sqlite")).unwrap())
+    }
+
     fn target(drop_s: f64) -> ProfileTarget {
         ProfileTarget {
             points: vec![
@@ -423,7 +430,7 @@ mod tests {
     fn versions_count_up_and_survive_a_restart() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("profiles.json");
-        let mut s = ProfileStore::load(path.clone());
+        let mut s = ProfileStore::open(db(dir.path()), &path);
         let created = s
             .create(
                 NewProfile {
@@ -452,7 +459,7 @@ mod tests {
         assert_eq!(v2.versions[0].version, 2);
         assert_eq!(v2.versions[0].parent_version, Some(1));
 
-        let s = ProfileStore::load(path);
+        let s = ProfileStore::open(db(dir.path()), &path);
         let list = s.list(false);
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].versions, 2);
@@ -463,7 +470,7 @@ mod tests {
     #[test]
     fn an_implausible_plan_is_refused() {
         let dir = tempfile::tempdir().unwrap();
-        let mut s = ProfileStore::load(dir.path().join("profiles.json"));
+        let mut s = ProfileStore::open(db(dir.path()), &dir.path().join("profiles.json"));
         let mut bad = target(600.0);
         bad.points[1].roast_time_s = 0.0;
         let req = NewProfile {

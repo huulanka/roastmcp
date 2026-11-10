@@ -33,7 +33,10 @@ Next, in order:
    and weight loss), roasted weight and roast colour after the roast, import
    of `.alog` files from the app (file picker or drop). Open: alignment on
    first crack, consistency statistics.
-4. **Store and backup**: SQLite store (branch `wip/store`), backup to the NAS.
+4. **Store and backup**: done — SQLite database for roasts, inventory,
+   profiles and settings; checked backups to a chosen folder after every
+   roast and daily; `roastmcp restore`
+   ([ADR 0003](adr/0003-local-sqlite-with-backups.md)).
 5. **Autopilot (M7)**: the AI sets RoR targets, a controller with a model of
    the machine's lag follows them; confirmation before critical steps.
 6. M4–M6 and M8 as below; release through the Homebrew tap.

@@ -1,12 +1,14 @@
 //! What automatic control has learned about each machine (ADR 0015): how
 //! strongly the burner acts and how much it takes to hold a temperature, per
-//! air setting. Kept in `control.json` in the data directory, so every
-//! preheat starts from the last one's experience.
+//! air setting. Kept in the database (setting `control`), so every preheat
+//! starts from the last one's experience.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::Path;
+use std::sync::Arc;
 
 use roast_control::PlantEstimate;
+use roast_store::Store;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -25,9 +27,12 @@ struct MachineLearned {
 /// The learned values and their file.
 #[derive(Debug)]
 pub struct LearnedStore {
-    path: PathBuf,
+    store: Arc<Store>,
     data: Learned,
 }
+
+/// The setting the learned values are stored under.
+const SETTING: &str = "control";
 
 /// The air setting rounded to 10 %.
 fn air_step(air: f64) -> i64 {
@@ -42,20 +47,32 @@ fn air_key(air: f64) -> String {
 }
 
 impl LearnedStore {
-    /// Loads the file; a missing or unreadable file means nothing learned yet.
+    /// The learned values in `store`; nothing stored or unreadable means
+    /// nothing learned yet. A `control.json` of the time before the database
+    /// (`legacy`) is taken over first.
     #[must_use]
-    pub fn load(path: PathBuf) -> Self {
-        let data = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| match serde_json::from_str(&s) {
-                Ok(d) => Some(d),
-                Err(e) => {
-                    tracing::warn!("ignoring {}: {e}", path.display());
-                    None
+    pub fn open(store: Arc<Store>, legacy: &Path) -> Self {
+        let stored = store.setting::<Learned>(SETTING).unwrap_or_else(|e| {
+            tracing::warn!("ignoring the stored control values: {e}");
+            None
+        });
+        let data = match stored {
+            Some(d) => d,
+            None => match crate::legacy::read::<Learned>(legacy) {
+                Ok(Some(old)) => {
+                    if store.set_setting(SETTING, &old).is_ok() {
+                        crate::legacy::retire(legacy);
+                    }
+                    old
                 }
-            })
-            .unwrap_or_default();
-        LearnedStore { path, data }
+                Ok(None) => Learned::default(),
+                Err(msg) => {
+                    tracing::warn!("ignoring it: {msg}");
+                    Learned::default()
+                }
+            },
+        };
+        LearnedStore { store, data }
     }
 
     /// What is known about preheating `machine` at this air setting: the
@@ -85,7 +102,7 @@ impl LearnedStore {
     /// Records what a preheat learned and writes the file.
     ///
     /// # Errors
-    /// When the file cannot be written.
+    /// When the database cannot be written.
     pub fn set_preheat(
         &mut self,
         machine: &str,
@@ -98,10 +115,9 @@ impl LearnedStore {
             .or_default()
             .preheat
             .insert(air_key(air), estimate);
-        let json = serde_json::to_string_pretty(&self.data).map_err(std::io::Error::other)?;
-        let tmp = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp, json)?;
-        std::fs::rename(&tmp, &self.path)
+        self.store
+            .set_setting(SETTING, &self.data)
+            .map_err(std::io::Error::other)
     }
 }
 
@@ -118,11 +134,12 @@ mod tests {
             ror_per_pct: 0.3,
             hold_pct_200: 36.0,
         };
-        let mut s = LearnedStore::load(path.clone());
+        let db = |dir: &Path| Arc::new(Store::open(&dir.join("roastmcp.sqlite")).unwrap());
+        let mut s = LearnedStore::open(db(dir.path()), &path);
         assert_eq!(s.preheat("cubean", 30.0), PlantEstimate::default());
         s.set_preheat("cubean", 31.0, learned).unwrap();
 
-        let s = LearnedStore::load(path);
+        let s = LearnedStore::open(db(dir.path()), &path);
         assert_eq!(s.preheat("cubean", 29.0), learned);
         assert_eq!(s.preheat("cubean", 50.0), learned, "nearest air setting");
         assert_eq!(

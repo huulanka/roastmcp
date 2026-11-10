@@ -28,11 +28,12 @@ use roast_core::{
 use roast_driver::{RoasterDriver, SimulatedMachine, simulator_profile};
 use roast_machine::MachineProfile;
 use roast_safety::{Safety, SafetyConfig, SafetyReaction, SafetyStatus};
+use roast_store::Store;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::driver_thread::{DriverCmd, DriverEvent, spawn_driver};
-use crate::files;
+use crate::files::{self, Archive};
 
 /// How long the curve is kept while not recording, seconds.
 const PREVIEW_KEEP_S: f64 = 600.0;
@@ -82,15 +83,17 @@ impl EngineHandle {
 pub struct EngineOptions {
     /// The machine profile used for real connections.
     pub profile: MachineProfile,
-    /// Where roasts are saved.
+    /// The database: roasts, inventory, profiles, settings (ADR 0003).
+    pub store: Arc<Store>,
+    /// Where the roasts' open file copies are written (ADR 0008).
     pub roasts_dir: PathBuf,
     /// Append-only action log (JSON lines).
     pub audit_path: PathBuf,
-    /// The green coffee inventory (ADR 0014).
+    /// `inventory.json` of the time before the database, taken over once.
     pub inventory_path: PathBuf,
-    /// What automatic control has learned about each machine (ADR 0015).
+    /// `control.json` of the time before the database, taken over once.
     pub control_path: PathBuf,
-    /// Roast profiles and their versions.
+    /// `profiles.json` of the time before the database, taken over once.
     pub profiles_path: PathBuf,
     /// Simulator speed factor.
     pub sim_speed: f64,
@@ -440,6 +443,8 @@ pub struct Engine {
     control_request: Option<(String, Instant)>,
     /// The profile's recipe in this roast (ADR 0019).
     recipe: Option<RecipeRun>,
+    /// The saved roasts.
+    archive: Archive,
 }
 
 /// Starts the engine task and its safety ticker.
@@ -447,10 +452,17 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
     let (tx, mut rx) = mpsc::unbounded_channel();
     let (updates, _) = broadcast::channel(256);
     let audit = files::open_append(&opts.audit_path).ok();
-    let inventory = InventoryStore::load(opts.inventory_path.clone());
-    let learned = LearnedStore::load(opts.control_path.clone());
-    let profiles = ProfileStore::load(opts.profiles_path.clone());
+    let archive = Archive::new(Arc::clone(&opts.store), opts.roasts_dir.clone());
+    match archive.sync() {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("{n} roast files taken into the database"),
+        Err(e) => tracing::error!("the roasts folder could not be read into the database: {e}"),
+    }
+    let inventory = InventoryStore::open(Arc::clone(&opts.store), &opts.inventory_path);
+    let learned = LearnedStore::open(Arc::clone(&opts.store), &opts.control_path);
+    let profiles = ProfileStore::open(Arc::clone(&opts.store), &opts.profiles_path);
     let mut engine = Engine {
+        archive,
         safety: Safety::new(SafetyConfig::from_profile(&opts.profile)),
         opts,
         tx: tx.clone(),
@@ -1154,7 +1166,10 @@ impl Engine {
         self.reference = match id {
             None => None,
             Some(id) => {
-                let (_, roast) = files::find(&self.opts.roasts_dir, id)
+                let roast = self
+                    .archive
+                    .find(id)
+                    .map_err(|e| Fail::internal(e.to_string()))?
                     .ok_or_else(|| Fail::not_found(format!("no saved roast {id}")))?;
                 Some(ReferenceCurve::from_roast(&roast, &RorConfig::default()))
             }
@@ -1537,7 +1552,7 @@ impl Engine {
         if self.roast.is_some() && self.last_autosave.elapsed() >= AUTOSAVE_EVERY {
             self.last_autosave = Instant::now();
             if let Some(roast) = &self.roast {
-                let _ = files::autosave(&self.opts.roasts_dir, roast);
+                let _ = self.archive.autosave(roast);
             }
         }
     }
@@ -1914,7 +1929,7 @@ impl Engine {
             .roast
             .take()
             .ok_or_else(|| Fail::conflict("no recording is running", None))?;
-        let saved = files::save(&self.opts.roasts_dir, &roast);
+        let saved = self.archive.save(&roast);
         self.state = if self.conn == Conn::Connected {
             RoastState::Connected
         } else {
@@ -1932,7 +1947,9 @@ impl Engine {
                 return Err(Fail::internal(msg));
             }
         };
-        files::clear_autosave(&self.opts.roasts_dir);
+        self.archive.clear_autosave();
+        // A copy elsewhere, if the person set a backup folder (ADR 0003).
+        crate::backup::spawn(&self.opts.store);
         // The next roast starts the recipe afresh.
         self.reset_recipe();
         if let Err(e) = self.inventory.sync_roast_debit(&roast) {
@@ -2178,7 +2195,7 @@ impl Engine {
     }
 
     fn recover_autosave(&mut self) {
-        match files::recover_autosave(&self.opts.roasts_dir) {
+        match self.archive.recover_autosave() {
             Ok(Some(path)) => self.alarm(
                 "warning",
                 "recovered",
@@ -2256,6 +2273,7 @@ mod tests {
         .unwrap();
         EngineOptions {
             profile,
+            store: Arc::new(Store::open(&dir.join("roastmcp.sqlite")).unwrap()),
             roasts_dir: dir.join("roasts"),
             audit_path: dir.join("actions.jsonl"),
             inventory_path: dir.join("inventory.json"),

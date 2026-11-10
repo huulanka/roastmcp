@@ -16,6 +16,7 @@ clap = { version = "4", features = ["derive"] }
 roast-core.workspace = true
 roast-driver.workspace = true
 roastd.workspace = true
+roast-store.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -1,14 +1,17 @@
-//! Roast files on disk: `<title>.roast.json` (the open format, ADR 0008) plus
-//! an Artisan `.alog` next to it, an autosave of the running recording, and
-//! the archive listing.
+//! The roast archive. Roasts live in the database (ADR 0003); each also has
+//! an open copy on disk, `<title>.roast.json` (ADR 0008) with an Artisan
+//! `.alog` next to it. Besides: the autosave of the running recording.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use roast_core::{EventKind, ROAST_FILE_SCHEMA_VERSION, Roast};
+use roast_store::Store;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// Folder inside the roasts folder that deleted roasts move to.
 pub const TRASH_DIR: &str = "trash";
@@ -127,7 +130,7 @@ fn batch_no(roast: &Roast) -> Option<String> {
 
 /// Moves a roast's files (`.roast.json` and `.alog`) into `trash/` beside
 /// them: out of the archive, but not gone. Returns the new `.roast.json` path.
-pub fn trash(json: &Path) -> io::Result<PathBuf> {
+fn trash(json: &Path) -> io::Result<PathBuf> {
     let dir = json
         .parent()
         .ok_or_else(|| io::Error::other("a roast file without a folder"))?
@@ -152,8 +155,8 @@ pub fn trash(json: &Path) -> io::Result<PathBuf> {
     Ok(target)
 }
 
-/// Saves a roast as `.roast.json` and `.alog`; returns both paths.
-pub fn save(dir: &Path, roast: &Roast) -> io::Result<(PathBuf, PathBuf)> {
+/// Writes a roast as `.roast.json` and `.alog`; returns both paths.
+fn save(dir: &Path, roast: &Roast) -> io::Result<(PathBuf, PathBuf)> {
     fs::create_dir_all(dir)?;
     let base = base_name(roast);
     let mut json = dir.join(format!("{base}{JSON_EXT}"));
@@ -169,70 +172,16 @@ pub fn save(dir: &Path, roast: &Roast) -> io::Result<(PathBuf, PathBuf)> {
 }
 
 /// What importing one file did.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Imported {
-    /// Saved as this `.roast.json`.
-    Saved(PathBuf),
+    /// Saved as this roast.
+    Saved(Uuid),
     /// The archive already holds this roast (same time, same curve length).
-    AlreadyThere(PathBuf),
+    AlreadyThere(Uuid),
 }
 
-/// Imports an Artisan `.alog` into the archive: the roast as `.roast.json`
-/// and the original file unchanged beside it. Importing the same file again
-/// does nothing.
-pub fn import_alog(dir: &Path, alog: &Path) -> io::Result<Imported> {
-    let name = alog
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    import_alog_bytes(dir, &name, &fs::read(alog)?)
-}
-
-/// As [`import_alog`], for the content of a file called `file_name` (an
-/// upload from the app). Content that is not valid UTF-8 is read as Latin-1.
-pub fn import_alog_bytes(dir: &Path, file_name: &str, bytes: &[u8]) -> io::Result<Imported> {
-    let text = match std::str::from_utf8(bytes) {
-        Ok(text) => text.to_owned(),
-        Err(_) => bytes.iter().copied().map(char::from).collect(),
-    };
-    let mut roast = roast_alog::read_alog(&text).map_err(io::Error::other)?;
-    // Only the name: an upload must not choose where its copy is written.
-    let file_name = Path::new(file_name)
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    if let roast_core::RoastOrigin::ImportedAlog { file_name: f, .. } = &mut roast.origin {
-        f.clone_from(&file_name);
-    }
-    if roast.title.trim().is_empty() {
-        roast.title = Path::new(&file_name)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .filter(|s| !s.is_empty())
-            .unwrap_or("Imported roast")
-            .to_owned();
-    }
-    if let Some((path, _)) = list(dir)
-        .into_iter()
-        .find(|(_, r)| r.roasted_at == roast.roasted_at && r.samples.len() == roast.samples.len())
-    {
-        return Ok(Imported::AlreadyThere(path));
-    }
-    fs::create_dir_all(dir)?;
-    let base = base_name(&roast);
-    let mut json = dir.join(format!("{base}{JSON_EXT}"));
-    let mut n = 2;
-    while json.exists() {
-        json = dir.join(format!("{base}-{n}{JSON_EXT}"));
-        n += 1;
-    }
-    write_atomic(&json, &to_json(&roast)?)?;
-    write_atomic(&alog_path(&json), bytes)?;
-    Ok(Imported::Saved(json))
-}
-
-/// Rewrites an existing roast in place (both files).
-pub fn overwrite(json: &Path, roast: &Roast) -> io::Result<()> {
+/// Rewrites an existing roast's files in place.
+fn overwrite(json: &Path, roast: &Roast) -> io::Result<()> {
     write_atomic(json, &to_json(roast)?)?;
     write_atomic(&alog_path(json), roast_alog::write_alog(roast).as_bytes())
 }
@@ -246,43 +195,28 @@ fn alog_path(json: &Path) -> PathBuf {
 }
 
 /// Reads a `.roast.json` file.
-pub fn read(path: &Path) -> io::Result<Roast> {
+fn read(path: &Path) -> io::Result<Roast> {
     let bytes = fs::read(path)?;
     let file: RoastFile = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
     Ok(file.roast)
 }
 
-/// Writes the autosave of the running recording.
-pub fn autosave(dir: &Path, roast: &Roast) -> io::Result<()> {
+fn autosave(dir: &Path, roast: &Roast) -> io::Result<()> {
     fs::create_dir_all(dir)?;
     write_atomic(&dir.join(AUTOSAVE_NAME), &to_json(roast)?)
 }
 
 /// Removes the autosave after a successful save.
-pub fn clear_autosave(dir: &Path) {
+fn clear_autosave(dir: &Path) {
     let _ = fs::remove_file(dir.join(AUTOSAVE_NAME));
 }
 
-/// Turns a leftover autosave (the daemon stopped during a recording) into a
-/// normal roast file.
-pub fn recover_autosave(dir: &Path) -> io::Result<Option<PathBuf>> {
-    let path = dir.join(AUTOSAVE_NAME);
-    if !path.exists() {
-        return Ok(None);
-    }
-    let mut roast = read(&path)?;
-    roast.title = format!("{} (recovered)", roast.title);
-    let (json, _) = save(dir, &roast)?;
-    fs::remove_file(path)?;
-    Ok(Some(json))
-}
-
-/// All saved roasts, newest first.
-pub fn list(dir: &Path) -> Vec<(PathBuf, Roast)> {
+/// The `.roast.json` files in the roasts folder (not the autosave, not the trash).
+fn roast_files(dir: &Path) -> Vec<PathBuf> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();
     };
-    let mut out: Vec<(PathBuf, Roast)> = entries
+    let mut out: Vec<PathBuf> = entries
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter(|p| {
@@ -290,15 +224,250 @@ pub fn list(dir: &Path) -> Vec<(PathBuf, Roast)> {
                 .and_then(|n| n.to_str())
                 .is_some_and(|n| n.ends_with(JSON_EXT) && !n.starts_with('.'))
         })
-        .filter_map(|p| read(&p).ok().map(|r| (p, r)))
         .collect();
-    out.sort_by_key(|(_, r)| std::cmp::Reverse(r.roasted_at));
+    out.sort();
     out
 }
 
-/// Finds a roast by id.
-pub fn find(dir: &Path, id: uuid::Uuid) -> Option<(PathBuf, Roast)> {
-    list(dir).into_iter().find(|(_, r)| r.id == id)
+fn name_of(path: &Path) -> Option<String> {
+    path.file_name().and_then(|n| n.to_str()).map(str::to_owned)
+}
+
+fn db(e: roast_store::Error) -> io::Error {
+    io::Error::other(e)
+}
+
+/// Bumped whenever [`Summary`] changes: the stored summaries are then
+/// written anew on the next start.
+const SUMMARY_VERSION: u32 = 1;
+const SUMMARY_SETTING: &str = "summary_version";
+
+fn summary_json(roast: &Roast) -> serde_json::Value {
+    serde_json::to_value(summary(roast)).unwrap_or_default()
+}
+
+/// The roast archive: the database with each roast's open file copy in the
+/// roasts folder.
+#[derive(Debug, Clone)]
+pub struct Archive {
+    store: Arc<Store>,
+    dir: PathBuf,
+}
+
+impl Archive {
+    /// The archive in `store` with its file copies in `dir`.
+    #[must_use]
+    pub fn new(store: Arc<Store>, dir: PathBuf) -> Self {
+        Archive { store, dir }
+    }
+
+    /// The roasts folder.
+    #[must_use]
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// Takes roast files the database does not know into it: all of them on
+    /// the first start with the database, later a file put into the folder
+    /// by hand (or moved back from `trash/`). Returns how many were added.
+    ///
+    /// # Errors
+    /// On a database error; a file that cannot be read is skipped.
+    pub fn sync(&self) -> io::Result<usize> {
+        if self.store.setting::<u32>(SUMMARY_SETTING).map_err(db)? != Some(SUMMARY_VERSION) {
+            self.store.resummarise(summary_json).map_err(db)?;
+            self.store
+                .set_setting(SUMMARY_SETTING, &SUMMARY_VERSION)
+                .map_err(db)?;
+        }
+        let known = self.store.roast_file_names().map_err(db)?;
+        let mut added = 0;
+        for path in roast_files(&self.dir) {
+            let Some(name) = name_of(&path) else { continue };
+            if known.contains(&name) {
+                continue;
+            }
+            let roast = match read(&path) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("{} is not a readable roast file: {e}", path.display());
+                    continue;
+                }
+            };
+            if self.store.roast(roast.id).map_err(db)?.is_some() {
+                continue;
+            }
+            self.store
+                .save_roast(&roast, &summary_json(&roast), Some(&name))
+                .map_err(db)?;
+            added += 1;
+        }
+        Ok(added)
+    }
+
+    /// The archive listing, newest first.
+    ///
+    /// # Errors
+    /// On a database error.
+    pub fn summaries(&self) -> io::Result<Vec<serde_json::Value>> {
+        self.store.roast_summaries().map_err(db)
+    }
+
+    /// The roast with this id.
+    ///
+    /// # Errors
+    /// On a database error.
+    pub fn find(&self, id: Uuid) -> io::Result<Option<Roast>> {
+        Ok(self.store.roast(id).map_err(db)?.map(|s| s.roast))
+    }
+
+    /// Saves a new roast: its files, then the database. Returns the paths
+    /// of the `.roast.json` and the `.alog`.
+    ///
+    /// # Errors
+    /// When the files or the database cannot be written.
+    pub fn save(&self, roast: &Roast) -> io::Result<(PathBuf, PathBuf)> {
+        let (json, alog) = save(&self.dir, roast)?;
+        self.store
+            .save_roast(roast, &summary_json(roast), name_of(&json).as_deref())
+            .map_err(db)?;
+        Ok((json, alog))
+    }
+
+    /// Saves a changed roast: its files in place, then the database.
+    ///
+    /// # Errors
+    /// When the files or the database cannot be written.
+    pub fn update(&self, roast: &Roast) -> io::Result<()> {
+        let file = self
+            .store
+            .roast(roast.id)
+            .map_err(db)?
+            .and_then(|s| s.file_name)
+            .map(|n| self.dir.join(n))
+            .filter(|p| p.exists());
+        let name = match file {
+            Some(path) => {
+                overwrite(&path, roast)?;
+                None
+            }
+            // The copy is gone: write a fresh one.
+            None => name_of(&save(&self.dir, roast)?.0),
+        };
+        self.store
+            .save_roast(roast, &summary_json(roast), name.as_deref())
+            .map_err(db)
+    }
+
+    /// Deletes a roast: its files move into `trash/` in the roasts folder
+    /// (out of the archive, but not gone), its row leaves the database.
+    /// Returns where the `.roast.json` went.
+    ///
+    /// # Errors
+    /// When the files cannot be moved or the database cannot be written.
+    pub fn trash(&self, id: Uuid) -> io::Result<Option<PathBuf>> {
+        let file = self
+            .store
+            .roast(id)
+            .map_err(db)?
+            .and_then(|s| s.file_name)
+            .map(|n| self.dir.join(n))
+            .filter(|p| p.exists());
+        let moved = file.map(|p| trash(&p)).transpose()?;
+        self.store.delete_roast(id).map_err(db)?;
+        Ok(moved)
+    }
+
+    /// Imports an Artisan `.alog` file; see [`Archive::import_alog_bytes`].
+    ///
+    /// # Errors
+    /// When the file cannot be read or is not an Artisan profile.
+    pub fn import_alog(&self, alog: &Path) -> io::Result<Imported> {
+        let name = name_of(alog).unwrap_or_default();
+        self.import_alog_bytes(&name, &fs::read(alog)?)
+    }
+
+    /// Imports the content of an Artisan `.alog` called `file_name` (an
+    /// upload from the app): the roast into the archive, the original
+    /// unchanged beside its `.roast.json`. The same roast again does
+    /// nothing. Content that is not valid UTF-8 is read as Latin-1.
+    ///
+    /// # Errors
+    /// When the content is not an Artisan profile or cannot be saved.
+    pub fn import_alog_bytes(&self, file_name: &str, bytes: &[u8]) -> io::Result<Imported> {
+        let text = match std::str::from_utf8(bytes) {
+            Ok(text) => text.to_owned(),
+            Err(_) => bytes.iter().copied().map(char::from).collect(),
+        };
+        let mut roast = roast_alog::read_alog(&text).map_err(io::Error::other)?;
+        // Only the name: an upload must not choose where its copy is written.
+        let file_name = Path::new(file_name)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if let roast_core::RoastOrigin::ImportedAlog { file_name: f, .. } = &mut roast.origin {
+            f.clone_from(&file_name);
+        }
+        if roast.title.trim().is_empty() {
+            roast.title = Path::new(&file_name)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("Imported roast")
+                .to_owned();
+        }
+        if let Some(id) = self
+            .store
+            .same_roast(roast.roasted_at, roast.samples.len())
+            .map_err(db)?
+        {
+            return Ok(Imported::AlreadyThere(id));
+        }
+        fs::create_dir_all(&self.dir)?;
+        let base = base_name(&roast);
+        let mut json = self.dir.join(format!("{base}{JSON_EXT}"));
+        let mut n = 2;
+        while json.exists() {
+            json = self.dir.join(format!("{base}-{n}{JSON_EXT}"));
+            n += 1;
+        }
+        write_atomic(&json, &to_json(&roast)?)?;
+        write_atomic(&alog_path(&json), bytes)?;
+        self.store
+            .save_roast(&roast, &summary_json(&roast), name_of(&json).as_deref())
+            .map_err(db)?;
+        Ok(Imported::Saved(roast.id))
+    }
+
+    /// Writes the autosave of the running recording.
+    ///
+    /// # Errors
+    /// When the file cannot be written.
+    pub fn autosave(&self, roast: &Roast) -> io::Result<()> {
+        autosave(&self.dir, roast)
+    }
+
+    /// Removes the autosave (the recording was saved).
+    pub fn clear_autosave(&self) {
+        clear_autosave(&self.dir);
+    }
+
+    /// Turns a leftover autosave (the daemon stopped during a recording)
+    /// into a normal roast.
+    ///
+    /// # Errors
+    /// When the autosave cannot be read or the roast cannot be saved.
+    pub fn recover_autosave(&self) -> io::Result<Option<PathBuf>> {
+        let path = self.dir.join(AUTOSAVE_NAME);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let mut roast = read(&path)?;
+        roast.title = format!("{} (recovered)", roast.title);
+        let (json, _) = self.save(&roast)?;
+        fs::remove_file(path)?;
+        Ok(Some(json))
+    }
 }
 
 /// The archive line of a roast.
@@ -340,6 +509,10 @@ pub fn summary(roast: &Roast) -> Summary {
 mod tests {
     use super::*;
 
+    fn archive(dir: &Path) -> Archive {
+        Archive::new(Arc::new(Store::in_memory().unwrap()), dir.join("roasts"))
+    }
+
     #[test]
     fn slugs_are_file_safe() {
         assert_eq!(
@@ -368,41 +541,10 @@ mod tests {
         assert_eq!(b("espresso_1.alog"), None);
     }
 
-    #[test]
-    fn a_trashed_roast_leaves_the_archive_but_keeps_its_files() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut r: Roast = serde_json::from_value(serde_json::json!({
-            "id": uuid::Uuid::new_v4(),
-            "title": "Yellow Bourbon",
-            "roasted_at": "2026-11-09T18:04:00Z",
-            "sampling_interval_s": 1.5,
-            "batch": {},
-            "origin": {"kind": "recorded"},
-            "samples": [],
-            "events": [],
-            "control_log": [],
-            "notes": [],
-        }))
-        .unwrap();
-        r.batch.batch_no = Some("BRYB-002".into());
-        let (json, alog) = save(dir.path(), &r).unwrap();
-        let name = json.file_name().unwrap().to_str().unwrap().to_owned();
-        assert!(name.starts_with("BRYB-002_2026-11-09_"), "{name}");
-        assert_eq!(find(dir.path(), r.id).unwrap().0, json);
-
-        let moved = trash(&json).unwrap();
-        assert!(find(dir.path(), r.id).is_none());
-        assert!(!json.exists() && !alog.exists());
-        assert!(moved.exists() && alog_path(&moved).exists());
-        assert_eq!(read(&moved).unwrap().id, r.id);
-    }
-
-    #[test]
-    fn an_uploaded_alog_is_imported_once_and_stays_in_the_archive_folder() {
-        let dir = tempfile::tempdir().unwrap();
-        let r: Roast = serde_json::from_value(serde_json::json!({
-            "id": uuid::Uuid::new_v4(),
-            "title": "",
+    fn roast(title: &str) -> Roast {
+        serde_json::from_value(serde_json::json!({
+            "id": Uuid::new_v4(),
+            "title": title,
             "roasted_at": "2026-11-09T18:04:00Z",
             "sampling_interval_s": 1.0,
             "batch": {},
@@ -416,22 +558,93 @@ mod tests {
             "control_log": [],
             "notes": [],
         }))
-        .unwrap();
-        let alog = roast_alog::write_alog(&r);
+        .unwrap()
+    }
 
-        let saved = import_alog_bytes(dir.path(), "../../BR011_bourbon.alog", alog.as_bytes());
-        let Ok(Imported::Saved(json)) = saved else {
+    #[test]
+    fn a_trashed_roast_leaves_the_archive_but_keeps_its_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = archive(dir.path());
+        let mut r = roast("Yellow Bourbon");
+        r.batch.batch_no = Some("BRYB-002".into());
+        let (json, alog) = a.save(&r).unwrap();
+        let name = json.file_name().unwrap().to_str().unwrap().to_owned();
+        assert!(name.starts_with("BRYB-002_2026-11-09_"), "{name}");
+        assert_eq!(a.find(r.id).unwrap().unwrap(), r);
+        assert_eq!(a.summaries().unwrap()[0]["batch_no"], "BRYB-002");
+
+        let moved = a.trash(r.id).unwrap().unwrap();
+        assert!(a.find(r.id).unwrap().is_none());
+        assert!(a.summaries().unwrap().is_empty());
+        assert!(!json.exists() && !alog.exists());
+        assert!(moved.exists() && alog_path(&moved).exists());
+        assert_eq!(read(&moved).unwrap().id, r.id);
+    }
+
+    #[test]
+    fn a_changed_roast_is_rewritten_in_the_database_and_in_its_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = archive(dir.path());
+        let mut r = roast("Castillo");
+        let (json, _) = a.save(&r).unwrap();
+        r.batch.roasted_weight_g = Some(171.0);
+        a.update(&r).unwrap();
+        assert_eq!(a.find(r.id).unwrap().unwrap(), r);
+        assert_eq!(read(&json).unwrap(), r);
+        assert_eq!(a.summaries().unwrap()[0]["roasted_weight_g"], 171.0);
+        assert_eq!(roast_files(a.dir()).len(), 1);
+
+        // Without its file copy the roast is still there and gets a new one.
+        fs::remove_file(&json).unwrap();
+        r.title = "Castillo, washed".into();
+        a.update(&r).unwrap();
+        assert_eq!(roast_files(a.dir()).len(), 1);
+        assert_eq!(a.find(r.id).unwrap().unwrap().title, "Castillo, washed");
+    }
+
+    #[test]
+    fn roast_files_of_an_earlier_version_are_taken_into_the_database_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = archive(dir.path());
+        let (first, second) = (roast("first"), roast("second"));
+        save(a.dir(), &first).unwrap();
+        save(a.dir(), &second).unwrap();
+        fs::write(a.dir().join("broken.roast.json"), "{").unwrap();
+        autosave(a.dir(), &roast("running")).unwrap();
+        assert!(a.summaries().unwrap().is_empty());
+
+        assert_eq!(a.sync().unwrap(), 2);
+        assert_eq!(a.sync().unwrap(), 0);
+        assert_eq!(a.summaries().unwrap().len(), 2);
+        assert_eq!(a.find(first.id).unwrap().unwrap(), first);
+
+        // A leftover autosave becomes a roast of its own.
+        let recovered = a.recover_autosave().unwrap().unwrap();
+        assert_eq!(read(&recovered).unwrap().title, "running (recovered)");
+        assert_eq!(a.summaries().unwrap().len(), 3);
+        assert!(a.recover_autosave().unwrap().is_none());
+    }
+
+    #[test]
+    fn an_uploaded_alog_is_imported_once_and_stays_in_the_archive_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = archive(dir.path());
+        let alog = roast_alog::write_alog(&roast(""));
+
+        let saved = a.import_alog_bytes("../../BR011_bourbon.alog", alog.as_bytes());
+        let Ok(Imported::Saved(id)) = saved else {
             panic!("not saved: {saved:?}");
         };
-        assert_eq!(json.parent(), Some(dir.path()));
-        let read_back = read(&json).unwrap();
+        let files = roast_files(a.dir());
+        assert_eq!(files.len(), 1, "{files:?}");
+        let read_back = a.find(id).unwrap().unwrap();
         assert_eq!(read_back.title, "BR011_bourbon");
         assert_eq!(read_back.samples.len(), 3);
-        assert_eq!(summary(&read_back).batch_no.as_deref(), Some("BR011"));
+        assert_eq!(a.summaries().unwrap()[0]["batch_no"], "BR011");
 
-        let again = import_alog_bytes(dir.path(), "copy.alog", alog.as_bytes());
-        assert!(matches!(again, Ok(Imported::AlreadyThere(p)) if p == json));
-        assert!(import_alog_bytes(dir.path(), "x.alog", b"not an alog").is_err());
+        let again = a.import_alog_bytes("copy.alog", alog.as_bytes());
+        assert_eq!(again.unwrap(), Imported::AlreadyThere(id));
+        assert!(a.import_alog_bytes("x.alog", b"not an alog").is_err());
     }
 
     #[test]
