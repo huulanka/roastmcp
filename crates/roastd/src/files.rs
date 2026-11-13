@@ -131,7 +131,7 @@ fn batch_no_of_file_name(name: &str) -> Option<String> {
 }
 
 /// The batch number of a roast for the archive.
-fn batch_no(roast: &Roast) -> Option<String> {
+pub(crate) fn batch_no(roast: &Roast) -> Option<String> {
     roast
         .batch
         .batch_no

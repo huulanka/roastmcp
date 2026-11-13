@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{ControlLogEntry, EventKind, Note, RoastEvent, Sample};
+use crate::{ControlLogEntry, EventKind, Note, RoastEvent, RoastLevel, Sample};
 
 /// Version of the `.roast.json` file format (ADR 0008). Bump on incompatible
 /// changes and keep a reader for every older version.
@@ -129,6 +129,33 @@ pub struct RoastDegree {
     pub ground: Option<f64>,
 }
 
+impl RoastDegree {
+    /// Readings from this value up count as a light roast.
+    pub const LIGHT_FROM: f64 = 70.0;
+    /// Readings from this value up (below [`Self::LIGHT_FROM`]) count as a
+    /// medium roast; lower ones as dark.
+    pub const MEDIUM_FROM: f64 = 50.0;
+
+    /// The rough roast level the measured colour stands for, on the Agtron
+    /// "Gourmet" scale (higher is lighter), which Lighttells meters report
+    /// too. The ground reading wins over the whole-bean one. `None` without
+    /// a reading or on another scale.
+    #[must_use]
+    pub fn level(&self) -> Option<RoastLevel> {
+        if self.scale == ColorScale::Other {
+            return None;
+        }
+        let value = self.ground.or(self.whole_bean).filter(|v| v.is_finite())?;
+        Some(if value >= Self::LIGHT_FROM {
+            RoastLevel::Light
+        } else if value >= Self::MEDIUM_FROM {
+            RoastLevel::Medium
+        } else {
+            RoastLevel::Dark
+        })
+    }
+}
+
 /// What a roast is meant for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -190,6 +217,31 @@ pub enum RoastOrigin {
 mod tests {
     use super::*;
     use crate::EventOrigin;
+
+    #[test]
+    fn a_measured_colour_gives_the_roast_level() {
+        let degree = |scale, whole_bean, ground| RoastDegree {
+            scale,
+            whole_bean,
+            ground,
+        };
+        let level = |d: RoastDegree| d.level();
+        assert_eq!(
+            level(degree(ColorScale::Agtron, Some(78.0), None)),
+            Some(RoastLevel::Light)
+        );
+        // The ground reading wins over the whole bean.
+        assert_eq!(
+            level(degree(ColorScale::Lighttells, Some(48.0), Some(62.0))),
+            Some(RoastLevel::Medium)
+        );
+        assert_eq!(
+            level(degree(ColorScale::Agtron, Some(49.9), None)),
+            Some(RoastLevel::Dark)
+        );
+        assert_eq!(level(degree(ColorScale::Agtron, None, None)), None);
+        assert_eq!(level(degree(ColorScale::Other, Some(80.0), None)), None);
+    }
 
     fn roast() -> Roast {
         Roast {

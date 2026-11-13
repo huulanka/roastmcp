@@ -4,6 +4,7 @@
 
 pub mod api;
 pub mod backup;
+pub mod cuppings;
 mod driver_thread;
 pub mod engine;
 pub mod experiments;
@@ -11,6 +12,7 @@ pub mod files;
 pub mod inventory;
 pub mod learned;
 mod legacy;
+pub mod maintenance;
 pub mod profiles;
 
 use std::net::SocketAddr;

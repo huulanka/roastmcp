@@ -145,7 +145,8 @@ the daemon (`roast-store`, `rusqlite` with SQLite compiled in; the schema is
 open) ([ADR 0003](adr/0003-local-sqlite-with-backups.md)).
 
 Tables: `roasts`, `lots`, `stock_movements`, `profiles`, `profile_versions`,
-`experiments`, `settings`. Each row keeps its full `roast-core` value as JSON beside the
+`experiments`, `cuppings`, `maintenance_tasks`, `maintenance_log`,
+`settings`. Each row keeps its full `roast-core` value as JSON beside the
 columns that are listed, searched or referred to; the archive listing reads a
 stored summary per roast and never the curves.
 
@@ -198,10 +199,30 @@ Initial tools:
 | `list_experiments` / `record_experiment` / `update_experiment` / `add_roast_note` | Hypotheses, the roasts that test them, conclusions and observations |
 | `list_lots` / `add_lot` / `add_purchase` | Green coffee inventory (ADR 0014) |
 | `start_recording` | The start dialog: lot, green weight, goal, reference, targets |
-| `get_cuppings` | Tasting data |
+| `get_cuppings` / `record_cupping` / `get_rest_status` | Tastings as the person gives them, and which roasts rest, are ready or past their best |
+| `get_maintenance` / `add_maintenance_task` / `log_maintenance` / `get_checklist` | Maintenance tasks with what is due, the log of what the person did, and the checklist before a roast (read-only) |
 
 Prompts: `debrief_roast`, `plan_next_roast`. Every AI tool call renews the AI
 lease; read-only tools never require one.
+
+## Cupping, rest and care
+
+Cuppings, maintenance tasks and the maintenance log are tables of the
+database (schema version 3); a cupping leaves with its roast, a log entry
+with its task. The daemon's `cuppings` module keeps the tastings and works
+out the rest of the recent roasts: the window per roast level (`light`,
+`medium`, `dark`) is a setting with defaults for filter coffee, and the
+level comes from the measured colour (`RoastDegree::level`), medium without
+one. There is no notification service: the "reminder" is the rest overview
+(`GET /api/rest`), which the app shows and an AI client reads.
+
+The `maintenance` module counts roasts and days since a task was last done
+(`MaintenanceTask::due_reason`); simulator roasts do not count. No task is
+built in: the person adds their own (the app will suggest some). The
+checklist before a roast is the person's list of things to check, which
+starts with five built-in items, followed by the maintenance that is due.
+It informs and is not part of the safety layer: no command, lease or
+preheat depends on it, and an AI client can read it but tick nothing off.
 
 ## Comparison and consistency
 
