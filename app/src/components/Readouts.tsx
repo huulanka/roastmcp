@@ -43,6 +43,10 @@ export function Readouts({
   const clock = running ? roastClock(snapshot) : null;
   const dev = liveDtr(snapshot.events, snapshot.charge_t, snapshot.t);
   const delta = snapshot.reference?.delta_bt ?? null;
+  const deltaText =
+    delta === null
+      ? ""
+      : `${delta > 0 ? "+" : delta < 0 ? "−" : "±"}${formatNumber(Math.abs(delta))}`;
   const dRor =
     rorDelta === null
       ? "°C/min"
@@ -64,19 +68,24 @@ export function Readouts({
       <div className="mt-1 flex items-baseline gap-1.5" aria-live="off">
         <span className="readout text-hero text-brand-text">{formatNumber(snapshot.bt)}</span>
         <span className="text-xl text-muted-foreground">°C</span>
+        {/* Beside the temperature, not below: the controls need the height. */}
+        {delta !== null && (
+          <span
+            className="ml-auto flex flex-col items-end"
+            aria-label={t("{{delta}}° to reference", { delta: deltaText })}
+          >
+            <span
+              className={cn(
+                "tabular text-xl font-medium",
+                Math.abs(delta) > 5 ? "text-brand-text" : "text-foreground",
+              )}
+            >
+              {deltaText}°
+            </span>
+            <span className="text-[13px] text-muted-foreground">{t("to reference")}</span>
+          </span>
+        )}
       </div>
-      {delta !== null && (
-        <span
-          className={cn(
-            "mt-1.5 tabular text-[15px] font-medium",
-            Math.abs(delta) > 5 ? "text-brand-text" : "text-muted-foreground",
-          )}
-        >
-          {t("{{delta}}° to reference", {
-            delta: `${delta > 0 ? "+" : delta < 0 ? "−" : "±"}${formatNumber(Math.abs(delta))}`,
-          })}
-        </span>
-      )}
       <div className="mt-4 grid grid-cols-3 gap-3">
         <Stat
           label={

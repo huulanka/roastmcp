@@ -35,10 +35,10 @@ import {
 } from "@/lib/chartData.ts";
 import { planPreheat, planProgress } from "@/lib/plan.ts";
 import {
+  isAiHolder,
   isRecording,
   latestAiNote,
   nextAction,
-  PREHEAT_HOLDER,
   rorAlert,
   rorDelta,
 } from "@/lib/roast.ts";
@@ -317,10 +317,8 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
   const preheatPlan = planPreheat(refStatus?.charge_bt, refCurve?.actions);
   // The coach speaks for an AI; without one it would only take room.
   const holder = snapshot.safety.lease_holder;
-  const coachShown =
-    note !== null ||
-    snapshot.safety.ai_suspended ||
-    (holder !== null && holder !== undefined && holder !== PREHEAT_HOLDER);
+  const coachShown = note !== null || snapshot.safety.ai_suspended || isAiHolder(holder);
+  const controlsOff = !snapshot.safety.connected || snapshot.safety.emergency_stop;
   const chartLabel = t("Roast curve: bean {{bt}} °C at {{time}}, RoR {{ror}} °C/min", {
     bt: formatNumber(snapshot.bt),
     time: formatClock(base !== null && snapshot.t !== null ? snapshot.t - base : snapshot.t),
@@ -385,19 +383,17 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
           machine={snapshot.machine}
           safety={snapshot.safety}
           preheating={!!snapshot.preheat}
+          autopilot={snapshot.autopilot?.state === "active"}
           top={
             preRoast ? (
               <PreheatCard
                 preheat={snapshot.preheat ?? null}
                 bt={snapshot.bt}
                 plan={preheatPlan}
-                disabled={!snapshot.safety.connected || snapshot.safety.emergency_stop}
+                disabled={controlsOff}
               />
             ) : nextStep && base !== null ? (
-              <RecipeCue
-                next={nextStep}
-                disabled={!snapshot.safety.connected || snapshot.safety.emergency_stop}
-              />
+              <RecipeCue next={nextStep} disabled={controlsOff} />
             ) : null
           }
         />

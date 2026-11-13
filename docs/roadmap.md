@@ -37,8 +37,11 @@ Next, in order:
    profiles and settings; checked backups to a chosen folder after every
    roast and daily; `roastmcp restore`
    ([ADR 0003](adr/0003-local-sqlite-with-backups.md)).
-5. **Autopilot (M7)**: the AI sets RoR targets, a controller with a model of
-   the machine's lag follows them; confirmation before critical steps.
+5. **Autopilot (M7)**: built and proven in the simulator — switched on in
+   the app, it runs a profile's recipe and trims the burner to keep the roast
+   on the profile's curve ([ADR 0020](adr/0020-autopilot-recipe-and-trim.md));
+   the simulator is fitted to the Cubean+ with beans. Open: three supervised
+   roasts on the machine.
 6. M4–M6 and M8 as below; release through the Homebrew tap.
 
 ## M0: foundations
@@ -115,9 +118,10 @@ of a set of recorded roasts.
 
 ## M7: autopilot
 
-- Controller following a profile; MCP control tools; AI lease; presence
-  confirmation; confirmation of critical steps.
-- Proven in the simulator with fault injection, then in supervised real roasts.
+- Controller following a profile: the recipe runner and a trim on the
+  burner (ADR 0020); MCP control tools; AI lease; presence confirmation.
+- Proven in the simulator (a weaker and a stronger machine, a colder start,
+  a takeover by hand), then in supervised real roasts.
 
 *Go on when:* three supervised roasts driven by the autopilot within the
 profile's tolerance, with no safety violation.

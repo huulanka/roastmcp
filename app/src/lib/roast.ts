@@ -1,4 +1,5 @@
 import type {
+  Autopilot,
   EventKind,
   Note,
   RoastEvent,
@@ -139,6 +140,56 @@ export interface PresenceView {
 
 /** Lease holder name of the daemon's own preheat automation. */
 export const PREHEAT_HOLDER = "preheat";
+/** Lease holder name of the autopilot a person switched on (ADR 0020). */
+export const AUTOPILOT_HOLDER = "autopilot";
+
+/**
+ * What the autopilot is doing, as an i18n key with its values: off, armed
+ * before CHARGE, waiting for a presence confirmation, or active with how far
+ * its corrections moved the burner away from the recipe.
+ */
+export function autopilotStatus(a: Autopilot | null): {
+  /** A word or two for the pill in the top bar; empty when it is off. */
+  short: string;
+  /** The whole sentence, for the tooltip and screen readers. */
+  text: string;
+  values: Record<string, string>;
+} {
+  if (!a) return { short: "", text: "off", values: {} };
+  if (a.state === "armed") {
+    return { short: "from CHARGE", text: "takes over at CHARGE", values: {} };
+  }
+  if (a.state === "waiting") {
+    return { short: "waits", text: "waits for your confirmation", values: {} };
+  }
+  const points = Math.round(a.offset);
+  if (points === 0) return { short: "active", text: "active", values: {} };
+  return {
+    short: "active {{delta}}",
+    text: "active, burner {{delta}}",
+    values: { delta: `${points > 0 ? "+" : "−"}${Math.abs(points)}` },
+  };
+}
+
+/**
+ * Whether the autopilot can be switched: it follows a profile, from CHARGE
+ * to DROP (ADR 0020). Older daemons send no `autopilot` field.
+ */
+export function autopilotOffered(
+  s: Pick<Snapshot, "autopilot" | "connection" | "reference" | "events">,
+): boolean {
+  return (
+    s.autopilot !== undefined &&
+    s.connection === "connected" &&
+    s.reference?.kind === "profile" &&
+    !s.events.some((e) => e.kind === "drop")
+  );
+}
+
+/** Whether the lease holder is an AI client, not one of the daemon's own controllers. */
+export function isAiHolder(holder: string | null | undefined): holder is string {
+  return !!holder && holder !== PREHEAT_HOLDER && holder !== AUTOPILOT_HOLDER;
+}
 
 export function presenceView(safety: SafetyStatus): PresenceView {
   const due = safety.presence_due_in_s;

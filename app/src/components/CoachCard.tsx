@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { api, ApiError } from "@/api/client.ts";
 import type { Note, Snapshot } from "@/api/types.ts";
 import { Button } from "@/components/ui/button.tsx";
-import { PREHEAT_HOLDER, presenceView } from "@/lib/roast.ts";
+import { AUTOPILOT_HOLDER, isAiHolder, PREHEAT_HOLDER, presenceView } from "@/lib/roast.ts";
 import { cn } from "@/lib/utils.ts";
 import { formatClock } from "@/lib/units.ts";
 import { confirmPresence } from "@/state/actions.ts";
@@ -35,20 +35,18 @@ export function CoachCard({ snapshot, note }: { snapshot: Snapshot; note: Note |
         <span>
           {holder === PREHEAT_HOLDER
             ? t("Coach · preheating")
-            : holder
-              ? t("{{holder}} · in control", { holder })
-              : safety.ai_suspended
-                ? t("Coach · AI paused")
-                : t("Coach")}
+            : holder === AUTOPILOT_HOLDER
+              ? t("Coach · autopilot")
+              : holder
+                ? t("{{holder}} · in control", { holder })
+                : safety.ai_suspended
+                  ? t("Coach · AI paused")
+                  : t("Coach")}
         </span>
         {note && base !== null && <span className="tabular">{formatClock(note.t - base)}</span>}
       </div>
       <p className={cn("text-[15px] leading-snug", !note && "text-muted-foreground")}>
-        {note
-          ? note.text
-          : holder && holder !== PREHEAT_HOLDER
-            ? t("No notes yet.")
-            : t("No AI connected.")}
+        {note ? note.text : isAiHolder(holder) ? t("No notes yet.") : t("No AI connected.")}
       </p>
       {presence.due !== null && (
         <p

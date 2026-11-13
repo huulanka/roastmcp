@@ -41,6 +41,11 @@ also confirms their presence. At DROP the daemon turns the burner off, switches 
 cooling on (already 30 s before the planned DROP) and gives control back to the person. \
 set_filter turns up the smoke filter, set_cooling switches the bean cooling. wait returns a \
 compact status with only new events and alarms. \
+The person can switch on the app's autopilot (status: autopilot): the daemon then runs the \
+recipe and trims the burner by a few points to keep the roast on the profile's curve, without \
+you. You cannot switch it on or off. If you take control while it is on, it goes on under your \
+lease: watch, mark events and use adjust_recipe, and leave the burner to it; to steer the burner \
+yourself, ask the person to switch the autopilot off. \
 To control the roaster, a person must confirm presence in the RoastMCP app (every 3 min while \
 you are in control), then call request_control. Your commands pass a safety layer: cutting the \
 burner or adding air is never limited; raising the burner is limited to 10 points per command \
@@ -691,6 +696,7 @@ fn compact_status(seen: &mut Seen, s: &Value) -> Value {
         "projection": s.get("projection"),
         "recipe": recipe_compact(s.get("recipe")),
         "preheat": s.get("preheat"),
+        "autopilot": s.get("autopilot"),
         "safety": {
             "lease_holder": safety.get("lease_holder"),
             "lease_remaining_s": round(safety.get("lease_remaining_s")),

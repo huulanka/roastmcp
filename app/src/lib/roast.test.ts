@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type { EventKind, SafetyStatus } from "@/api/types.ts";
 import {
+  autopilotStatus,
   endedRoast,
+  isAiHolder,
   latestAiNote,
   liveDtr,
   nextAction,
@@ -146,5 +148,34 @@ describe("weight dialog after a roast", () => {
     expect(endedRoast({ recording: rec, state: "recording" }, { recording: null })).toBeNull();
     expect(endedRoast({ recording: rec, state: "charged" }, { recording: rec })).toBeNull();
     expect(endedRoast(null, { recording: null })).toBeNull();
+  });
+});
+
+describe("autopilot", () => {
+  it("says what it is doing and how far it is from the recipe", () => {
+    expect(autopilotStatus(null).text).toBe("off");
+    const on = { offset: 0, corrections: 0 };
+    expect(autopilotStatus({ ...on, state: "armed" }).text).toBe("takes over at CHARGE");
+    expect(autopilotStatus({ ...on, state: "waiting" }).text).toBe("waits for your confirmation");
+    expect(autopilotStatus({ ...on, state: "active" }).text).toBe("active");
+    expect(autopilotStatus({ state: "active", offset: 5, corrections: 1 }).values).toEqual({
+      delta: "+5",
+    });
+    expect(autopilotStatus({ state: "active", offset: -10, corrections: 2 }).values).toEqual({
+      delta: "−10",
+    });
+    // The pill in the top bar has room for a word or two.
+    expect(autopilotStatus(null).short).toBe("");
+    expect(autopilotStatus({ ...on, state: "armed" }).short).toBe("from CHARGE");
+    expect(autopilotStatus({ state: "active", offset: 5, corrections: 1 }).short).toBe(
+      "active {{delta}}",
+    );
+  });
+
+  it("is not an AI: only clients are", () => {
+    expect(isAiHolder("mcp:claude")).toBe(true);
+    expect(isAiHolder("autopilot")).toBe(false);
+    expect(isAiHolder("preheat")).toBe(false);
+    expect(isAiHolder(null)).toBe(false);
   });
 });

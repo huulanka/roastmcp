@@ -82,6 +82,7 @@ pub fn router(state: AppState, ui_dir: Option<PathBuf>) -> Router {
         .route("/shutdown", post(shutdown))
         .route("/reference", get(reference).put(set_reference))
         .route("/preheat", post(preheat_start).delete(preheat_stop))
+        .route("/autopilot", post(autopilot_start).delete(autopilot_stop))
         .route("/profiles", get(profiles_list).post(profile_add))
         .route("/profiles/{id}", get(profile_get).patch(profile_patch))
         .route("/profiles/{id}/versions", post(profile_version_add))
@@ -190,6 +191,23 @@ async fn preheat_start(
 
 async fn preheat_stop(State(st): State<AppState>) -> impl IntoResponse {
     match st.engine.call(|e| e.stop_preheat()).await {
+        Ok(s) => Json(s).into_response(),
+        Err(e) => engine_gone(&e).into_response(),
+    }
+}
+
+/// The app's autopilot switch (ADR 0020). Switching it on is a person's
+/// word that automation may run and that they are at the roaster.
+async fn autopilot_start(State(st): State<AppState>) -> impl IntoResponse {
+    match st.engine.call(|e| e.start_autopilot()).await {
+        Ok(Ok(s)) => Json(s).into_response(),
+        Ok(Err(f)) => f.into_response(),
+        Err(e) => engine_gone(&e).into_response(),
+    }
+}
+
+async fn autopilot_stop(State(st): State<AppState>) -> impl IntoResponse {
+    match st.engine.call(|e| e.stop_autopilot()).await {
         Ok(s) => Json(s).into_response(),
         Err(e) => engine_gone(&e).into_response(),
     }

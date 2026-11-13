@@ -312,6 +312,14 @@ export interface Preheat {
   target_c: number;
   state: "heating" | "holding";
 }
+/** The autopilot while it is switched on (ADR 0020). */
+export interface Autopilot {
+  /** Before CHARGE; in control; waiting for a presence confirmation. */
+  state: "armed" | "active" | "waiting";
+  /** Burner points its corrections moved away from the recipe. */
+  offset: number;
+  corrections: number;
+}
 /** `GET /api/reference`: the reference curve, `t` in seconds since its CHARGE. */
 export interface ReferenceCurve {
   id: string;
@@ -349,6 +357,8 @@ export interface Snapshot {
   control_request?: string | null;
   /** The profile's recipe in this roast (ADR 0019). */
   recipe?: RecipeStatus | null;
+  /** The autopilot while it is on; absent on daemons without it. */
+  autopilot?: Autopilot | null;
 }
 export interface Note {
   t: number;

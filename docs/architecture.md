@@ -39,7 +39,7 @@ crates/
   roast-bluetooth       Bluetooth Classic RFCOMM links on macOS via IOBluetooth (ADR 0013); the only crate with unsafe code
   roast-twin            thermal model (digital twin), simulated driver, calibration
   roast-safety          arbitration, limits, rate limits, AI lease, presence, overheat, e-stop
-  roast-control         autopilot controller (profile follower)
+  roast-control         preheat, recipe runner and the autopilot's trim
   roast-audio           microphone capture, first-crack detector
   roast-store           SQLite schema, storage and backups
   roast-api             API and event types shared by daemon, app and MCP (exported to TypeScript)
@@ -191,7 +191,6 @@ Initial tools:
 | `wait` | Waits up to 30 s, then a compact status with only new events and alarms |
 | `set_burner` / `set_air` / `set_drum` / `set_filter` / `set_cooling` | Actuator changes through the safety layer, with a reason |
 | `emergency_stop` | Immediate safe state |
-| `start_autopilot` / `adjust_autopilot` / `stop_autopilot` | Run a profile; change targets |
 | `list_roasts` / `get_roast` / `compare_roasts` | Archive access and analysis |
 | `list_profiles` / `get_profile` / `create_profile` / `add_profile_version` | Profile development: milestones, recipe, a new version per change |
 | `set_reference` | A roast or a profile as the plan line; `get_status` then shows the deviation and the next recipe step |
@@ -224,7 +223,7 @@ after the turning point, or a time after dry end or first crack.
 
 ## Recipe runner
 
-While an AI holds the lease and the plan is a profile, `roast-control`'s
+While an AI or the autopilot holds the lease and the plan is a profile, `roast-control`'s
 `RecipeRun` follows the recipe ([ADR 0019](adr/0019-handover-before-charge-and-recipe-runner.md)):
 the daemon feeds it each reading from CHARGE on, and sets due steps with
 source `Autopilot`, paced by the safety layer's limits (the CHARGE step may
@@ -235,16 +234,27 @@ under its lease until CHARGE.
 
 ## Autopilot
 
-Two levels ([ADR 0004](adr/0004-ai-sets-targets-controller-executes.md)):
+A person switches the autopilot on in the app
+([ADR 0020](adr/0020-autopilot-recipe-and-trim.md)); it needs a profile as
+the plan and no AI. Before CHARGE it is armed, from CHARGE to DROP the daemon
+holds the lease as `autopilot` and does two things on every reading:
 
-- The **controller** (`roast-control`) runs inside the daemon on every sample.
-  It follows a target profile (bean temperature and rate of rise over time,
-  plus planned air and drum changes), using feed-forward from the digital twin
-  and a PI correction on the rate-of-rise error. Its output goes through the
-  safety layer with source `Autopilot`.
-- The **AI** chooses and adjusts the target profile, comments, and decides on
-  critical steps, which always need a human confirmation (start, DROP, large
-  changes). Machines that drop by hand get a "drop now" cue instead.
+- The **recipe runner** sets the profile's steps at their triggers.
+- The **trim** (`roast-control`'s `Trim`) keeps the bean temperature on the
+  profile's curve between the steps, by step and wait: it predicts the
+  deviation 90 s ahead, leaves a ±3 °C band alone, corrects the burner by at
+  most 5 points, waits 90 s for the machine to answer, and stays within ±10
+  points of the recipe. A correction carries over to the recipe's later
+  burner steps.
+
+Both send their commands through the safety layer with source `Autopilot`.
+A person's command on burner, air or drum, DROP, an emergency stop, a lost
+link or a missed presence confirmation end it. An AI may hold the lease
+meanwhile and adjust the recipe; it cannot switch the autopilot on.
+
+The simulator is fitted to the Cubean+ with beans
+([research/simulator-calibration.md](research/simulator-calibration.md)), so
+the autopilot is tested on a machine as sluggish as the real one.
 
 ## Digital twin
 
