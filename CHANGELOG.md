@@ -1,3 +1,10 @@
+# [1.19.0](https://github.com/huulanka/roastmcp/compare/v1.18.0...v1.19.0) (2026-11-13)
+
+
+### Features
+
+* the autopilot runs a profile's recipe and keeps the roast on its curve (ADR 0020) ([#41](https://github.com/huulanka/roastmcp/issues/41)) ([25e8112](https://github.com/huulanka/roastmcp/commit/25e8112f185c077a5454b6d17827225878007b7a))
+
 # [1.18.0](https://github.com/huulanka/roastmcp/compare/v1.17.0...v1.18.0) (2026-11-10)
 
 
