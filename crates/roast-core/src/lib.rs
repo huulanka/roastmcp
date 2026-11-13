@@ -12,6 +12,7 @@
 pub mod actuator;
 pub mod analysis;
 pub mod command;
+pub mod compare;
 pub mod cupping;
 pub mod design;
 pub mod event;
@@ -32,6 +33,10 @@ pub use actuator::{Actuator, ActuatorValues};
 pub use analysis::{DetectorConfig, EventDetector, Phases, phases};
 pub use command::{
     ActuatorCommand, CommandOutcome, CommandRequest, CommandSource, ControlLogEntry, RejectReason,
+};
+pub use compare::{
+    Alignment, Comparison, Consistency, CurveRow, FigureDeltas, RoastFigures, Spread, compare,
+    consistency, figures, spread,
 };
 pub use cupping::{
     Cupping, CuppingError, CuppingScores, RestWindow, RestWindows, RoastLevel, rest_days_between,

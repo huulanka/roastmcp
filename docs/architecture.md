@@ -141,11 +141,11 @@ main way the community adds roasters ([ADR 0006](adr/0006-machine-profiles.md)).
 
 SQLite on the local disk (`roastmcp.sqlite` in the data folder), opened by
 the daemon (`roast-store`, `rusqlite` with SQLite compiled in; the schema is
-`crates/roast-store/src/schema.sql`, later versions run as migrations on
+`crates/roast-store/src/schema.sql`, later versions in `migrations/` run on
 open) ([ADR 0003](adr/0003-local-sqlite-with-backups.md)).
 
 Tables: `roasts`, `lots`, `stock_movements`, `profiles`, `profile_versions`,
-`settings`. Each row keeps its full `roast-core` value as JSON beside the
+`experiments`, `settings`. Each row keeps its full `roast-core` value as JSON beside the
 columns that are listed, searched or referred to; the archive listing reads a
 stored summary per roast and never the curves.
 
@@ -194,13 +194,29 @@ Initial tools:
 | `list_roasts` / `get_roast` / `compare_roasts` | Archive access and analysis |
 | `list_profiles` / `get_profile` / `create_profile` / `add_profile_version` | Profile development: milestones, recipe, a new version per change |
 | `set_reference` | A roast or a profile as the plan line; `get_status` then shows the deviation and the next recipe step |
-| `record_experiment` / `add_roast_note` | Hypotheses and observations |
+| `get_consistency` | The spread of the figures and curves over the roasts of a lot, a profile or a chosen set |
+| `list_experiments` / `record_experiment` / `update_experiment` / `add_roast_note` | Hypotheses, the roasts that test them, conclusions and observations |
 | `list_lots` / `add_lot` / `add_purchase` | Green coffee inventory (ADR 0014) |
 | `start_recording` | The start dialog: lot, green weight, goal, reference, targets |
 | `get_cuppings` | Tasting data |
 
 Prompts: `debrief_roast`, `plan_next_roast`. Every AI tool call renews the AI
 lease; read-only tools never require one.
+
+## Comparison and consistency
+
+`roast-core::compare` reads saved roasts only. `figures` takes the numbers
+of a roast (charge, turning point, dry end, first crack, drop, development,
+weight loss, colour); `compare` puts two roasts side by side, with both
+curves on one clock that starts at CHARGE or has its zero at first crack;
+`consistency` gives the spread of each figure over a group of roasts (a lot,
+a profile, a chosen set) and how far their curves lie apart. The daemon
+serves both (`/api/roasts/compare`, `/api/consistency`), the MCP server
+passes them on.
+
+An experiment is one hypothesis and one deliberate change, the roasts that
+test it and the conclusion. It lives in the database; a roast names its
+experiment, so the link is in the roast's open file as well.
 
 ## Preheat
 

@@ -1,4 +1,5 @@
--- RoastMCP database, schema version 1 (ADR 0003).
+-- RoastMCP database, schema version 1 (ADR 0003). Later versions are in
+-- migrations/ and run on top of this file.
 --
 -- * Ids are UUIDs as lowercase hyphenated TEXT.
 -- * Instants are UTC TEXT of fixed width (`2026-11-08T14:30:00.000Z`), so

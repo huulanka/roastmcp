@@ -2,8 +2,9 @@
 //!
 //! [`Store`] is the database: one SQLite file on the local disk, in WAL mode
 //! with foreign keys on, opened by the daemon alone. It holds the roasts, the
-//! green coffee inventory, the profiles and the settings; the schema is in
-//! `schema.sql` and later versions are applied as migrations on open.
+//! green coffee inventory, the profiles, the experiments and the settings;
+//! the schema is in `schema.sql` and later versions (`migrations/`) are
+//! applied on open.
 //!
 //! [`Store::backup`] writes a verified copy into another folder (which may be
 //! on a NAS) and keeps the newest few; [`restore`] puts one back.
@@ -15,14 +16,17 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use chrono::{DateTime, SecondsFormat, Utc};
-use roast_core::{Inventory, Profile, ProfileVersion, Roast};
+use roast_core::{Experiment, Inventory, Profile, ProfileVersion, Roast};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use uuid::Uuid;
 
 /// Schema versions in order; version `n` is reached by running the first `n`.
-const MIGRATIONS: &[&str] = &[include_str!("schema.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("schema.sql"),
+    include_str!("migrations/0002_experiments.sql"),
+];
 
 /// Marks a file as a RoastMCP database (`PRAGMA application_id`, "RMCP").
 const APPLICATION_ID: i64 = 0x524D_4350;
@@ -336,6 +340,56 @@ impl Store {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    // --------------------------------------------------------- experiments
+
+    /// All experiments, newest first.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a database error or an undecodable record.
+    pub fn experiments(&self) -> Result<Vec<Experiment>> {
+        column(
+            &self.conn(),
+            "SELECT experiment FROM experiments ORDER BY created_at DESC, id",
+        )
+    }
+
+    /// Saves an experiment (new, or replacing the stored one with its id).
+    ///
+    /// # Errors
+    ///
+    /// Fails on a database error.
+    pub fn save_experiment(&self, e: &Experiment) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO experiments (id, created_at, status, experiment)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (id) DO UPDATE SET
+                created_at = excluded.created_at,
+                status = excluded.status,
+                experiment = excluded.experiment",
+            params![
+                e.id.to_string(),
+                instant(e.created_at),
+                e.status.as_str(),
+                serde_json::to_string(e)?
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Removes an experiment; `false` if there was none with this id.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a database error.
+    pub fn delete_experiment(&self, id: Uuid) -> Result<bool> {
+        let n = self.conn().execute(
+            "DELETE FROM experiments WHERE id = ?1",
+            params![id.to_string()],
+        )?;
+        Ok(n > 0)
     }
 
     // -------------------------------------------------------------- roasts
@@ -743,6 +797,65 @@ mod tests {
             .push(StockMovement::purchase(Uuid::new_v4(), 1.0, at));
         assert!(s.save_inventory(&broken).is_err());
         assert_eq!(s.inventory().unwrap(), inv);
+    }
+
+    #[test]
+    fn experiments_are_saved_replaced_listed_newest_first_and_deleted() {
+        use roast_core::{ChangedVariable, ExperimentStatus};
+        let s = Store::in_memory().unwrap();
+        let change = |d: &str| ChangedVariable {
+            description: d.into(),
+            structured: None,
+        };
+        let old = Experiment::new(
+            "A hotter charge shortens drying",
+            change("charge 10 °C hotter"),
+            "2026-11-01T12:00:00Z".parse().unwrap(),
+        );
+        let mut new = Experiment::new(
+            "More air after first crack keeps it clean",
+            change("air +10 after first crack"),
+            "2026-11-05T12:00:00Z".parse().unwrap(),
+        );
+        s.save_experiment(&old).unwrap();
+        s.save_experiment(&new).unwrap();
+        assert_eq!(s.experiments().unwrap(), [new.clone(), old.clone()]);
+
+        new.status = ExperimentStatus::Done;
+        new.conclusion = Some("cleaner cup, 5 s shorter".into());
+        new.roast_ids.push(Uuid::new_v4());
+        s.save_experiment(&new).unwrap();
+        assert_eq!(s.experiments().unwrap(), [new.clone(), old.clone()]);
+
+        assert!(s.delete_experiment(old.id).unwrap());
+        assert!(!s.delete_experiment(old.id).unwrap());
+        assert_eq!(s.experiments().unwrap(), [new]);
+    }
+
+    #[test]
+    fn a_database_of_schema_version_1_gets_the_later_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("roastmcp.sqlite");
+        {
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(MIGRATIONS[0]).unwrap();
+            conn.pragma_update(None, "user_version", 1).unwrap();
+            conn.pragma_update(None, "application_id", APPLICATION_ID)
+                .unwrap();
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('answer', '42')",
+                [],
+            )
+            .unwrap();
+        }
+        let s = Store::open(&db).unwrap();
+        assert_eq!(s.setting::<u32>("answer").unwrap(), Some(42));
+        assert!(s.experiments().unwrap().is_empty());
+        let version: i64 = s
+            .conn()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(usize::try_from(version).unwrap(), MIGRATIONS.len());
     }
 
     #[test]

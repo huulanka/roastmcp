@@ -31,8 +31,11 @@ Next, in order:
 3. **Archive**: done — compare two roasts (the other one dashed, both from
    CHARGE, with the differences in duration, first crack, drop, development
    and weight loss), roasted weight and roast colour after the roast, import
-   of `.alog` files from the app (file picker or drop). Open: alignment on
-   first crack, consistency statistics.
+   of `.alog` files from the app (file picker or drop). In the daemon and
+   for AI clients: comparison lined up on CHARGE or first crack, consistency
+   statistics per lot or profile, experiments, ambient conditions, and the
+   prompts `debrief_roast` and `plan_next_roast`. Open: the same in the
+   app (alignment on first crack, consistency, experiments).
 4. **Store and backup**: done — SQLite database for roasts, inventory,
    profiles and settings; checked backups to a chosen folder after every
    roast and daily; `roastmcp restore`

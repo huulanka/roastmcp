@@ -167,7 +167,12 @@ interface Snapshot {
 | `POST /api/notes` | `{ text }` | `Snapshot` |
 | `GET /api/roasts` | | `{ id, title, roasted_at, total_s, drop_bt, green_weight_g, roasted_weight_g, batch_no, … }[]`, newest first; `batch_no` is the roast's, or for an imported Artisan file the one its name starts with (`BR011_…`) |
 | `GET /api/roasts/{id}` | | the roast (`.roast.json` content); each sample also carries `ror` (°C/min), computed as the live value |
-| `PATCH /api/roasts/{id}` | `{ title?, roasted_weight_g?, green_weight_g?, notes?, roast_degree? }` | the roast, as `GET`; a changed green weight replaces the roast's stock debit; `roast_degree` is `{ scale: "agtron" \| "lighttells" \| "other", whole_bean?, ground? }` and replaces the stored colour (no reading clears it) |
+| `PATCH /api/roasts/{id}` | `{ title?, roasted_weight_g?, green_weight_g?, notes?, note_origin?, roast_degree?, ambient? }` | the roast, as `GET`; a changed green weight replaces the roast's stock debit; `notes` adds a note (`note_origin: "ai"` marks it as an AI's); `roast_degree` is `{ scale: "agtron" \| "lighttells" \| "other", whole_bean?, ground? }` and replaces the stored colour (no reading clears it); `ambient` is `{ temperature_c?, humidity_pct?, pressure_hpa? }` and replaces the stored conditions (empty clears them; 400 outside −30…60 °C, 0…100 %, 500…1100 hPa) |
+| `GET /api/roasts/compare?a=<id>&b=<id>&align=charge\|first_crack&step_s=30` | | `{ align, a, b, delta, curve, max_delta_bt, roast_a, roast_b }` — two saved roasts side by side: `a` and `b` are their figures (`charge_bt_c`, `turning_point_s`, `turning_point_bt_c`, `dry_end_s`, `dry_end_bt_c`, `first_crack_s`, `first_crack_bt_c`, `total_s`, `drop_bt_c`, `development_s`, `dtr_pct`, `weight_loss_pct`, `colour_whole`, `colour_ground`; times since CHARGE), `delta` is `a − b`, `curve` has a row every `step_s` (1…600) seconds from CHARGE to DROP: `{ t, a_bt, b_bt, delta_bt, a_ror, b_ror }`. With `align=first_crack` zero is the start of first crack (negative before); `align` in the answer is `charge` if one of the roasts has no first crack. `max_delta_bt` is the largest BT difference after both turning points; `roast_a` and `roast_b` are `{ id, title, roasted_at, batch_no }`. 404 for an unknown roast |
+| `GET /api/consistency?lot_id=<id>` \| `?profile_id=<id>` \| `?ids=<id>,<id>` (`&simulated=true`) | | `{ consistency, roasts, unfinished }` — how alike the roasts of a lot, of a profile (any of its versions) or of a chosen set are. `consistency` has `roasts` (how many), a spread `{ n, mean, sd, min, max }` or `null` per figure (`charge_bt_c`, `dry_end_s`, `first_crack_s`, `first_crack_bt_c`, `total_s`, `drop_bt_c`, `development_s`, `dtr_pct`, `weight_loss_pct`) and `curve_sd_c`: the standard deviation of the bean temperature across the roasts, averaged between turning point and DROP (`null` under two roasts). `roasts` lists them oldest first with their `figures` (the newest 60 at most); recordings without CHARGE or DROP are left out and counted in `unfinished`. Simulator roasts only with `simulated=true` or by id. 400 unless exactly one of the three is given |
+| `GET /api/experiments` | | `Experiment[]`, newest first: `{ id, hypothesis, changed_variable: { description, structured?: { name, from, to } }, expected_outcome?, conclusion?, status: "planned" \| "running" \| "done", profile_version_id?, roast_ids, created_at }` |
+| `POST /api/experiments` | `{ hypothesis, change, variable?: { name, from, to }, expected_outcome?, profile_version_id?, roast_ids? }` | `Experiment`; with roasts it is `running` at once. 400 without a hypothesis or a change, 404 for an unknown roast |
+| `GET /api/experiments/{id}` / `PATCH /api/experiments/{id}` / `DELETE /api/experiments/{id}` | patch: `{ hypothesis?, change?, expected_outcome?, conclusion?, status?, add_roasts?, remove_roasts? }` | `Experiment` (`{}` after a delete). The first roast makes it `running`, a conclusion `done`, unless `status` says otherwise. A roast belongs to one experiment and names it (`experiment_id` in the roast and its file); adding it to another moves it. Deleting an experiment keeps its roasts |
 | `POST /api/roasts/import?name=<file name>` | the bytes of an Artisan `.alog` (up to 16 MB) | `{ id, title, already_there }` — the roast is saved as `.roast.json` with the original file beside it; the same roast again is not imported twice |
 | `DELETE /api/roasts/{id}` | | `{ credited_g, trash_path }` — the files move to `roasts/trash/` (restore by moving them back), the stock debit is taken back, the action log records it |
 | `GET /api/profiles?archived=true` | | `{ …Profile, latest: { id, version, created_at, change_note } \| null, versions }[]`, newest change first (ADR 0017) |
@@ -222,7 +227,12 @@ and only the events and alarms new since the last `get_status` or `wait`;
 `adjust_recipe` (move, change or skip steps of the running roast's recipe),
 `set_burner`, `set_air`, `set_drum`, `set_filter`, `set_cooling` (on/off),
 `emergency_stop`, `list_roasts`,
-`get_roast`, `set_reference` (a roast or a profile), the inventory and start
+`get_roast`, `compare_roasts` (two roasts lined up on CHARGE or on first
+crack), `get_consistency` (the spread over the roasts of a lot, a profile or
+a chosen set), `add_roast_note`, the experiments (`list_experiments`,
+`record_experiment`, `update_experiment`: one hypothesis, one change, the
+roasts that test it, the conclusion),
+`set_reference` (a roast or a profile), the inventory and start
 dialog of the app (ADR 0014): `list_lots`, `add_lot`, `add_purchase`,
 `start_recording` (lot by id or name, green weight, goal, reference or
 profile, drop temperature, DTR), and the profiles (ADR 0017):
@@ -242,3 +252,10 @@ off, switches the bean cooling on and ends the AI's lease (see
 app, and there is no preheat or autopilot tool, because starting either
 confirms presence. The status shows the autopilot while it is on (state,
 offset from the recipe, corrections).
+
+The server also offers two prompts (`prompts/list`, `prompts/get`):
+`debrief_roast` (argument `roast`: an id or batch number, the newest roast
+without it) walks through a saved roast, its plan and the coffee's other
+roasts and ends with one proposed change; `plan_next_roast` (argument
+`coffee`) plans the next roast of a lot from its earlier roasts, its profile
+and the open experiments, and prepares the recording.

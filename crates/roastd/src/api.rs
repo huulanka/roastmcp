@@ -16,6 +16,7 @@ use tower_http::services::{ServeDir, ServeFile};
 
 use crate::backup::{self, BackupConfig, BackupStatus};
 use crate::engine::{ConnectReq, EngineHandle, Fail, RecordingMeta};
+use crate::experiments::{ExperimentPatch, Experiments, NewExperiment};
 use crate::files::{self, Archive};
 use crate::inventory::{AdjustReq, LotPatch, NewLot, PurchaseReq};
 
@@ -73,6 +74,15 @@ pub fn router(state: AppState, ui_dir: Option<PathBuf>) -> Router {
             "/roasts/import",
             post(roast_import).layer(axum::extract::DefaultBodyLimit::max(IMPORT_MAX_BYTES)),
         )
+        .route("/experiments", get(experiments).post(experiment_add))
+        .route(
+            "/experiments/{id}",
+            get(experiment)
+                .patch(experiment_patch)
+                .delete(experiment_delete),
+        )
+        .route("/roasts/compare", get(roast_compare))
+        .route("/consistency", get(consistency))
         .route(
             "/roasts/{id}",
             get(roast).patch(roast_patch).delete(roast_delete),
@@ -439,6 +449,63 @@ async fn blocking<T: Send + 'static>(
         .map_err(|e| Fail::internal(e.to_string()))
 }
 
+/// Runs a blocking database call that fails with its own status.
+async fn blocking_fail<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, Fail> + Send + 'static,
+) -> ApiResult<T> {
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| Fail::internal(e.to_string()))?
+        .map(Json)
+}
+
+fn experiments_of(st: &AppState) -> Experiments {
+    Experiments::new(st.store.clone(), st.archive.clone())
+}
+
+fn experiment_id(id: &str) -> Result<uuid::Uuid, Fail> {
+    id.parse()
+        .map_err(|_| Fail::not_found("no such experiment"))
+}
+
+async fn experiments(State(st): State<AppState>) -> ApiResult<Vec<roast_core::Experiment>> {
+    let x = experiments_of(&st);
+    blocking_fail(move || x.list()).await
+}
+
+async fn experiment_add(
+    State(st): State<AppState>,
+    Json(new): Json<NewExperiment>,
+) -> ApiResult<roast_core::Experiment> {
+    let x = experiments_of(&st);
+    blocking_fail(move || x.create(new)).await
+}
+
+async fn experiment(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<roast_core::Experiment> {
+    let (x, id) = (experiments_of(&st), experiment_id(&id)?);
+    blocking_fail(move || x.get(id)).await
+}
+
+async fn experiment_patch(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Json(p): Json<ExperimentPatch>,
+) -> ApiResult<roast_core::Experiment> {
+    let (x, id) = (experiments_of(&st), experiment_id(&id)?);
+    blocking_fail(move || x.update(id, p)).await
+}
+
+async fn experiment_delete(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    let (x, id) = (experiments_of(&st), experiment_id(&id)?);
+    blocking_fail(move || x.delete(id).map(|()| serde_json::json!({}))).await
+}
+
 async fn roasts(State(st): State<AppState>) -> ApiResult<Vec<serde_json::Value>> {
     let archive = st.archive.clone();
     blocking(move || archive.summaries()).await.map(Json)
@@ -455,6 +522,122 @@ async fn find(st: &AppState, id: &str) -> Result<roast_core::Roast, Fail> {
 async fn roast(State(st): State<AppState>, Path(id): Path<String>) -> ApiResult<serde_json::Value> {
     let r = find(&st, &id).await?;
     with_ror(&r).map(Json)
+}
+
+#[derive(Deserialize)]
+struct CompareQuery {
+    a: String,
+    b: String,
+    /// What the curves are lined up on; CHARGE without it.
+    #[serde(default)]
+    align: roast_core::Alignment,
+    /// Seconds between the rows of the curve; 30 without it.
+    #[serde(default)]
+    step_s: Option<f64>,
+}
+
+/// A roast's name for a comparison or a group.
+fn roast_line(r: &roast_core::Roast) -> serde_json::Value {
+    let line = files::summary(r);
+    serde_json::json!({
+        "id": r.id,
+        "title": r.title,
+        "roasted_at": r.roasted_at,
+        "batch_no": serde_json::to_value(&line)
+            .ok()
+            .and_then(|v| v.get("batch_no").cloned()),
+    })
+}
+
+/// Two saved roasts side by side: figures, differences `a − b` and both
+/// curves on one clock (`roast-core::compare`).
+async fn roast_compare(
+    State(st): State<AppState>,
+    Query(q): Query<CompareQuery>,
+) -> ApiResult<serde_json::Value> {
+    let step = q.step_s.unwrap_or(30.0);
+    if !(1.0..=600.0).contains(&step) {
+        return Err(Fail::bad("step_s must be between 1 and 600"));
+    }
+    let (a, b) = (find(&st, &q.a).await?, find(&st, &q.b).await?);
+    let c = roast_core::compare(&a, &b, q.align, step);
+    let mut out = serde_json::to_value(&c).map_err(|e| Fail::internal(e.to_string()))?;
+    if let Some(o) = out.as_object_mut() {
+        o.insert("roast_a".into(), roast_line(&a));
+        o.insert("roast_b".into(), roast_line(&b));
+    }
+    Ok(Json(out))
+}
+
+#[derive(Deserialize)]
+struct ConsistencyQuery {
+    /// Roasts of this green coffee lot.
+    #[serde(default)]
+    lot_id: Option<String>,
+    /// Roasts that followed a version of this profile.
+    #[serde(default)]
+    profile_id: Option<String>,
+    /// These roasts, ids separated by commas.
+    #[serde(default)]
+    ids: Option<String>,
+    /// Count simulator roasts too.
+    #[serde(default)]
+    simulated: bool,
+}
+
+/// How alike the roasts of a lot, of a profile or of a chosen set are: the
+/// spread of their figures and curves, and each roast's own figures.
+/// `unfinished` counts the recordings without CHARGE or DROP that were left
+/// out.
+async fn consistency(
+    State(st): State<AppState>,
+    Query(q): Query<ConsistencyQuery>,
+) -> ApiResult<serde_json::Value> {
+    let group = match (q.lot_id, q.profile_id, q.ids) {
+        (Some(lot), None, None) => files::Group::Lot(lot_id(&lot)?),
+        (None, Some(profile), None) => {
+            let id = profile_id(&profile)?;
+            let versions = st
+                .engine
+                .call(move |e| e.profiles.version_ids(id))
+                .await
+                .map_err(|e| engine_gone(&e))??;
+            files::Group::Versions(versions)
+        }
+        (None, None, Some(ids)) => files::Group::Ids(
+            ids.split(',')
+                .map(|id| id.trim().parse())
+                .collect::<Result<_, _>>()
+                .map_err(|_| Fail::bad("ids must be roast ids separated by commas"))?,
+        ),
+        _ => return Err(Fail::bad("give one of lot_id, profile_id or ids")),
+    };
+    let archive = st.archive.clone();
+    let simulated = q.simulated;
+    let mut roasts = blocking(move || archive.group(&group, simulated)).await?;
+    // A recording that was stopped before DROP is not a roast to compare.
+    let found = roasts.len();
+    roasts.retain(|r| roast_core::figures(r).total_s.is_some());
+    let unfinished = found - roasts.len();
+    let refs: Vec<&roast_core::Roast> = roasts.iter().collect();
+    let roast_lines: Vec<serde_json::Value> = roasts
+        .iter()
+        .map(|r| {
+            let mut line = roast_line(r);
+            if let Some(o) = line.as_object_mut() {
+                o.insert(
+                    "figures".into(),
+                    serde_json::to_value(roast_core::figures(r)).unwrap_or_default(),
+                );
+            }
+            line
+        })
+        .collect();
+    Ok(Json(serde_json::json!({
+        "consistency": roast_core::consistency(&refs),
+        "roasts": roast_lines,
+        "unfinished": unfinished,
+    })))
 }
 
 /// Largest `.alog` an import accepts (a long roast is well under 1 MB).
@@ -524,6 +707,8 @@ async fn roast_delete(
         .call(move |e| e.roast_deleted(rid, &title))
         .await
         .map_err(|e| engine_gone(&e))??;
+    let x = experiments_of(&st);
+    let Json(()) = blocking_fail(move || x.roast_deleted(rid)).await?;
     Ok(Json(serde_json::json!({
         "credited_g": credited_g,
         "trash_path": moved,
@@ -536,8 +721,15 @@ struct RoastPatch {
     roasted_weight_g: Option<f64>,
     green_weight_g: Option<f64>,
     notes: Option<String>,
+    /// Who wrote the note; a person without it.
+    #[serde(default)]
+    note_origin: Option<EventOrigin>,
     /// Measured roast colour; replaces the stored one.
     roast_degree: Option<roast_core::RoastDegree>,
+    /// Room temperature, humidity and air pressure during the roast;
+    /// replaces the stored ones.
+    #[serde(default)]
+    ambient: Option<roast_core::Ambient>,
 }
 
 async fn roast_patch(
@@ -559,11 +751,26 @@ async fn roast_patch(
         // No reading at all clears the measurement.
         r.roast_degree = (d.whole_bean.is_some() || d.ground.is_some()).then_some(d);
     }
+    if let Some(a) = p.ambient {
+        let plausible = a.temperature_c.is_none_or(|t| (-30.0..=60.0).contains(&t))
+            && a.humidity_pct.is_none_or(|h| (0.0..=100.0).contains(&h))
+            && a.pressure_hpa.is_none_or(|p| (500.0..=1100.0).contains(&p));
+        if !plausible {
+            return Err(Fail::bad(
+                "ambient: temperature -30 to 60 °C, humidity 0 to 100 %, pressure 500 to 1100 hPa",
+            ));
+        }
+        // Nothing measured clears them.
+        r.ambient = (a != roast_core::Ambient::default()).then_some(a);
+    }
     if let Some(text) = p.notes.filter(|t| !t.trim().is_empty()) {
         r.notes.push(roast_core::Note {
             t: None,
-            text,
-            origin: EventOrigin::Human,
+            text: text.trim().to_owned(),
+            origin: match p.note_origin {
+                Some(EventOrigin::Ai) => EventOrigin::Ai,
+                _ => EventOrigin::Human,
+            },
         });
     }
     let saved = r.clone();

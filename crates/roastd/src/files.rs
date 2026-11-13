@@ -50,7 +50,23 @@ pub struct Summary {
     /// The batch number on the bag's label: the roast's own, or for an
     /// imported Artisan file the one its name starts with (`BR011_…`).
     batch_no: Option<String>,
+    /// The profile version the roast followed.
+    profile_version_id: Option<uuid::Uuid>,
 }
+
+/// What the roasts of a group have in common, for statistics over them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Group {
+    /// Roasts of one green coffee lot.
+    Lot(Uuid),
+    /// Roasts that followed one of these profile versions.
+    Versions(Vec<Uuid>),
+    /// These roasts.
+    Ids(Vec<Uuid>),
+}
+
+/// The most roasts a group is read for; the newest win.
+pub const GROUP_MAX: usize = 60;
 
 /// Opens a file for appending, creating it and its directory.
 pub fn open_append(path: &Path) -> io::Result<File> {
@@ -239,7 +255,7 @@ fn db(e: roast_store::Error) -> io::Error {
 
 /// Bumped whenever [`Summary`] changes: the stored summaries are then
 /// written anew on the next start.
-const SUMMARY_VERSION: u32 = 1;
+const SUMMARY_VERSION: u32 = 2;
 const SUMMARY_SETTING: &str = "summary_version";
 
 fn summary_json(roast: &Roast) -> serde_json::Value {
@@ -319,6 +335,47 @@ impl Archive {
     /// On a database error.
     pub fn find(&self, id: Uuid) -> io::Result<Option<Roast>> {
         Ok(self.store.roast(id).map_err(db)?.map(|s| s.roast))
+    }
+
+    /// The roasts of a group, oldest first, at most [`GROUP_MAX`] (the
+    /// newest). Simulator roasts only when `simulated` is set or they are
+    /// named by id.
+    ///
+    /// # Errors
+    /// On a database error.
+    pub fn group(&self, group: &Group, simulated: bool) -> io::Result<Vec<Roast>> {
+        let id_of = |v: &serde_json::Value, key: &str| {
+            v.get(key)
+                .and_then(serde_json::Value::as_str)
+                .and_then(|s| s.parse::<Uuid>().ok())
+        };
+        let mut roasts = Vec::new();
+        // The listing is newest first.
+        for line in self.summaries()? {
+            let Some(id) = id_of(&line, "id") else {
+                continue;
+            };
+            let sim = line.get("simulated").and_then(serde_json::Value::as_bool) == Some(true);
+            let member = match group {
+                Group::Lot(lot) => id_of(&line, "lot_id") == Some(*lot) && (simulated || !sim),
+                Group::Versions(versions) => {
+                    id_of(&line, "profile_version_id").is_some_and(|v| versions.contains(&v))
+                        && (simulated || !sim)
+                }
+                Group::Ids(ids) => ids.contains(&id),
+            };
+            if !member {
+                continue;
+            }
+            if let Some(roast) = self.find(id)? {
+                roasts.push(roast);
+            }
+            if roasts.len() == GROUP_MAX {
+                break;
+            }
+        }
+        roasts.reverse();
+        Ok(roasts)
     }
 
     /// Saves a new roast: its files, then the database. Returns the paths
@@ -502,6 +559,11 @@ pub fn summary(roast: &Roast) -> Summary {
         dtr_pct,
         goal: roast.plan.as_ref().and_then(|p| p.goal),
         batch_no: batch_no(roast),
+        profile_version_id: roast
+            .plan
+            .as_ref()
+            .and_then(|p| p.profile_version_id)
+            .or(roast.profile_version_id),
     }
 }
 
@@ -559,6 +621,46 @@ mod tests {
             "notes": [],
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn a_group_is_the_roasts_of_a_lot_a_profile_or_a_chosen_set() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = archive(dir.path());
+        let (lot, version) = (Uuid::new_v4(), Uuid::new_v4());
+        let mut first = roast("first");
+        first.roasted_at = "2026-11-01T10:00:00Z".parse().unwrap();
+        first.green_lot_id = Some(lot);
+        let mut second = roast("second");
+        second.green_lot_id = Some(lot);
+        second.plan = Some(roast_core::RoastPlan {
+            profile_version_id: Some(version),
+            ..roast_core::RoastPlan::default()
+        });
+        let mut sim = roast("simulated");
+        sim.roasted_at = "2026-11-10T10:00:00Z".parse().unwrap();
+        sim.green_lot_id = Some(lot);
+        sim.origin = roast_core::RoastOrigin::Simulated;
+        let other = roast("another lot");
+        for r in [&first, &second, &sim, &other] {
+            a.save(r).unwrap();
+        }
+        let titles = |g: Group, simulated: bool| -> Vec<String> {
+            let roasts = a.group(&g, simulated).unwrap();
+            roasts.into_iter().map(|r| r.title).collect()
+        };
+        // Oldest first, and the simulator only when asked.
+        assert_eq!(titles(Group::Lot(lot), false), ["first", "second"]);
+        assert_eq!(
+            titles(Group::Lot(lot), true),
+            ["first", "second", "simulated"]
+        );
+        assert_eq!(titles(Group::Versions(vec![version]), false), ["second"]);
+        assert_eq!(
+            titles(Group::Ids(vec![sim.id, other.id]), false),
+            ["another lot", "simulated"]
+        );
+        assert!(titles(Group::Lot(Uuid::new_v4()), true).is_empty());
     }
 
     #[test]
