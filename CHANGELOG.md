@@ -1,3 +1,11 @@
+# [1.20.0](https://github.com/huulanka/roastmcp/compare/v1.19.0...v1.20.0) (2026-11-13)
+
+
+### Features
+
+* compare roasts on first crack, consistency per lot and experiments for AI clients ([#42](https://github.com/huulanka/roastmcp/issues/42)) ([b3b8098](https://github.com/huulanka/roastmcp/commit/b3b8098bb20c830680aa3a15b1aa4d50d9674d86))
+* cuppings, rest windows, maintenance log and a pre-roast checklist for AI clients ([#43](https://github.com/huulanka/roastmcp/issues/43)) ([415a758](https://github.com/huulanka/roastmcp/commit/415a758f323aa8a5550614e258d8e184dcb43906))
+
 # [1.19.0](https://github.com/huulanka/roastmcp/compare/v1.18.0...v1.19.0) (2026-11-13)
 
 
