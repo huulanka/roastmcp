@@ -46,6 +46,11 @@ recipe and trims the burner by a few points to keep the roast on the profile's c
 you. You cannot switch it on or off. If you take control while it is on, it goes on under your \
 lease: watch, mark events and use adjust_recipe, and leave the burner to it; to steer the burner \
 yourself, ask the person to switch the autopilot off. \
+After a roast, look back with the person: compare_roasts puts two roasts side by side (lined up \
+on CHARGE or on first crack), get_consistency shows how alike the roasts of a lot or a profile \
+are, add_roast_note keeps an observation with a saved roast. Develop a coffee one change at a \
+time: record_experiment writes down the hypothesis and the change, update_experiment adds the \
+roasts that test it and the conclusion. \
 To control the roaster, a person must confirm presence in the RoastMCP app (every 3 min while \
 you are in control), then call request_control. Your commands pass a safety layer: cutting the \
 burner or adding air is never limited; raising the burner is limited to 10 points per command \
@@ -536,6 +541,47 @@ fn tools() -> Value {
           "required": ["profile", "change_note"]}},
         {"name": "get_roast", "description": "A saved roast with its curve downsampled to every 10 s.",
          "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
+        {"name": "compare_roasts", "description": "Two saved roasts side by side: the figures of each (charge BT, turning point, dry end, first crack, drop, total and development time, DTR, weight loss, colour), the differences a − b, both curves on one clock (BT and RoR of each, and a_bt − b_bt) and the largest BT difference after the turning points. align: charge (default) starts both clocks at CHARGE; first_crack puts zero at the start of first crack, so the developments lie on top of each other (times before it are negative).",
+         "inputSchema": {"type": "object", "properties": {
+            "a": {"type": "string", "description": "Id of the roast looked at (see list_roasts)."},
+            "b": {"type": "string", "description": "Id of the roast it is compared with, e.g. its reference."},
+            "align": {"type": "string", "enum": ["charge", "first_crack"]},
+            "every_s": num("Seconds between the rows of the curve (default 30).")},
+          "required": ["a", "b"]}},
+        {"name": "get_consistency", "description": "How alike the roasts of one green coffee lot, of one profile or of a chosen set are: for each figure (charge BT, dry end, first crack time and BT, total time, drop BT, development time, DTR, weight loss) the number of roasts, mean, standard deviation, minimum and maximum; curve_sd_c, how far the curves lie apart on average between turning point and DROP (°C); and each roast's own figures, oldest first. Give exactly one of lot, profile or roasts. Simulator roasts are left out unless asked for.",
+         "inputSchema": {"type": "object", "properties": {
+            "lot": {"type": "string", "description": "Lot id or exact name (see list_lots)."},
+            "profile": {"type": "string", "description": "Profile id or exact name (see list_profiles): the roasts that followed any of its versions."},
+            "roasts": {"type": "array", "items": {"type": "string"}, "description": "Roast ids (see list_roasts)."},
+            "include_simulated": {"type": "boolean"}}}},
+        {"name": "add_roast_note", "description": "Adds a note to a saved roast (an observation, a tasting impression, the result of a debrief). Notes of the running roast go through add_note.",
+         "inputSchema": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "The saved roast's id (see list_roasts)."},
+            "text": {"type": "string"}},
+          "required": ["id", "text"]}},
+        {"name": "list_experiments", "description": "The roaster's experiments, newest first: hypothesis, the one thing changed, the expected outcome, status (planned, running, done), the roasts that belong to it and the conclusion.", "inputSchema": {"type": "object", "properties": {}}},
+        {"name": "record_experiment", "description": "Writes an experiment down with the person: one hypothesis, one deliberate change, what is expected. Change one variable at a time. Roasts given belong to it from the start; add later ones with update_experiment.",
+         "inputSchema": {"type": "object", "properties": {
+            "hypothesis": {"type": "string", "description": "What is believed, e.g. \"A hotter charge shortens drying without scorching\"."},
+            "change": {"type": "string", "description": "The one thing changed, in words, e.g. \"charge 10 °C hotter\"."},
+            "variable": {"type": "string", "description": "The variable's name, e.g. charge_bt_c (with from and to)."},
+            "from": {"type": "string", "description": "Its value before."},
+            "to": {"type": "string", "description": "Its value in the experiment."},
+            "expected_outcome": {"type": "string"},
+            "profile": {"type": "string", "description": "The profile the change was applied to (its newest version): id or exact name."},
+            "roasts": {"type": "array", "items": {"type": "string"}, "description": "Ids of roasts that belong to it."}},
+          "required": ["hypothesis", "change"]}},
+        {"name": "update_experiment", "description": "Changes an experiment: adds or removes roasts, rewrites its words, or concludes it. A conclusion sets the status to done; the first roast sets it to running.",
+         "inputSchema": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "The experiment's id (see list_experiments)."},
+            "conclusion": {"type": "string", "description": "What came of it, agreed with the person."},
+            "status": {"type": "string", "enum": ["planned", "running", "done"]},
+            "add_roasts": {"type": "array", "items": {"type": "string"}},
+            "remove_roasts": {"type": "array", "items": {"type": "string"}},
+            "hypothesis": {"type": "string"},
+            "change": {"type": "string"},
+            "expected_outcome": {"type": "string"}},
+          "required": ["id"]}},
         {"name": "list_lots", "description": "The green coffee in stock: lots with name, origin, process, supplier, purchase date and stock_g (grams; negative if more was roasted than recorded as bought). Archived lots only when asked.",
          "inputSchema": {"type": "object", "properties": {"include_archived": {"type": "boolean"}}}},
         {"name": "add_lot", "description": "Records a new green coffee lot (a coffee not in the inventory yet) with the grams bought and, as far as known, the details of the importer's offer sheet. Use add_purchase for more of a lot that exists. Only name is required; leave out what you do not know.",
@@ -987,8 +1033,218 @@ fn call_tool(d: &mut Daemon, name: &str, args: &Value) -> anyhow::Result<Value> 
             }
             Ok(r)
         }
+        "compare_roasts" => {
+            let a = arg_s("a").context("a is required")?;
+            let b = arg_s("b").context("b is required")?;
+            let align = arg_s("align").unwrap_or_else(|| "charge".to_owned());
+            anyhow::ensure!(
+                align == "charge" || align == "first_crack",
+                "align is charge or first_crack"
+            );
+            let step = arg_f("every_s").unwrap_or(30.0).clamp(1.0, 600.0);
+            let mut c = d.call(
+                "GET",
+                &format!("/roasts/compare?a={a}&b={b}&align={align}&step_s={step}"),
+                None,
+            )?;
+            round_numbers(&mut c);
+            Ok(c)
+        }
+        "get_consistency" => {
+            let ids: Vec<String> = args
+                .get("roasts")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect();
+            let group = match (arg_s("lot"), arg_s("profile"), ids.is_empty()) {
+                (Some(lot), None, true) => format!("lot_id={}", resolve_lot(d, &lot)?),
+                (None, Some(profile), true) => {
+                    format!("profile_id={}", resolve_profile(d, &profile)?)
+                }
+                (None, None, false) => format!("ids={}", ids.join(",")),
+                _ => anyhow::bail!("give exactly one of lot, profile or roasts"),
+            };
+            let simulated = args.get("include_simulated").and_then(Value::as_bool) == Some(true);
+            let mut c = d.call(
+                "GET",
+                &format!("/consistency?{group}&simulated={simulated}"),
+                None,
+            )?;
+            round_numbers(&mut c);
+            Ok(c)
+        }
+        "add_roast_note" => {
+            let id = arg_s("id").context("id is required")?;
+            let text = arg_s("text").context("text is required")?;
+            let r = d.call(
+                "PATCH",
+                &format!("/roasts/{id}"),
+                Some(json!({"notes": text, "note_origin": "ai"})),
+            )?;
+            Ok(json!({"id": r.get("id"), "title": r.get("title"), "notes": r.get("notes")}))
+        }
+        "list_experiments" => d.call("GET", "/experiments", None),
+        "record_experiment" => {
+            let variable = match (arg_s("variable"), arg_s("from"), arg_s("to")) {
+                (Some(name), Some(from), Some(to)) => {
+                    json!({"name": name, "from": from, "to": to})
+                }
+                (None, None, None) => Value::Null,
+                _ => anyhow::bail!("variable, from and to go together"),
+            };
+            let profile_version_id = match arg_s("profile") {
+                Some(p) => {
+                    let id = resolve_profile(d, &p)?;
+                    let detail = d.call("GET", &format!("/profiles/{id}"), None)?;
+                    detail.pointer("/versions/0/id").cloned()
+                }
+                None => None,
+            };
+            d.call(
+                "POST",
+                "/experiments",
+                Some(json!({
+                    "hypothesis": arg_s("hypothesis"),
+                    "change": arg_s("change"),
+                    "variable": variable,
+                    "expected_outcome": arg_s("expected_outcome"),
+                    "profile_version_id": profile_version_id,
+                    "roast_ids": args.get("roasts").cloned().unwrap_or_else(|| json!([])),
+                })),
+            )
+        }
+        "update_experiment" => {
+            let id = arg_s("id").context("id is required")?;
+            let mut body = serde_json::Map::new();
+            for key in [
+                "conclusion",
+                "status",
+                "add_roasts",
+                "remove_roasts",
+                "hypothesis",
+                "change",
+                "expected_outcome",
+            ] {
+                if let Some(v) = args.get(key).filter(|v| !v.is_null()) {
+                    body.insert(key.to_owned(), v.clone());
+                }
+            }
+            d.call(
+                "PATCH",
+                &format!("/experiments/{id}"),
+                Some(Value::Object(body)),
+            )
+        }
         _ => anyhow::bail!("unknown tool {name}"),
     }
+}
+
+/// Rounds every number in `v` to two decimals: an AI reads figures, not
+/// floating-point tails.
+fn round_numbers(v: &mut Value) {
+    match v {
+        Value::Number(n) if n.is_f64() => {
+            if let Some(r) = n
+                .as_f64()
+                .and_then(|f| serde_json::Number::from_f64((f * 100.0).round() / 100.0))
+            {
+                *n = r;
+            }
+        }
+        Value::Array(a) => a.iter_mut().for_each(round_numbers),
+        Value::Object(o) => o.values_mut().for_each(round_numbers),
+        _ => {}
+    }
+}
+
+/// The prompts a client can offer the person: a debrief of a roast, and the
+/// plan for the next one.
+fn prompts() -> Value {
+    json!([
+        {"name": "debrief_roast", "title": "Debrief a roast",
+         "description": "Goes through a saved roast with you: what happened, how it compares with its plan and with the other roasts of the coffee, and what to change next time.",
+         "arguments": [
+            {"name": "roast", "description": "The roast's id or batch number; the newest roast without it.", "required": false}]},
+        {"name": "plan_next_roast", "title": "Plan the next roast",
+         "description": "Plans the next roast of a coffee with you from its earlier roasts, its profile and the open experiments, and prepares the recording.",
+         "arguments": [
+            {"name": "coffee", "description": "The green coffee lot (name); asked for without it.", "required": false}]}
+    ])
+}
+
+fn prompt(name: &str, args: &Value) -> Option<Value> {
+    let arg = |k: &str| {
+        args.get(k)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    };
+    let (description, text) = match name {
+        "debrief_roast" => {
+            let which = arg("roast").map_or_else(
+                || {
+                    "the newest saved roast (list_roasts, the first that is not simulated)"
+                        .to_owned()
+                },
+                |r| format!("the roast {r:?} (find it in list_roasts by id or batch number)"),
+            );
+            (
+                "Debrief a roast",
+                format!(
+                    "Debrief {which} with me.\n\n\
+1. Read it with get_roast: its curve, events, weights, plan and notes.\n\
+2. If it followed a profile or a reference roast (its plan), compare it with that through \
+compare_roasts, also lined up on first crack. Otherwise compare it with the roast before it of \
+the same coffee.\n\
+3. Look at the coffee's other roasts with get_consistency (its lot, or its profile): is this \
+roast inside the usual spread, or an outlier, and in which figure?\n\
+4. Tell me in plain words what happened: charge and turning point, how long drying, Maillard \
+and development took, where the rate of rise crashed or flicked, when first crack came, drop \
+temperature, development time ratio, weight loss and colour if measured. Name what went well.\n\
+5. Ask me how it tasted and how many days it rested, if I have not said. Do not guess taste \
+from the curve; say what the curve makes likely and let me confirm.\n\
+6. Propose one change for the next roast, the smallest that addresses the main finding, with \
+the reason. If I agree, write it down with record_experiment (or update_experiment if this \
+roast belongs to one, with the conclusion), and save a changed plan with add_profile_version \
+if the roast followed a profile.\n\
+7. Keep the result with the roast: add_roast_note, three sentences at most.\n\n\
+Times as m:ss, temperatures in °C. Be brief; ask before you assume."
+                ),
+            )
+        }
+        "plan_next_roast" => {
+            let coffee = arg("coffee").map_or_else(
+                || "Ask me which coffee (list_lots shows what is in stock).".to_owned(),
+                |c| format!("The coffee is {c:?} (find the lot with list_lots)."),
+            );
+            (
+                "Plan the next roast",
+                format!(
+                    "Plan my next roast with me. {coffee}\n\n\
+1. Read the lot (stock, process, density, moisture) and its earlier roasts: list_roasts, the \
+last two or three with get_roast, their notes, and get_consistency for the lot.\n\
+2. Read the profile it is roasted with (list_profiles, get_profile) and the open experiments \
+(list_experiments): a running experiment says what this roast is to test.\n\
+3. Ask me what the roast is for (espresso, filter) and how the last one tasted, if the notes \
+do not say.\n\
+4. Propose the plan: the profile and version or the reference roast, green weight, charge \
+temperature, the targets for first crack, drop temperature and development time ratio, and \
+one deliberate change against the last roast with its reason. One change, not several.\n\
+5. When I agree: save a changed plan as a new version (add_profile_version), write the change \
+down (record_experiment) if it is a test, and prepare the recording with start_recording \
+(lot, green weight, goal, profile or reference, batch number). I preheat and charge.\n\n\
+Check the stock before you propose a weight. Be brief; ask before you assume."
+                ),
+            )
+        }
+        _ => return None,
+    };
+    Some(json!({
+        "description": description,
+        "messages": [{"role": "user", "content": {"type": "text", "text": text}}],
+    }))
 }
 
 /// A lot id from an id or a name: exact name first (ignoring case), then a
@@ -1091,13 +1347,19 @@ pub fn serve(data_dir: &Path) -> anyhow::Result<()> {
                     .unwrap_or(PROTOCOL_VERSION);
                 Ok(json!({
                     "protocolVersion": version,
-                    "capabilities": {"tools": {}},
+                    "capabilities": {"tools": {}, "prompts": {}},
                     "serverInfo": {"name": "roastmcp", "version": env!("CARGO_PKG_VERSION")},
                     "instructions": INSTRUCTIONS,
                 }))
             }
             "ping" => Ok(json!({})),
             "tools/list" => Ok(json!({"tools": tools()})),
+            "prompts/list" => Ok(json!({"prompts": prompts()})),
+            "prompts/get" => {
+                let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+                let args = params.get("arguments").cloned().unwrap_or(json!({}));
+                prompt(name, &args).ok_or((-32602, format!("unknown prompt {name}")))
+            }
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
                 let args = params.get("arguments").cloned().unwrap_or(json!({}));
@@ -1147,6 +1409,67 @@ mod tests {
             !list
                 .iter()
                 .any(|t| t["name"].as_str().unwrap().contains("preheat"))
+        );
+    }
+
+    #[test]
+    fn prompts_are_listed_and_filled_in() {
+        let list = prompts();
+        let names: Vec<&str> = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["debrief_roast", "plan_next_roast"]);
+        for name in names {
+            let p = prompt(name, &json!({})).unwrap();
+            assert_eq!(p["messages"][0]["role"], "user");
+            assert!(p["messages"][0]["content"]["text"].as_str().unwrap().len() > 200);
+        }
+        let named = prompt("debrief_roast", &json!({"roast": "BRYB-002"})).unwrap();
+        let text = named["messages"][0]["content"]["text"].as_str().unwrap();
+        assert!(text.contains("\"BRYB-002\""), "{text}");
+        assert!(prompt("plan_next_roast", &json!({"coffee": " "})).unwrap()["messages"][0]
+            ["content"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Ask me which coffee"));
+        assert!(prompt("nope", &json!({})).is_none());
+        // Every tool a prompt names exists.
+        let tools = tools();
+        let known: Vec<&str> = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        for tool in [
+            "get_roast",
+            "compare_roasts",
+            "get_consistency",
+            "record_experiment",
+            "update_experiment",
+            "add_profile_version",
+            "add_roast_note",
+            "list_lots",
+            "list_roasts",
+            "list_profiles",
+            "get_profile",
+            "list_experiments",
+            "start_recording",
+        ] {
+            assert!(known.contains(&tool), "{tool}");
+        }
+    }
+
+    #[test]
+    fn figures_for_an_ai_are_rounded() {
+        let mut v = json!({"a": 1.23456, "b": [2.0, 3.999], "n": 4, "s": "x", "c": {"d": -0.004}});
+        round_numbers(&mut v);
+        assert_eq!(
+            v,
+            json!({"a": 1.23, "b": [2.0, 4.0], "n": 4, "s": "x", "c": {"d": -0.0}})
         );
     }
 

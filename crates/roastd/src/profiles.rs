@@ -276,6 +276,14 @@ impl ProfileStore {
         })
     }
 
+    /// The ids of a profile's versions.
+    ///
+    /// # Errors
+    /// When there is no such profile.
+    pub fn version_ids(&self, id: Uuid) -> Result<Vec<Uuid>, Fail> {
+        Ok(self.get(id)?.versions.iter().map(|v| v.id).collect())
+    }
+
     /// A version and its profile, by the version's id.
     ///
     /// # Errors

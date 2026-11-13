@@ -6,6 +6,7 @@ pub mod api;
 pub mod backup;
 mod driver_thread;
 pub mod engine;
+pub mod experiments;
 pub mod files;
 pub mod inventory;
 pub mod learned;
