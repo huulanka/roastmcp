@@ -51,6 +51,10 @@ on CHARGE or on first crack), get_consistency shows how alike the roasts of a lo
 are, add_roast_note keeps an observation with a saved roast. Develop a coffee one change at a \
 time: record_experiment writes down the hypothesis and the change, update_experiment adds the \
 roasts that test it and the conclusion. \
+Taste closes the loop: record_cupping writes down how a roast tasted as the person tells you, \
+get_cuppings reads the tastings back, get_rest_status says which roasts are ready to drink. \
+Before a roast, go through get_checklist with the person; get_maintenance shows what care the \
+roaster is due, log_maintenance writes down what the person did. \
 To control the roaster, a person must confirm presence in the RoastMCP app (every 3 min while \
 you are in control), then call request_control. Your commands pass a safety layer: cutting the \
 burner or adding air is never limited; raising the burner is limited to 10 points per command \
@@ -475,7 +479,7 @@ fn tools() -> Value {
         "drop",
         "cool_end"
     ]);
-    json!([
+    let mut tools = json!([
         {"name": "get_status", "description": "Current state: connection, roast state, BT, rate of rise (°C/min), actuators, events, phases, safety (lease, presence, emergency stop), recent alarms.",
          "inputSchema": {"type": "object", "properties": {}}},
         {"name": "get_curve", "description": "The curve of the running roast (or the preview), downsampled. Times are recording seconds; subtract charge_t for roast time.",
@@ -581,7 +585,48 @@ fn tools() -> Value {
             "hypothesis": {"type": "string"},
             "change": {"type": "string"},
             "expected_outcome": {"type": "string"}},
-          "required": ["id"]}},
+          "required": ["id"]}}
+    ]);
+    // A second list: one `json!` holds only so many tools.
+    let more = json!([
+        {"name": "get_cuppings", "description": "The tastings written down, newest first: of one roast, of the roasts of one lot, or all. Each has rest_days (days between roast and tasting), attribute scores 0-10 as far as given, their mean_score, the overall_score on the person's own scale, flavour descriptors, notes and the brew method.",
+         "inputSchema": {"type": "object", "properties": {
+            "roast": {"type": "string", "description": "A saved roast's id (see list_roasts)."},
+            "lot": {"type": "string", "description": "Lot id or exact name (see list_lots), instead of a roast."}}}},
+        {"name": "record_cupping", "description": "Writes down how a roast tasted, as the person tells you. Never score from the curve: ask. Score only what the person paid attention to; everything but the roast is optional.",
+         "inputSchema": {"type": "object", "properties": {
+            "roast": {"type": "string", "description": "The saved roast's id (see list_roasts)."},
+            "cupped_at": {"type": "string", "description": "When it was tasted, RFC 3339 (default now)."},
+            "fragrance_aroma": num("0-10."),
+            "flavor": num("0-10."),
+            "aftertaste": num("0-10."),
+            "acidity": num("0-10."),
+            "body": num("0-10."),
+            "sweetness": num("0-10."),
+            "balance": num("0-10."),
+            "overall": num("The overall impression as an attribute, 0-10."),
+            "overall_score": num("The total on the person's own scale, e.g. SCA 0-100."),
+            "descriptors": {"type": "array", "items": {"type": "string"}, "description": "Flavour descriptors, e.g. jasmine, bergamot, black tea."},
+            "notes": {"type": "string"},
+            "brew_method": {"type": "string", "description": "E.g. cupping bowl, V60 15 g / 250 g, espresso 18 g in / 40 g out."}},
+          "required": ["roast"]}},
+        {"name": "get_rest_status", "description": "Where the recent roasts are in their rest: resting (not ready to drink yet), ready (in their window) or past_best, with ready_from and best_until, the days rested and how often each was cupped. The window follows the roast level (light, medium, dark) from the measured colour, medium without one (level_from: default); the person can set their own windows in the app. Use it to say which roast to drink or cup now.",
+         "inputSchema": {"type": "object", "properties": {"include_simulated": {"type": "boolean"}}}},
+        {"name": "get_maintenance", "description": "The roaster's maintenance tasks (empty the chaff collector, clean the drum, check the probe ...): when each was last done, the roasts and days since, its intervals, and due (why it is due, or null).",
+         "inputSchema": {"type": "object", "properties": {"include_archived": {"type": "boolean"}}}},
+        {"name": "add_maintenance_task", "description": "Adds a recurring maintenance task, agreed with the person. It is due after interval_roasts roasts or interval_days days since it was last done, whichever comes first; without an interval it is only logged.",
+         "inputSchema": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "E.g. \"Empty the chaff collector\"."},
+            "description": {"type": "string"},
+            "interval_roasts": num("Due after this many roasts."),
+            "interval_days": num("Due after this many days.")},
+          "required": ["name"]}},
+        {"name": "log_maintenance", "description": "Writes down that a maintenance task was done; its intervals count from now. Only when the person says they did it: you cannot see the roaster.",
+         "inputSchema": {"type": "object", "properties": {
+            "task": {"type": "string", "description": "Task id or exact name (see get_maintenance)."},
+            "note": {"type": "string"}},
+          "required": ["task"]}},
+        {"name": "get_checklist", "description": "The checklist before a roast: the things the person checks every time (items) and the maintenance that is due (due). Go through it with the person before preheating; only they can check the roaster, and nothing is ticked off for them.", "inputSchema": {"type": "object", "properties": {}}},
         {"name": "list_lots", "description": "The green coffee in stock: lots with name, origin, process, supplier, purchase date and stock_g (grams; negative if more was roasted than recorded as bought). Archived lots only when asked.",
          "inputSchema": {"type": "object", "properties": {"include_archived": {"type": "boolean"}}}},
         {"name": "add_lot", "description": "Records a new green coffee lot (a coffee not in the inventory yet) with the grams bought and, as far as known, the details of the importer's offer sheet. Use add_purchase for more of a lot that exists. Only name is required; leave out what you do not know.",
@@ -608,7 +653,11 @@ fn tools() -> Value {
          "inputSchema": {"type": "object", "properties": {
             "id": {"type": "string", "description": "A saved roast's id."},
             "profile": {"type": "string", "description": "Profile id or exact name, instead of a roast."}}}}
-    ])
+    ]);
+    if let (Some(all), Some(more)) = (tools.as_array_mut(), more.as_array()) {
+        all.extend(more.iter().cloned());
+    }
+    tools
 }
 
 fn downsample(points: &[Value], every_s: f64, last_s: Option<f64>) -> Vec<Value> {
@@ -1137,8 +1186,106 @@ fn call_tool(d: &mut Daemon, name: &str, args: &Value) -> anyhow::Result<Value> 
                 Some(Value::Object(body)),
             )
         }
+        "get_cuppings" => {
+            let path = match (arg_s("roast"), arg_s("lot")) {
+                (Some(roast), None) => format!("/cuppings?roast={}", roast.trim()),
+                (None, Some(lot)) => format!("/cuppings?lot={}", resolve_lot(d, &lot)?),
+                (None, None) => "/cuppings".to_owned(),
+                _ => anyhow::bail!("give a roast or a lot, not both"),
+            };
+            let mut c = d.call("GET", &path, None)?;
+            round_numbers(&mut c);
+            Ok(c)
+        }
+        "record_cupping" => {
+            let roast = arg_s("roast").context("roast is required")?;
+            let mut scores = serde_json::Map::new();
+            for key in CUPPING_ATTRIBUTES {
+                if let Some(v) = args.get(*key).filter(|v| !v.is_null()) {
+                    scores.insert((*key).to_owned(), v.clone());
+                }
+            }
+            let mut body = serde_json::Map::new();
+            body.insert("scores".to_owned(), Value::Object(scores));
+            for key in [
+                "cupped_at",
+                "overall_score",
+                "descriptors",
+                "notes",
+                "brew_method",
+            ] {
+                if let Some(v) = args.get(key).filter(|v| !v.is_null()) {
+                    body.insert(key.to_owned(), v.clone());
+                }
+            }
+            d.call(
+                "POST",
+                &format!("/roasts/{}/cuppings", roast.trim()),
+                Some(Value::Object(body)),
+            )
+        }
+        "get_rest_status" => {
+            let simulated = args.get("include_simulated").and_then(Value::as_bool) == Some(true);
+            d.call("GET", &format!("/rest?simulated={simulated}"), None)
+        }
+        "get_maintenance" => {
+            let archived = args.get("include_archived").and_then(Value::as_bool) == Some(true);
+            d.call("GET", &format!("/maintenance?archived={archived}"), None)
+        }
+        "add_maintenance_task" => d.call(
+            "POST",
+            "/maintenance/tasks",
+            Some(json!({
+                "name": arg_s("name").context("name is required")?,
+                "description": arg_s("description"),
+                "interval_roasts": args.get("interval_roasts"),
+                "interval_days": args.get("interval_days"),
+            })),
+        ),
+        "log_maintenance" => {
+            let task = arg_s("task").context("task is required")?;
+            let id = resolve_task(d, &task)?;
+            d.call(
+                "POST",
+                &format!("/maintenance/tasks/{id}/done"),
+                Some(json!({"note": arg_s("note")})),
+            )
+        }
+        "get_checklist" => d.call("GET", "/checklist", None),
         _ => anyhow::bail!("unknown tool {name}"),
     }
+}
+
+/// The attribute scores of a cupping, as `record_cupping` takes them.
+const CUPPING_ATTRIBUTES: &[&str] = &[
+    "fragrance_aroma",
+    "flavor",
+    "aftertaste",
+    "acidity",
+    "body",
+    "sweetness",
+    "balance",
+    "overall",
+];
+
+/// A maintenance task's id from an id or an exact (case-insensitive) name.
+fn resolve_task(d: &mut Daemon, task: &str) -> anyhow::Result<String> {
+    if uuid::Uuid::parse_str(task.trim()).is_ok() {
+        return Ok(task.trim().to_owned());
+    }
+    let tasks = d.call("GET", "/maintenance", None)?;
+    let wanted = task.trim().to_lowercase();
+    tasks
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|t| {
+            t.get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|n| n.to_lowercase() == wanted)
+        })
+        .and_then(|t| t.get("id").and_then(Value::as_str).map(str::to_owned))
+        .with_context(|| format!("no maintenance task named {task:?}; see get_maintenance"))
 }
 
 /// Rounds every number in `v` to two decimals: an AI reads figures, not
@@ -1203,8 +1350,9 @@ roast inside the usual spread, or an outlier, and in which figure?\n\
 4. Tell me in plain words what happened: charge and turning point, how long drying, Maillard \
 and development took, where the rate of rise crashed or flicked, when first crack came, drop \
 temperature, development time ratio, weight loss and colour if measured. Name what went well.\n\
-5. Ask me how it tasted and how many days it rested, if I have not said. Do not guess taste \
-from the curve; say what the curve makes likely and let me confirm.\n\
+5. Read its tastings (get_cuppings). Without one, ask me how it tasted and how many days it \
+rested, and write it down with record_cupping. Do not guess taste from the curve; say what \
+the curve makes likely and let me confirm.\n\
 6. Propose one change for the next roast, the smallest that addresses the main finding, with \
 the reason. If I agree, write it down with record_experiment (or update_experiment if this \
 roast belongs to one, with the conclusion), and save a changed plan with add_profile_version \
@@ -1227,14 +1375,16 @@ Times as m:ss, temperatures in °C. Be brief; ask before you assume."
 last two or three with get_roast, their notes, and get_consistency for the lot.\n\
 2. Read the profile it is roasted with (list_profiles, get_profile) and the open experiments \
 (list_experiments): a running experiment says what this roast is to test.\n\
-3. Ask me what the roast is for (espresso, filter) and how the last one tasted, if the notes \
-do not say.\n\
+3. Read how the earlier roasts tasted (get_cuppings for the lot). Ask me what the roast is \
+for (espresso, filter) and how the last one tasted, if neither tastings nor notes say.\n\
 4. Propose the plan: the profile and version or the reference roast, green weight, charge \
 temperature, the targets for first crack, drop temperature and development time ratio, and \
 one deliberate change against the last roast with its reason. One change, not several.\n\
 5. When I agree: save a changed plan as a new version (add_profile_version), write the change \
 down (record_experiment) if it is a test, and prepare the recording with start_recording \
-(lot, green weight, goal, profile or reference, batch number). I preheat and charge.\n\n\
+(lot, green weight, goal, profile or reference, batch number). I preheat and charge.\n\
+6. Before I preheat, go through the checklist with me (get_checklist), the maintenance that \
+is due included.\n\n\
 Check the stock before you propose a weight. Be brief; ask before you assume."
                 ),
             )
@@ -1404,6 +1554,14 @@ mod tests {
         assert!(list.len() >= 10);
         assert!(list.iter().all(|t| t["inputSchema"]["type"] == "object"));
         assert!(!list.iter().any(|t| t["name"] == "confirm_presence"));
+        // record_cupping takes every attribute score the daemon knows.
+        let cupping = list.iter().find(|t| t["name"] == "record_cupping").unwrap();
+        for attribute in CUPPING_ATTRIBUTES {
+            assert!(
+                cupping["inputSchema"]["properties"][attribute].is_object(),
+                "{attribute}"
+            );
+        }
         // Starting a preheat confirms presence: only a person may (ADR 0018).
         assert!(
             !list
@@ -1458,6 +1616,9 @@ mod tests {
             "get_profile",
             "list_experiments",
             "start_recording",
+            "get_cuppings",
+            "record_cupping",
+            "get_checklist",
         ] {
             assert!(known.contains(&tool), "{tool}");
         }

@@ -173,6 +173,19 @@ interface Snapshot {
 | `GET /api/experiments` | | `Experiment[]`, newest first: `{ id, hypothesis, changed_variable: { description, structured?: { name, from, to } }, expected_outcome?, conclusion?, status: "planned" \| "running" \| "done", profile_version_id?, roast_ids, created_at }` |
 | `POST /api/experiments` | `{ hypothesis, change, variable?: { name, from, to }, expected_outcome?, profile_version_id?, roast_ids? }` | `Experiment`; with roasts it is `running` at once. 400 without a hypothesis or a change, 404 for an unknown roast |
 | `GET /api/experiments/{id}` / `PATCH /api/experiments/{id}` / `DELETE /api/experiments/{id}` | patch: `{ hypothesis?, change?, expected_outcome?, conclusion?, status?, add_roasts?, remove_roasts? }` | `Experiment` (`{}` after a delete). The first roast makes it `running`, a conclusion `done`, unless `status` says otherwise. A roast belongs to one experiment and names it (`experiment_id` in the roast and its file); adding it to another moves it. Deleting an experiment keeps its roasts |
+| `GET /api/cuppings` (`?roast=<id>` \| `?lot=<id>`) | | `Cupping[]`, newest first: `{ id, roast_id, cupped_at, rest_days, scores: { fragrance_aroma?, flavor?, aftertaste?, acidity?, body?, sweetness?, balance?, overall? }, overall_score?, descriptors, notes?, brew_method?, mean_score, roast_title, batch_no, lot_id }` — attribute scores are 0–10, `overall_score` is the total on the person's own scale, `rest_days` the days between roast and tasting unless given, `mean_score` the mean of the scores given. 404 for an unknown roast or lot |
+| `POST /api/roasts/{id}/cuppings` | `{ cupped_at?, rest_days?, scores?, overall_score?, descriptors?, notes?, brew_method? }` | `Cupping`; `cupped_at` is now if left out. 400 for a score outside 0–10 or a tasting before the roast |
+| `PATCH /api/cuppings/{id}` / `DELETE /api/cuppings/{id}` | patch: the fields of the `POST`; `scores` and `descriptors` replace the stored ones, empty `notes` or `brew_method` remove them | `Cupping` (`{}` after a delete). A deleted roast takes its cuppings with it |
+| `GET /api/rest` (`?simulated=true`) | | `{ roast_id, title, batch_no, beans, roasted_at, level: "light" \| "medium" \| "dark", level_from: "colour" \| "default", rest_days, ready_from, best_until, state: "resting" \| "ready" \| "past_best", cuppings }[]`, newest first — every roast that rests or is in its window, and those past their best for 14 more days. The level comes from the measured colour (Agtron or Lighttells, ground before whole bean: from 70 light, from 50 medium, below dark) and is medium without one |
+| `GET /api/rest-windows` / `PUT /api/rest-windows` | `{ light, medium, dark }`, each `{ min_days, max_days }` | the same; defaults 7–21, 4–14 and 2–10 days. 400 if a window ends before it starts or after 365 days |
+| `GET /api/maintenance` (`?archived=true`) | | `MaintenanceTask[]` in the order they were added: `{ id, name, description?, machine_id?, interval_roasts?, interval_days?, last_done_at?, archived, created_at, roasts_since, days_since, due }` — `due` is `null` or `{ by: "roasts" \| "days", since, interval }`; a task is due after `interval_roasts` roasts or `interval_days` days since it was last done (or added), whichever comes first. Only roasts on a real machine count, with `machine_id` only that machine's |
+| `POST /api/maintenance/tasks` | `{ name, description?, machine_id?, interval_roasts?, interval_days? }` | `MaintenanceTask`; without an interval it is never due, only logged |
+| `PATCH /api/maintenance/tasks/{id}` | `{ name?, description?, interval_roasts?, interval_days?, archived? }` — an interval of 0 removes it, an empty description too | `MaintenanceTask` |
+| `POST /api/maintenance/tasks/{id}/done` | `{ done_at?, note? }` or nothing | `MaintenanceTask`; a log entry is written and the intervals count from `done_at` (now if left out; 400 in the future) |
+| `GET /api/maintenance/log` (`?task=<id>`, `?limit=100`) | | `{ id, task_id, task_name, done_at, note? }[]`, newest first, at most 500 |
+| `DELETE /api/maintenance/log/{id}` | | `MaintenanceTask` — takes an entry back; the task counts from the entry before it |
+| `GET /api/checklist` | | `{ items: { key?, text }[], due: MaintenanceTask[] }` — what the person checks before every roast, and the maintenance that is due. `key` names a built-in item (`extinguisher`, `chaff`, `surroundings`, `cooling`, `stay`) so the app can translate it. The checklist informs; no command depends on it |
+| `PUT /api/checklist` | `{ items: { key?, text }[] }` (at most 20) | as `GET`; replaces the items. An item keeps its `key` only with the built-in text |
 | `POST /api/roasts/import?name=<file name>` | the bytes of an Artisan `.alog` (up to 16 MB) | `{ id, title, already_there }` — the roast is saved as `.roast.json` with the original file beside it; the same roast again is not imported twice |
 | `DELETE /api/roasts/{id}` | | `{ credited_g, trash_path }` — the files move to `roasts/trash/` (restore by moving them back), the stock debit is taken back, the action log records it |
 | `GET /api/profiles?archived=true` | | `{ …Profile, latest: { id, version, created_at, change_note } \| null, versions }[]`, newest change first (ADR 0017) |
@@ -231,7 +244,13 @@ and only the events and alarms new since the last `get_status` or `wait`;
 crack), `get_consistency` (the spread over the roasts of a lot, a profile or
 a chosen set), `add_roast_note`, the experiments (`list_experiments`,
 `record_experiment`, `update_experiment`: one hypothesis, one change, the
-roasts that test it, the conclusion),
+roasts that test it, the conclusion), tasting and rest (`get_cuppings`,
+`record_cupping`: scores and words as the person gives them, never read
+off the curve; `get_rest_status`: which roasts rest, are ready or past
+their best), the care of the roaster (`get_maintenance`,
+`add_maintenance_task`, `log_maintenance`: only what the person says they
+did; `get_checklist`: read-only, to go through with the person before
+preheating),
 `set_reference` (a roast or a profile), the inventory and start
 dialog of the app (ADR 0014): `list_lots`, `add_lot`, `add_purchase`,
 `start_recording` (lot by id or name, green weight, goal, reference or

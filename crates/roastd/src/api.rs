@@ -15,10 +15,14 @@ use serde::Deserialize;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::backup::{self, BackupConfig, BackupStatus};
+use crate::cuppings::{CuppingPatch, CuppingView, Cuppings, NewCupping, RestEntry};
 use crate::engine::{ConnectReq, EngineHandle, Fail, RecordingMeta};
 use crate::experiments::{ExperimentPatch, Experiments, NewExperiment};
 use crate::files::{self, Archive};
 use crate::inventory::{AdjustReq, LotPatch, NewLot, PurchaseReq};
+use crate::maintenance::{
+    Checklist, ChecklistItem, DoneReq, LogView, Maintenance, NewTask, TaskPatch, TaskView,
+};
 
 /// Shared state of the handlers.
 #[derive(Clone)]
@@ -81,6 +85,24 @@ pub fn router(state: AppState, ui_dir: Option<PathBuf>) -> Router {
                 .patch(experiment_patch)
                 .delete(experiment_delete),
         )
+        .route("/cuppings", get(cuppings))
+        .route(
+            "/cuppings/{id}",
+            axum::routing::patch(cupping_patch).delete(cupping_delete),
+        )
+        .route("/roasts/{id}/cuppings", post(cupping_add))
+        .route("/rest", get(rest))
+        .route("/rest-windows", get(rest_windows).put(rest_windows_set))
+        .route("/maintenance", get(maintenance))
+        .route("/maintenance/tasks", post(maintenance_task_add))
+        .route(
+            "/maintenance/tasks/{id}",
+            axum::routing::patch(maintenance_task_patch),
+        )
+        .route("/maintenance/tasks/{id}/done", post(maintenance_done))
+        .route("/maintenance/log", get(maintenance_log))
+        .route("/maintenance/log/{id}", delete(maintenance_log_delete))
+        .route("/checklist", get(checklist).put(checklist_set))
         .route("/roasts/compare", get(roast_compare))
         .route("/consistency", get(consistency))
         .route(
@@ -504,6 +526,193 @@ async fn experiment_delete(
 ) -> ApiResult<serde_json::Value> {
     let (x, id) = (experiments_of(&st), experiment_id(&id)?);
     blocking_fail(move || x.delete(id).map(|()| serde_json::json!({}))).await
+}
+
+fn uuid_or(id: &str, missing: &'static str) -> Result<uuid::Uuid, Fail> {
+    id.parse().map_err(|_| Fail::not_found(missing))
+}
+
+#[derive(Deserialize)]
+struct CuppingsQuery {
+    /// Only the cuppings of this roast.
+    roast: Option<String>,
+    /// Only the cuppings of this lot's roasts.
+    lot: Option<String>,
+}
+
+async fn cuppings(
+    State(st): State<AppState>,
+    Query(q): Query<CuppingsQuery>,
+) -> ApiResult<Vec<CuppingView>> {
+    let roast = q
+        .roast
+        .map(|id| uuid_or(&id, "no such roast"))
+        .transpose()?;
+    let lot = q.lot.map(|id| lot_id(&id)).transpose()?;
+    let x = Cuppings::new(st.store.clone());
+    blocking_fail(move || x.list(roast, lot)).await
+}
+
+async fn cupping_add(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Json(new): Json<NewCupping>,
+) -> ApiResult<CuppingView> {
+    let (x, id) = (
+        Cuppings::new(st.store.clone()),
+        uuid_or(&id, "no such roast")?,
+    );
+    blocking_fail(move || x.create(id, new, chrono::Utc::now())).await
+}
+
+async fn cupping_patch(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Json(p): Json<CuppingPatch>,
+) -> ApiResult<CuppingView> {
+    let (x, id) = (
+        Cuppings::new(st.store.clone()),
+        uuid_or(&id, "no such cupping")?,
+    );
+    blocking_fail(move || x.update(id, p)).await
+}
+
+async fn cupping_delete(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    let (x, id) = (
+        Cuppings::new(st.store.clone()),
+        uuid_or(&id, "no such cupping")?,
+    );
+    blocking_fail(move || x.delete(id).map(|()| serde_json::json!({}))).await
+}
+
+#[derive(Deserialize)]
+struct RestQuery {
+    /// Simulator roasts too.
+    #[serde(default)]
+    simulated: bool,
+}
+
+async fn rest(State(st): State<AppState>, Query(q): Query<RestQuery>) -> ApiResult<Vec<RestEntry>> {
+    let x = Cuppings::new(st.store.clone());
+    blocking_fail(move || x.rest(chrono::Utc::now(), q.simulated)).await
+}
+
+async fn rest_windows(State(st): State<AppState>) -> ApiResult<roast_core::RestWindows> {
+    let x = Cuppings::new(st.store.clone());
+    blocking_fail(move || x.rest_windows()).await
+}
+
+async fn rest_windows_set(
+    State(st): State<AppState>,
+    Json(w): Json<roast_core::RestWindows>,
+) -> ApiResult<roast_core::RestWindows> {
+    let x = Cuppings::new(st.store.clone());
+    blocking_fail(move || x.set_rest_windows(w)).await
+}
+
+#[derive(Deserialize)]
+struct MaintenanceQuery {
+    /// Archived tasks too.
+    #[serde(default)]
+    archived: bool,
+}
+
+async fn maintenance(
+    State(st): State<AppState>,
+    Query(q): Query<MaintenanceQuery>,
+) -> ApiResult<Vec<TaskView>> {
+    let m = Maintenance::new(st.store.clone());
+    blocking_fail(move || m.list(chrono::Utc::now(), q.archived)).await
+}
+
+async fn maintenance_task_add(
+    State(st): State<AppState>,
+    Json(new): Json<NewTask>,
+) -> ApiResult<TaskView> {
+    let m = Maintenance::new(st.store.clone());
+    blocking_fail(move || m.create(new, chrono::Utc::now())).await
+}
+
+async fn maintenance_task_patch(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Json(p): Json<TaskPatch>,
+) -> ApiResult<TaskView> {
+    let (m, id) = (
+        Maintenance::new(st.store.clone()),
+        uuid_or(&id, "no such maintenance task")?,
+    );
+    blocking_fail(move || m.update(id, p, chrono::Utc::now())).await
+}
+
+async fn maintenance_done(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    body: axum::body::Bytes,
+) -> ApiResult<TaskView> {
+    let (m, id) = (
+        Maintenance::new(st.store.clone()),
+        uuid_or(&id, "no such maintenance task")?,
+    );
+    // The body is optional: "done, now" needs no words.
+    let req: DoneReq = if body.iter().all(u8::is_ascii_whitespace) {
+        DoneReq::default()
+    } else {
+        serde_json::from_slice(&body).map_err(|e| Fail::bad(format!("not a valid body: {e}")))?
+    };
+    blocking_fail(move || m.done(id, req, chrono::Utc::now())).await
+}
+
+#[derive(Deserialize)]
+struct MaintenanceLogQuery {
+    /// Only the log of this task.
+    task: Option<String>,
+    /// How many entries, newest first; 100 if left out.
+    limit: Option<usize>,
+}
+
+async fn maintenance_log(
+    State(st): State<AppState>,
+    Query(q): Query<MaintenanceLogQuery>,
+) -> ApiResult<Vec<LogView>> {
+    let task = q
+        .task
+        .map(|id| uuid_or(&id, "no such maintenance task"))
+        .transpose()?;
+    let m = Maintenance::new(st.store.clone());
+    blocking_fail(move || m.log(task, q.limit.unwrap_or(100))).await
+}
+
+async fn maintenance_log_delete(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<TaskView> {
+    let (m, id) = (
+        Maintenance::new(st.store.clone()),
+        uuid_or(&id, "no such log entry")?,
+    );
+    blocking_fail(move || m.delete_log(id, chrono::Utc::now())).await
+}
+
+async fn checklist(State(st): State<AppState>) -> ApiResult<Checklist> {
+    let m = Maintenance::new(st.store.clone());
+    blocking_fail(move || m.checklist(chrono::Utc::now())).await
+}
+
+#[derive(Deserialize)]
+struct ChecklistBody {
+    items: Vec<ChecklistItem>,
+}
+
+async fn checklist_set(
+    State(st): State<AppState>,
+    Json(b): Json<ChecklistBody>,
+) -> ApiResult<Checklist> {
+    let m = Maintenance::new(st.store.clone());
+    blocking_fail(move || m.set_checklist(b.items, chrono::Utc::now())).await
 }
 
 async fn roasts(State(st): State<AppState>) -> ApiResult<Vec<serde_json::Value>> {

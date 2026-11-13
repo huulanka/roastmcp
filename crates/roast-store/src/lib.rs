@@ -2,7 +2,8 @@
 //!
 //! [`Store`] is the database: one SQLite file on the local disk, in WAL mode
 //! with foreign keys on, opened by the daemon alone. It holds the roasts, the
-//! green coffee inventory, the profiles, the experiments and the settings;
+//! green coffee inventory, the profiles, the experiments, the cuppings, the
+//! maintenance tasks with their log and the settings;
 //! the schema is in `schema.sql` and later versions (`migrations/`) are
 //! applied on open.
 //!
@@ -16,7 +17,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use chrono::{DateTime, SecondsFormat, Utc};
-use roast_core::{Experiment, Inventory, Profile, ProfileVersion, Roast};
+use roast_core::{
+    Cupping, Experiment, Inventory, MaintenanceLogEntry, MaintenanceTask, Profile, ProfileVersion,
+    Roast,
+};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -26,6 +30,7 @@ use uuid::Uuid;
 const MIGRATIONS: &[&str] = &[
     include_str!("schema.sql"),
     include_str!("migrations/0002_experiments.sql"),
+    include_str!("migrations/0003_cupping_care.sql"),
 ];
 
 /// Marks a file as a RoastMCP database (`PRAGMA application_id`, "RMCP").
@@ -392,7 +397,219 @@ impl Store {
         Ok(n > 0)
     }
 
+    // ------------------------------------------------------------ cuppings
+
+    /// The cuppings of one roast, or all of them; newest first.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a database error or an undecodable record.
+    pub fn cuppings(&self, roast: Option<Uuid>) -> Result<Vec<Cupping>> {
+        let conn = self.conn();
+        match roast {
+            Some(id) => column_with(
+                &conn,
+                "SELECT cupping FROM cuppings WHERE roast_id = ?1 ORDER BY cupped_at DESC, id",
+                params![id.to_string()],
+            ),
+            None => column(
+                &conn,
+                "SELECT cupping FROM cuppings ORDER BY cupped_at DESC, id",
+            ),
+        }
+    }
+
+    /// The cupping with this id.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a database error or an undecodable record.
+    pub fn cupping(&self, id: Uuid) -> Result<Option<Cupping>> {
+        Ok(column_with(
+            &self.conn(),
+            "SELECT cupping FROM cuppings WHERE id = ?1",
+            params![id.to_string()],
+        )?
+        .pop())
+    }
+
+    /// Saves a cupping (new, or replacing the stored one with its id).
+    ///
+    /// # Errors
+    ///
+    /// Fails on a database error or if its roast does not exist.
+    pub fn save_cupping(&self, c: &Cupping) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO cuppings (id, roast_id, cupped_at, cupping)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (id) DO UPDATE SET
+                roast_id = excluded.roast_id,
+                cupped_at = excluded.cupped_at,
+                cupping = excluded.cupping",
+            params![
+                c.id.to_string(),
+                c.roast_id.to_string(),
+                instant(c.cupped_at),
+                serde_json::to_string(c)?
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Removes a cupping; `false` if there was none with this id.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a database error.
+    pub fn delete_cupping(&self, id: Uuid) -> Result<bool> {
+        let n = self
+            .conn()
+            .execute("DELETE FROM cuppings WHERE id = ?1", [id.to_string()])?;
+        Ok(n > 0)
+    }
+
+    // --------------------------------------------------------- maintenance
+
+    /// All maintenance tasks, in the order they were created.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a database error or an undecodable record.
+    pub fn maintenance_tasks(&self) -> Result<Vec<MaintenanceTask>> {
+        column(
+            &self.conn(),
+            "SELECT task FROM maintenance_tasks ORDER BY pos, id",
+        )
+    }
+
+    /// Saves a maintenance task (new at the end, or replacing the stored one
+    /// with its id in its place).
+    ///
+    /// # Errors
+    ///
+    /// Fails on a database error.
+    pub fn save_maintenance_task(&self, t: &MaintenanceTask) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO maintenance_tasks (id, pos, name, archived, task)
+             VALUES (?1, (SELECT coalesce(max(pos), -1) + 1 FROM maintenance_tasks), ?2, ?3, ?4)
+             ON CONFLICT (id) DO UPDATE SET
+                name = excluded.name,
+                archived = excluded.archived,
+                task = excluded.task",
+            params![
+                t.id.to_string(),
+                t.name,
+                t.archived,
+                serde_json::to_string(t)?
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// The maintenance log of one task, or of all; newest first, at most
+    /// `limit` entries.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a database error or an undecodable record.
+    pub fn maintenance_log(
+        &self,
+        task: Option<Uuid>,
+        limit: usize,
+    ) -> Result<Vec<MaintenanceLogEntry>> {
+        let conn = self.conn();
+        match task {
+            Some(id) => column_with(
+                &conn,
+                "SELECT entry FROM maintenance_log WHERE task_id = ?1
+                 ORDER BY done_at DESC, id LIMIT ?2",
+                params![id.to_string(), int(limit)],
+            ),
+            None => column_with(
+                &conn,
+                "SELECT entry FROM maintenance_log ORDER BY done_at DESC, id LIMIT ?1",
+                params![int(limit)],
+            ),
+        }
+    }
+
+    /// The log entry with this id.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a database error or an undecodable record.
+    pub fn maintenance_log_entry(&self, id: Uuid) -> Result<Option<MaintenanceLogEntry>> {
+        Ok(column_with(
+            &self.conn(),
+            "SELECT entry FROM maintenance_log WHERE id = ?1",
+            params![id.to_string()],
+        )?
+        .pop())
+    }
+
+    /// Writes down that a task was done.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a database error or if its task does not exist.
+    pub fn add_maintenance_log(&self, e: &MaintenanceLogEntry) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO maintenance_log (id, task_id, done_at, entry) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                e.id.to_string(),
+                e.task_id.to_string(),
+                instant(e.done_at),
+                serde_json::to_string(e)?
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Removes a log entry; `false` if there was none with this id.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a database error.
+    pub fn delete_maintenance_log(&self, id: Uuid) -> Result<bool> {
+        let n = self.conn().execute(
+            "DELETE FROM maintenance_log WHERE id = ?1",
+            [id.to_string()],
+        )?;
+        Ok(n > 0)
+    }
+
     // -------------------------------------------------------------- roasts
+
+    /// The roasts recorded at or after `from`, newest first.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a database error or an undecodable roast.
+    pub fn roasts_since(&self, from: DateTime<Utc>) -> Result<Vec<Roast>> {
+        column_with(
+            &self.conn(),
+            "SELECT roast FROM roasts WHERE roasted_at >= ?1 ORDER BY roasted_at DESC, id",
+            params![instant(from)],
+        )
+    }
+
+    /// How many roasts on a real machine were recorded after `after`; with
+    /// `machine`, only those on that machine. Simulator roasts never count.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a database error.
+    pub fn real_roasts_after(&self, after: DateTime<Utc>, machine: Option<&str>) -> Result<u32> {
+        let n: i64 = self.conn().query_row(
+            "SELECT count(*) FROM roasts
+             WHERE roasted_at > ?1
+               AND coalesce(json_extract(roast, '$.origin.kind'), '') <> 'simulated'
+               AND (?2 IS NULL OR json_extract(roast, '$.machine') = ?2)",
+            params![instant(after), machine],
+            |r| r.get(0),
+        )?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
 
     /// Saves a roast (new, or replacing the stored one with the same id).
     /// `summary` is its line in the archive listing; `file_name` its open
@@ -582,8 +799,17 @@ impl Store {
 }
 
 fn column<T: DeserializeOwned>(conn: &Connection, sql: &str) -> Result<Vec<T>> {
+    column_with(conn, sql, [])
+}
+
+/// The JSON values in the first column of a query with parameters.
+fn column_with<T: DeserializeOwned>(
+    conn: &Connection,
+    sql: &str,
+    params: impl rusqlite::Params,
+) -> Result<Vec<T>> {
     let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+    let rows = stmt.query_map(params, |r| r.get::<_, String>(0))?;
     let mut out = Vec::new();
     for json in rows {
         out.push(serde_json::from_str(&json?)?);
@@ -833,6 +1059,119 @@ mod tests {
     }
 
     #[test]
+    fn cuppings_are_kept_per_roast_and_leave_with_it() {
+        let s = Store::in_memory().unwrap();
+        let a = roast("a", "2026-11-08T10:00:00Z", 3);
+        let b = roast("b", "2026-11-09T10:00:00Z", 3);
+        s.save_roast(&a, &summary(&a), None).unwrap();
+        s.save_roast(&b, &summary(&b), None).unwrap();
+        let early = Cupping::new(a.id, "2026-11-12T08:00:00Z".parse().unwrap());
+        let mut late = Cupping::new(a.id, "2026-11-15T08:00:00Z".parse().unwrap());
+        let other = Cupping::new(b.id, "2026-11-13T08:00:00Z".parse().unwrap());
+        for c in [&early, &late, &other] {
+            s.save_cupping(c).unwrap();
+        }
+        assert_eq!(
+            s.cuppings(Some(a.id)).unwrap(),
+            [late.clone(), early.clone()]
+        );
+        assert_eq!(s.cuppings(None).unwrap().len(), 3);
+
+        late.scores.flavor = Some(8.0);
+        late.descriptors = vec!["jasmine".into()];
+        s.save_cupping(&late).unwrap();
+        assert_eq!(s.cupping(late.id).unwrap(), Some(late.clone()));
+
+        // A cupping of a roast that does not exist is refused.
+        let orphan = Cupping::new(Uuid::new_v4(), early.cupped_at);
+        assert!(s.save_cupping(&orphan).is_err());
+
+        assert!(s.delete_cupping(early.id).unwrap());
+        assert!(!s.delete_cupping(early.id).unwrap());
+        // Saving the roast again keeps its cuppings; deleting it takes them.
+        s.save_roast(&a, &summary(&a), None).unwrap();
+        assert_eq!(s.cuppings(Some(a.id)).unwrap(), [late]);
+        assert!(s.delete_roast(a.id).unwrap());
+        assert_eq!(s.cuppings(None).unwrap(), [other]);
+    }
+
+    #[test]
+    fn maintenance_tasks_keep_their_order_and_their_log() {
+        let s = Store::in_memory().unwrap();
+        let at = |t: &str| t.parse::<DateTime<Utc>>().unwrap();
+        let mut chaff =
+            MaintenanceTask::new("Empty the chaff collector", at("2026-11-01T12:00:00Z"));
+        let drum = MaintenanceTask::new("Clean the drum", at("2026-11-01T12:00:00Z"));
+        s.save_maintenance_task(&chaff).unwrap();
+        s.save_maintenance_task(&drum).unwrap();
+        chaff.interval_roasts = Some(1);
+        chaff.archived = true;
+        s.save_maintenance_task(&chaff).unwrap();
+        assert_eq!(
+            s.maintenance_tasks().unwrap(),
+            [chaff.clone(), drum.clone()]
+        );
+
+        let first = MaintenanceLogEntry::new(chaff.id, at("2026-11-02T12:00:00Z"), None);
+        let second =
+            MaintenanceLogEntry::new(chaff.id, at("2026-11-04T12:00:00Z"), Some("full".into()));
+        let third = MaintenanceLogEntry::new(drum.id, at("2026-11-03T12:00:00Z"), None);
+        for e in [&first, &second, &third] {
+            s.add_maintenance_log(e).unwrap();
+        }
+        let orphan = MaintenanceLogEntry::new(Uuid::new_v4(), first.done_at, None);
+        assert!(s.add_maintenance_log(&orphan).is_err());
+        assert_eq!(
+            s.maintenance_log(None, 10).unwrap(),
+            [second.clone(), third.clone(), first.clone()]
+        );
+        assert_eq!(
+            s.maintenance_log(None, 1).unwrap(),
+            std::slice::from_ref(&second)
+        );
+        assert_eq!(
+            s.maintenance_log(Some(chaff.id), 10).unwrap(),
+            [second.clone(), first.clone()]
+        );
+        assert_eq!(s.maintenance_log_entry(third.id).unwrap(), Some(third));
+        assert!(s.delete_maintenance_log(second.id).unwrap());
+        assert!(!s.delete_maintenance_log(second.id).unwrap());
+        assert_eq!(s.maintenance_log(Some(chaff.id), 10).unwrap(), [first]);
+    }
+
+    #[test]
+    fn roasts_are_counted_and_read_from_a_moment_on() {
+        let s = Store::in_memory().unwrap();
+        let mut old = roast("old", "2026-11-01T10:00:00Z", 3);
+        old.machine = Some("skywalker-cubean-plus".into());
+        let mut new = roast("new", "2026-11-09T10:00:00Z", 3);
+        new.machine = Some("skywalker-cubean-plus".into());
+        let other = roast("no machine", "2026-11-10T10:00:00Z", 3);
+        let mut sim = roast("simulated", "2026-11-11T10:00:00Z", 3);
+        sim.origin = roast_core::RoastOrigin::Simulated;
+        for r in [&old, &new, &other, &sim] {
+            s.save_roast(r, &summary(r), None).unwrap();
+        }
+        let from = "2026-11-05T00:00:00Z".parse().unwrap();
+        assert_eq!(s.real_roasts_after(from, None).unwrap(), 2);
+        assert_eq!(
+            s.real_roasts_after(from, Some("skywalker-cubean-plus"))
+                .unwrap(),
+            1
+        );
+        assert_eq!(s.real_roasts_after(sim.roasted_at, None).unwrap(), 0);
+        // Not the roast recorded at that very moment: it was there already.
+        assert_eq!(s.real_roasts_after(new.roasted_at, None).unwrap(), 1);
+        let titles: Vec<String> = s
+            .roasts_since(from)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.title)
+            .collect();
+        assert_eq!(titles, ["simulated", "no machine", "new"]);
+    }
+
+    #[test]
     fn a_database_of_schema_version_1_gets_the_later_tables() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("roastmcp.sqlite");
@@ -851,6 +1190,8 @@ mod tests {
         let s = Store::open(&db).unwrap();
         assert_eq!(s.setting::<u32>("answer").unwrap(), Some(42));
         assert!(s.experiments().unwrap().is_empty());
+        assert!(s.cuppings(None).unwrap().is_empty());
+        assert!(s.maintenance_tasks().unwrap().is_empty());
         let version: i64 = s
             .conn()
             .query_row("PRAGMA user_version", [], |r| r.get(0))

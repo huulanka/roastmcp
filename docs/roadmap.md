@@ -45,7 +45,13 @@ Next, in order:
    on the profile's curve ([ADR 0020](adr/0020-autopilot-recipe-and-trim.md));
    the simulator is fitted to the Cubean+ with beans. Open: three supervised
    roasts on the machine.
-6. M4–M6 and M8 as below; release through the Homebrew tap.
+6. **Cupping and care (M4)**: in the daemon and for AI clients — cuppings
+   per roast, the rest overview with windows per roast level, maintenance
+   tasks with their log and what is due, and the checklist before a roast.
+   Open: the same in the app (cupping form, rest and maintenance views, the
+   checklist in the guided flow), and a restore from a backup shown to work
+   on the author's data.
+7. M5, M6 and M8 as below; release through the Homebrew tap.
 
 ## M0: foundations
 
@@ -95,8 +101,8 @@ real roast is useful.
 ## M4: inventory, cupping, care
 
 - Green coffee inventory with automatic debiting (brought forward: lots,
-  purchases and debits are in the daemon and MCP since ADR 0014; the inventory
-  view in the app follows); cupping; rest-time reminders.
+  purchases and debits are in the daemon and MCP since ADR 0014, the
+  Inventory tab in the app since 1.9); cupping; rest-time reminders.
 - Maintenance log and reminders; pre-roast safety checklist.
 - Backups to a chosen folder with rotation and integrity check; tested restore.
 
