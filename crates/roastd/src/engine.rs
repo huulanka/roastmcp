@@ -17,7 +17,8 @@ use crate::learned::LearnedStore;
 use crate::profiles::ProfileStore;
 use roast_control::{
     Outlook, PreheatController, PreheatInput, PreheatPhase, PreheatReason, PreheatTuning,
-    RecipeInput, RecipeRun, StepChange, StepState, StepView, trigger_label,
+    RecipeInput, RecipeRun, StepChange, StepState, StepView, Trim, TrimDecision, TrimInput,
+    TrimTuning, trigger_label,
 };
 use roast_core::{
     Actuator, ActuatorValues, BatchInfo, CommandOutcome, CommandRequest, CommandSource,
@@ -175,6 +176,9 @@ struct ActuatorSpec {
 
 /// Lease holder name of the preheat controller.
 const PREHEAT_HOLDER: &str = "preheat";
+/// The lease holder of the autopilot a person switched on in the app
+/// (ADR 0020).
+const AUTOPILOT_HOLDER: &str = "autopilot";
 /// Ambient temperature when the machine reports none, °C.
 const DEFAULT_AMBIENT_C: f64 = 22.0;
 
@@ -264,6 +268,29 @@ pub struct Snapshot {
     control_request: Option<String>,
     /// The profile's recipe in this roast (ADR 0019).
     recipe: Option<RecipeStatus>,
+    /// The autopilot, while it is switched on (ADR 0020).
+    autopilot: Option<AutopilotStatus>,
+}
+
+/// The autopilot: it runs the recipe and keeps the roast on the plan's curve.
+#[derive(Debug, Clone)]
+struct Autopilot {
+    trim: Trim,
+    /// Roast clock of the trim's last correction, s.
+    corrected_at: Option<f64>,
+    corrections: usize,
+}
+
+/// The autopilot as the app shows it.
+#[derive(Debug, Clone, Serialize)]
+struct AutopilotStatus {
+    /// `armed` (takes over at CHARGE), `active`, or `waiting` (for an AI's
+    /// lease or a presence confirmation).
+    state: &'static str,
+    /// How far its corrections moved the burner away from the recipe, points.
+    offset: f64,
+    /// How many corrections it made.
+    corrections: usize,
 }
 
 /// The recipe of the running roast.
@@ -445,6 +472,13 @@ pub struct Engine {
     recipe: Option<RecipeRun>,
     /// The saved roasts.
     archive: Archive,
+    /// The autopilot, while it is switched on (ADR 0020).
+    autopilot: Option<Autopilot>,
+    /// Roast clock of the last burner change by anyone, s.
+    burner_changed_at: Option<f64>,
+    /// How far the autopilot's corrections moved this roast's recipe,
+    /// burner points; kept when it is switched off and on again.
+    trim_offset: f64,
 }
 
 /// Starts the engine task and its safety ticker.
@@ -497,6 +531,9 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
         reference: None,
         preheat: None,
         recipe: None,
+        autopilot: None,
+        burner_changed_at: None,
+        trim_offset: 0.0,
         learned,
         inventory,
         profiles,
@@ -593,6 +630,7 @@ impl Engine {
                 .and_then(|r| phases(r, t.unwrap_or(0.0))),
             reference: self.reference_status(t, charge_t, now),
             recipe: self.recipe_status(now),
+            autopilot: self.autopilot_status(now),
             projection: self.projection(&events, charge_t),
             control_request: self
                 .control_request
@@ -682,6 +720,12 @@ impl Engine {
             .as_ref()
             .filter(|r| r.kind == ReferenceKind::Profile && !r.actions.is_empty())
             .map(|r| RecipeRun::new(&r.actions));
+        // The autopilot's corrections belonged to the old recipe.
+        self.trim_offset = 0.0;
+        if let Some(ap) = self.autopilot.as_mut() {
+            ap.trim = Trim::new(TrimTuning::default());
+            ap.corrected_at = None;
+        }
     }
 
     /// Whether the daemon sets the recipe's steps itself: an AI holds the
@@ -929,11 +973,262 @@ impl Engine {
                     format!("CHARGE - preheat ended; AI ({h}) follows the recipe.")
                 }
                 (Some(h), None) => format!("CHARGE - preheat ended; AI ({h}) has control."),
+                (None, _) if self.autopilot.is_some() => {
+                    "CHARGE - preheat ended; the autopilot follows the profile.".to_owned()
+                }
                 (None, _) => "CHARGE - preheat ended, you have control.".to_owned(),
             };
             self.end_preheat(&message);
         }
+        self.autopilot_lease();
         self.run_recipe();
+    }
+
+    // -------------------------------------------------------------- autopilot
+
+    fn autopilot_status(&self, now: f64) -> Option<AutopilotStatus> {
+        let ap = self.autopilot.as_ref()?;
+        let charged = self.since_charge().is_some() && self.preheat.is_none();
+        Some(AutopilotStatus {
+            state: if !charged {
+                "armed"
+            } else if self.safety.ai_in_control(now) {
+                "active"
+            } else {
+                "waiting"
+            },
+            offset: ap.trim.offset(),
+            corrections: ap.corrections,
+        })
+    }
+
+    /// Switches the autopilot on (ADR 0020): from CHARGE on the daemon sets
+    /// the recipe's steps and keeps the bean temperature on the profile's
+    /// curve with small, rare burner corrections. Before CHARGE it is armed
+    /// and the preheat goes on.
+    ///
+    /// Only a person switches it on, in the app: that allows automation,
+    /// counts as presence, and the daemon holds the lease itself, so there
+    /// is no AI tool for it. It ends at DROP, on a manual burner, air or
+    /// drum command, an emergency stop, a lost link or a missed presence
+    /// confirmation.
+    pub fn start_autopilot(&mut self) -> Result<Snapshot, Fail> {
+        if self.autopilot.is_some() {
+            return Ok(self.snapshot());
+        }
+        if !self
+            .reference
+            .as_ref()
+            .is_some_and(|r| r.kind == ReferenceKind::Profile)
+        {
+            return Err(Fail::conflict(
+                "the autopilot follows a profile: choose one as the plan",
+                None,
+            ));
+        }
+        if self
+            .roast
+            .as_ref()
+            .is_some_and(|r| r.event(EventKind::Drop).is_some())
+        {
+            return Err(Fail::conflict("the roast has ended (DROP)", None));
+        }
+        let now = self.now();
+        let status = self.safety.status(now);
+        if !status.connected {
+            let reason = RejectReason::Disconnected;
+            return Err(Fail::conflict(reject_text(reason), Some(reason)));
+        }
+        if status.emergency_stop {
+            let reason = RejectReason::EmergencyStopLatched;
+            return Err(Fail::conflict(reject_text(reason), Some(reason)));
+        }
+        self.safety.resume_ai();
+        self.safety.confirm_presence(now);
+        self.control_request = None;
+        self.autopilot = Some(Autopilot {
+            trim: Trim::resumed(TrimTuning::default(), self.trim_offset),
+            corrected_at: None,
+            corrections: 0,
+        });
+        self.audit(serde_json::json!({"type": "autopilot", "on": true}));
+        let message = if self.since_charge().is_some() && self.preheat.is_none() {
+            "Autopilot on: it follows the recipe and keeps the roast on the profile's curve. Any manual burner, air or drum change ends it."
+        } else {
+            "Autopilot armed: it takes over at CHARGE. Any manual burner, air or drum change ends it."
+        };
+        self.alarm("info", "autopilot", message.to_owned());
+        self.autopilot_lease();
+        self.run_recipe();
+        self.publish(None);
+        Ok(self.snapshot())
+    }
+
+    /// Switches the autopilot off; the actuators hold and the person has
+    /// control.
+    pub fn stop_autopilot(&mut self) -> Snapshot {
+        self.end_autopilot("Autopilot off - you have control.");
+        self.snapshot()
+    }
+
+    fn end_autopilot(&mut self, message: &str) {
+        let Some(ap) = self.autopilot.take() else {
+            return;
+        };
+        if self.safety.status(self.now()).lease_holder.as_deref() == Some(AUTOPILOT_HOLDER) {
+            self.safety.release_lease();
+        }
+        self.audit(serde_json::json!({
+            "type": "autopilot",
+            "on": false,
+            "message": message,
+            "corrections": ap.corrections,
+            "offset": ap.trim.offset(),
+        }));
+        self.alarm("info", "autopilot", message.to_owned());
+        self.publish(None);
+    }
+
+    /// Ends the autopilot when a person took over (or the safety layer
+    /// stepped in), and after CHARGE holds its lease: taken when nobody has
+    /// one, renewed while it is its own. Under an AI's lease it only trims.
+    fn autopilot_lease(&mut self) {
+        if self.autopilot.is_none() {
+            return;
+        }
+        let now = self.now();
+        let status = self.safety.status(now);
+        if status.emergency_stop {
+            self.end_autopilot("Emergency stop - the autopilot is off.");
+            return;
+        }
+        if status.ai_suspended || !status.connected {
+            self.end_autopilot("Autopilot off - you have control.");
+            return;
+        }
+        if !self
+            .reference
+            .as_ref()
+            .is_some_and(|r| r.kind == ReferenceKind::Profile)
+        {
+            self.end_autopilot("The plan is not a profile any more - the autopilot is off.");
+            return;
+        }
+        if self.since_charge().is_none() || self.preheat.is_some() {
+            return;
+        }
+        if status
+            .lease_holder
+            .as_deref()
+            .is_some_and(|h| h != AUTOPILOT_HOLDER)
+        {
+            return;
+        }
+        match self.safety.acquire_lease(AUTOPILOT_HOLDER, now) {
+            Ok(_) => {
+                if status.lease_holder.is_none() {
+                    self.audit(serde_json::json!({"type": "lease", "holder": AUTOPILOT_HOLDER}));
+                }
+            }
+            Err(RejectReason::PresenceRequired) => self.ask_for_presence("The autopilot"),
+            Err(_) => {}
+        }
+    }
+
+    /// The autopilot's fine control: one burner correction when the bean
+    /// temperature heads out of the band around the plan, through the safety
+    /// layer as the autopilot. The correction stays for the recipe's later
+    /// burner steps.
+    fn autopilot_trim(&mut self) {
+        let now = self.now();
+        let roast_t = self.latest_t();
+        let Some(since) = self.since_charge() else {
+            return;
+        };
+        if self.preheat.is_some() || !self.safety.ai_in_control(now) {
+            return;
+        }
+        let (Some(bt), Some(ror)) = (self.last_bt, self.last_ror) else {
+            return;
+        };
+        // Past the plan's end there is nothing to keep to.
+        let Some((Some(plan_bt), Some(plan_ror))) = self.reference.as_ref().map(|r| r.at(since))
+        else {
+            return;
+        };
+        let Some(burner) = self
+            .safety
+            .status(now)
+            .actuators
+            .get(&Actuator::Burner)
+            .copied()
+        else {
+            return;
+        };
+        let since_burner_change = self.burner_changed_at.map_or(f64::MAX, |t| roast_t - t);
+        let Some(ap) = self.autopilot.as_ref() else {
+            return;
+        };
+        let decision = ap.trim.decide(&TrimInput {
+            since_charge: since,
+            bt,
+            ror,
+            plan_bt,
+            plan_ror,
+            burner,
+            since_burner_change,
+            since_correction: ap.corrected_at.map(|t| roast_t - t),
+        });
+        let TrimDecision::Step {
+            burner: to,
+            predicted_error_c,
+            ..
+        } = decision
+        else {
+            return;
+        };
+        if self
+            .safety
+            .rate_limited(Actuator::Burner, to, CommandSource::Autopilot, now)
+        {
+            return;
+        }
+        let side = if predicted_error_c > 0.0 {
+            "above"
+        } else {
+            "below"
+        };
+        let why = format!(
+            "the roast heads {:.0} °C {side} the plan",
+            predicted_error_c.abs()
+        );
+        let outcome = self.command(CommandRequest {
+            actuator: Actuator::Burner,
+            value: to,
+            source: CommandSource::Autopilot,
+            reason: Some(format!("autopilot: {why}")),
+        });
+        let CommandOutcome::Applied { value, .. } = outcome else {
+            return;
+        };
+        let delta = value - burner;
+        if delta.abs() < 1e-9 {
+            return;
+        }
+        if let Some(ap) = self.autopilot.as_mut() {
+            ap.trim.applied(delta);
+            ap.corrected_at = Some(roast_t);
+            ap.corrections += 1;
+            self.trim_offset = ap.trim.offset();
+        }
+        if let Some(run) = self.recipe.as_mut() {
+            run.shift_open(Actuator::Burner, delta);
+        }
+        self.alarm(
+            "info",
+            "autopilot",
+            format!("Autopilot: burner {value:.0} % ({delta:+.0}), {why}."),
+        );
     }
 
     // ---------------------------------------------------------------- preheat
@@ -1338,6 +1633,7 @@ impl Engine {
         }
         self.generation += 1;
         self.safety.set_connected(false);
+        self.end_autopilot("Disconnected - the autopilot is off.");
         self.conn = Conn::Disconnected;
         self.conn_error = None;
         self.machine = None;
@@ -1415,6 +1711,7 @@ impl Engine {
                 if let Some(r) = self.safety.set_connected(false) {
                     self.alarm("critical", "link_lost", format!("{} ({e})", r.message));
                 }
+                self.end_autopilot("The link is lost - the autopilot is off.");
                 self.publish(None);
             }
         }
@@ -1510,7 +1807,9 @@ impl Engine {
             // A detected CHARGE does not confirm presence: nobody pressed anything.
             self.on_charge(EventOrigin::Auto);
         } else if !dropped {
+            self.autopilot_lease();
             self.run_recipe();
+            self.autopilot_trim();
         }
         self.cool_before_drop();
         self.publish(Some(&point));
@@ -1535,6 +1834,9 @@ impl Engine {
             self.apply_reaction(&r);
         }
         self.preheat_step(now);
+        // The daemon's own lease must not run out between readings, and a
+        // takeover or a safety reaction ends the autopilot at once.
+        self.autopilot_lease();
         if self.conn == Conn::Connected
             && !self.stale_alarmed
             && self
@@ -1622,6 +1924,12 @@ impl Engine {
         if let (Some(c), Some(d)) = (&cmd, &self.driver) {
             let _ = d.send(DriverCmd::Apply(*c));
         }
+        if let Some(c) = &cmd
+            && c.actuator == Actuator::Burner
+            && previous.is_none_or(|p| (p - c.value).abs() > 1e-9)
+        {
+            self.burner_changed_at = Some(self.latest_t());
+        }
         // The AI's own command takes the place of the recipe step due on that
         // actuator; later steps still come (ADR 0019).
         if req.source == CommandSource::Ai
@@ -1693,6 +2001,10 @@ impl Engine {
 
     /// Grants or renews the AI lease.
     pub fn acquire_lease(&mut self, holder: &str) -> Result<LeaseInfo, Fail> {
+        // The daemon's own controllers hold their leases under these names.
+        if holder == PREHEAT_HOLDER || holder == AUTOPILOT_HOLDER {
+            return Err(Fail::bad(format!("the holder name '{holder}' is reserved")));
+        }
         let now = self.now();
         let before = self.safety.status(now).lease_holder;
         match self.safety.acquire_lease(holder, now) {
@@ -1750,11 +2062,14 @@ impl Engine {
         self.publish(None);
     }
 
-    /// The AI gives up control; actuators hold. The preheat's own lease is
-    /// not the AI's to release.
+    /// The AI gives up control; actuators hold. The preheat's and the
+    /// autopilot's own leases are not the AI's to release.
     pub fn release_lease(&mut self) -> Snapshot {
         let holder = self.safety.status(self.now()).lease_holder;
-        if holder.is_some() && holder.as_deref() != Some(PREHEAT_HOLDER) {
+        if holder
+            .as_deref()
+            .is_some_and(|h| h != PREHEAT_HOLDER && h != AUTOPILOT_HOLDER)
+        {
             self.safety.release_lease();
             self.audit(serde_json::json!({"type": "lease_released"}));
             self.alarm(
@@ -1762,8 +2077,9 @@ impl Engine {
                 "ai_released",
                 "AI released control - you have control.",
             );
-            // A running preheat takes its lease back and says so.
+            // A running preheat or autopilot takes its lease back and says so.
             self.preheat_step(self.now());
+            self.autopilot_lease();
             self.publish(None);
         }
         self.snapshot()
@@ -1948,6 +2264,7 @@ impl Engine {
             }
         };
         self.archive.clear_autosave();
+        self.end_autopilot("The recording ended - the autopilot is off.");
         // A copy elsewhere, if the person set a backup folder (ADR 0003).
         crate::backup::spawn(&self.opts.store);
         // The next roast starts the recipe afresh.
@@ -2083,7 +2400,11 @@ impl Engine {
                 reason: Some("DROP: bean cooling on".to_owned()),
             });
         }
-        if let Some(h) = holder.filter(|h| h != PREHEAT_HOLDER) {
+        let autopilot = self.autopilot.is_some();
+        if autopilot {
+            self.end_autopilot("DROP: burner off, bean cooling on. The autopilot is off.");
+        }
+        if let Some(h) = holder.filter(|h| h != PREHEAT_HOLDER && h != AUTOPILOT_HOLDER) {
             self.safety.release_lease();
             self.audit(serde_json::json!({"type": "lease_released", "holder": h, "why": "drop"}));
             self.alarm(
@@ -2091,7 +2412,7 @@ impl Engine {
                 "ai_control",
                 format!("DROP: burner off, bean cooling on. AI ({h}) handed control back to you."),
             );
-        } else {
+        } else if !autopilot {
             self.alarm(
                 "info",
                 "drop",
@@ -2716,6 +3037,98 @@ mod tests {
                 .any(|l| l.request.source == CommandSource::Autopilot
                     && l.request.reason.as_deref() == Some("recipe 0:00: burner 85 %"))
         );
+    }
+
+    #[tokio::test]
+    async fn the_autopilot_takes_over_at_charge_trims_and_yields_to_a_hand() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        // It follows a profile: without one it is refused.
+        let refused = h.call(|e| e.start_autopilot()).await.unwrap();
+        assert_eq!(refused.unwrap_err().status, 409);
+        let s = h
+            .call(|e| {
+                with_profile(e);
+                e.start_preheat(200.0, Some(20.0)).unwrap();
+                e.start_autopilot().unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(s.autopilot.as_ref().unwrap().state, "armed");
+        assert_eq!(s.safety.lease_holder.as_deref(), Some(PREHEAT_HOLDER));
+
+        // CHARGE: the autopilot holds the lease and the recipe runs.
+        let s = h
+            .call(|e| {
+                e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert!(s.preheat.is_none());
+        assert_eq!(s.safety.lease_holder.as_deref(), Some(AUTOPILOT_HOLDER));
+        assert_eq!(s.autopilot.as_ref().unwrap().state, "active");
+        assert!(s.recipe.as_ref().unwrap().automatic);
+        assert_eq!(actuator(&s, Actuator::Burner), Some(85.0));
+
+        // Five minutes in, 8 °C below the plan and no faster than it: one
+        // correction of five points, which the recipe's later step keeps.
+        let s = h
+            .call(|e| {
+                let roast = e.roast.as_mut().unwrap();
+                for ev in &mut roast.events {
+                    if ev.kind == EventKind::Charge {
+                        ev.t -= 300.0;
+                    }
+                }
+                let since = e.since_charge().unwrap();
+                let (plan_bt, plan_ror) = e.reference.as_ref().unwrap().at(since);
+                e.last_bt = Some(plan_bt.unwrap() - 8.0);
+                e.last_ror = plan_ror;
+                e.burner_changed_at = Some(e.latest_t() - 100.0);
+                // The safety layer paces automatic raises.
+                e.safety.allow_charge_jump(e.now());
+                e.autopilot_trim();
+                let first = e.snapshot();
+                // Until the correction shows, it leaves the burner alone.
+                e.burner_changed_at = Some(e.latest_t() - 100.0);
+                e.autopilot_trim();
+                assert_eq!(e.snapshot().autopilot.unwrap().corrections, 1);
+                first
+            })
+            .await
+            .unwrap();
+        assert_eq!(actuator(&s, Actuator::Burner), Some(90.0), "{:?}", s.alarms);
+        let ap = s.autopilot.as_ref().unwrap();
+        assert_eq!((ap.offset, ap.corrections), (5.0, 1));
+        let later = &s.recipe.as_ref().unwrap().steps[1];
+        assert!((later.value - 65.0).abs() < 1e-9, "{later:?}");
+
+        // A hand on the burner ends it.
+        let s = h
+            .call(|e| {
+                e.command(CommandRequest {
+                    actuator: Actuator::Burner,
+                    value: 70.0,
+                    source: CommandSource::Human,
+                    reason: None,
+                });
+                e.autopilot_lease();
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert!(s.autopilot.is_none());
+        assert!(s.safety.ai_suspended);
+        assert_eq!(s.safety.lease_holder, None);
+        assert_eq!(actuator(&s, Actuator::Burner), Some(70.0));
+
+        // Switching it on again is the person's word that automation may go
+        // on; the earlier correction still counts.
+        let s = h.call(|e| e.start_autopilot()).await.unwrap().unwrap();
+        let ap = s.autopilot.unwrap();
+        assert_eq!((ap.state, ap.offset, ap.corrections), ("active", 5.0, 0));
+        assert_eq!(s.safety.lease_holder.as_deref(), Some(AUTOPILOT_HOLDER));
     }
 
     #[tokio::test]

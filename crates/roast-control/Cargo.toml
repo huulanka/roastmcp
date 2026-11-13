@@ -14,6 +14,7 @@ roast-core.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+roast-driver.workspace = true
 serde_json.workspace = true
 
 [lints]

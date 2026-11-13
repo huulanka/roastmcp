@@ -12,7 +12,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip.tsx";
-import { PREHEAT_HOLDER } from "@/lib/roast.ts";
+import { AUTOPILOT_HOLDER, isAiHolder, PREHEAT_HOLDER } from "@/lib/roast.ts";
 import { actuatorShown } from "@/lib/units.ts";
 import { cn } from "@/lib/utils.ts";
 import { nudge, setActuator, useDesired } from "@/state/controls.ts";
@@ -33,13 +33,20 @@ const PRIMARY: Actuator[] = ["burner", "air"];
 /** Where the machine profile names none (older daemons): the heat loop. */
 const DEFAULT_TAKEOVER: Actuator[] = ["burner", "air", "drum"];
 
+/** Who a person's command on burner, air or drum takes control from. */
+type Controller = "ai" | "autopilot" | null;
+
 /**
- * While an AI is in control: touching this control ends AI control (ADR
- * 0019). Filter and cooling carry no mark; the person may use them freely.
+ * While an AI or the autopilot is in control: touching this control ends it
+ * (ADR 0019, ADR 0020). Filter and cooling carry no mark; the person may use
+ * them freely.
  */
-function TakeoverMark() {
+function TakeoverMark({ controller }: { controller: Controller }) {
   const { t } = useTranslation();
-  const label = t("Changing it ends AI control");
+  const label =
+    controller === "autopilot"
+      ? t("Changing it switches the autopilot off")
+      : t("Changing it ends AI control");
   return (
     <TooltipProvider delayDuration={150}>
       <Tooltip>
@@ -118,15 +125,15 @@ function MainControl({
   current,
   disabled,
   automatic = false,
-  endsAi = false,
+  endsAi = null,
 }: {
   spec: ActuatorSpec;
   current: number;
   disabled: boolean;
-  /** An automation (preheat) is moving it; touching it hands control back. */
+  /** An automation (preheat, autopilot) is moving it; touching it hands control back. */
   automatic?: boolean;
-  /** An AI is in control and touching this ends it. */
-  endsAi?: boolean;
+  /** An AI or the autopilot is in control and touching this ends it. */
+  endsAi?: Controller;
 }) {
   const { t } = useTranslation();
   const { shown, slider } = useShown(spec, current);
@@ -136,7 +143,7 @@ function MainControl({
       <div className="flex items-baseline justify-between">
         <span className="flex items-baseline gap-2 text-[15px] font-medium">
           {name}
-          {endsAi && <TakeoverMark />}
+          {endsAi && <TakeoverMark controller={endsAi} />}
           {automatic && (
             <span className="text-[13px] font-normal text-brand-text">{t("automatic")}</span>
           )}
@@ -164,12 +171,12 @@ function CompactControl({
   spec,
   current,
   disabled,
-  endsAi = false,
+  endsAi = null,
 }: {
   spec: ActuatorSpec;
   current: number;
   disabled: boolean;
-  endsAi?: boolean;
+  endsAi?: Controller;
 }) {
   const { t } = useTranslation();
   const shown = useDesired()[spec.actuator] ?? current;
@@ -179,7 +186,7 @@ function CompactControl({
     <div className="flex items-center gap-2">
       <span className="flex w-18 shrink-0 items-center gap-1.5 text-sm">
         {name}
-        {endsAi && <TakeoverMark />}
+        {endsAi && <TakeoverMark controller={endsAi} />}
       </span>
       <Stepper spec={spec} current={current} disabled={disabled} sign={-1} />
       <span className="min-w-0 flex-1 text-center tabular text-[15px] font-medium whitespace-nowrap">
@@ -195,12 +202,12 @@ function SwitchControl({
   a,
   on,
   disabled,
-  endsAi = false,
+  endsAi = null,
 }: {
   a: Actuator;
   on: boolean;
   disabled: boolean;
-  endsAi?: boolean;
+  endsAi?: Controller;
 }) {
   const { t } = useTranslation();
   return (
@@ -212,7 +219,7 @@ function SwitchControl({
     >
       <span className="flex items-center gap-1.5">
         {t(ACTUATOR_NAME[a])}
-        {endsAi && <TakeoverMark />}
+        {endsAi && <TakeoverMark controller={endsAi} />}
       </span>
       <span className="flex items-center gap-3">
         <span
@@ -238,12 +245,15 @@ export function Controls({
   machine,
   safety,
   preheating = false,
+  autopilot = false,
   top,
 }: {
   machine: MachineInfo | null;
   safety: SafetyStatus;
   /** The preheat moves the burner (also under an AI that took over before CHARGE). */
   preheating?: boolean;
+  /** The autopilot is in control (also under an AI's lease, ADR 0020). */
+  autopilot?: boolean;
   /** Shown above burner and air: the preheat before a roast. */
   top?: React.ReactNode;
 }) {
@@ -251,9 +261,13 @@ export function Controls({
   const desired = useDesired();
   const disabled = !machine || !safety.connected || safety.emergency_stop;
   if (!machine) return null;
-  const aiInControl = safety.lease_holder !== null && safety.lease_holder !== PREHEAT_HOLDER;
+  const controller: Controller = isAiHolder(safety.lease_holder)
+    ? "ai"
+    : autopilot || safety.lease_holder === AUTOPILOT_HOLDER
+      ? "autopilot"
+      : null;
   const takeover = machine.takeover_actuators ?? DEFAULT_TAKEOVER;
-  const endsAi = (a: Actuator) => aiInControl && takeover.includes(a);
+  const endsAi = (a: Actuator): Controller => (takeover.includes(a) ? controller : null);
 
   const main = machine.actuators.filter((s) => PRIMARY.includes(s.actuator));
   const rest = machine.actuators.filter((s) => !PRIMARY.includes(s.actuator));
@@ -275,7 +289,8 @@ export function Controls({
           current={commanded(safety, spec.actuator)}
           disabled={disabled}
           automatic={
-            spec.actuator === "burner" && (preheating || safety.lease_holder === PREHEAT_HOLDER)
+            spec.actuator === "burner" &&
+            (preheating || autopilot || safety.lease_holder === PREHEAT_HOLDER)
           }
           endsAi={endsAi(spec.actuator)}
         />

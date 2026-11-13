@@ -1340,6 +1340,7 @@ name = "roast-control"
 version = "1.17.0"
 dependencies = [
  "roast-core",
+ "roast-driver",
  "serde",
  "serde_json",
 ]

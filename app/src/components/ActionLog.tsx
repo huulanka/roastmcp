@@ -34,7 +34,7 @@ export function ActionLog({
   const source: Record<CommandSource, string> = {
     human: t("You"),
     ai: t("AI"),
-    autopilot: t("Autopilot"),
+    autopilot: t("Automation"),
     safety: t("Safety"),
   };
   const status: Record<Status, string> = {

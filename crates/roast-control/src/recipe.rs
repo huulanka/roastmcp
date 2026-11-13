@@ -308,6 +308,17 @@ impl RecipeRun {
         }
     }
 
+    /// Moves the value of every step on `actuator` that is still to come by
+    /// `delta` points: the autopilot's correction stays when the recipe's
+    /// next step comes (ADR 0020).
+    pub fn shift_open(&mut self, actuator: Actuator, delta: f64) {
+        for s in &mut self.steps {
+            if s.state == StepState::Waiting && s.action.actuator == actuator {
+                s.action.value = (s.action.value + delta).clamp(0.0, 100.0);
+            }
+        }
+    }
+
     /// Changes one step for this roast. Only steps that are still to come
     /// (or were due and nobody set them) can change.
     ///

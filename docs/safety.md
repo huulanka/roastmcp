@@ -111,9 +111,35 @@ the database.
 An AI cannot mark CHARGE without a running recording (it would start one
 without beans, weight or plan); the app's CHARGE button still starts one.
 
+## Autopilot
+
+The autopilot ([ADR 0020](adr/0020-autopilot-recipe-and-trim.md)) runs a
+profile's recipe and trims the burner to keep the roast on the profile's
+curve. Only a person switches it on, in the app: that allows automation
+again and counts as a presence confirmation, so the MCP has no tool for it.
+It needs a connected roaster, no latched emergency stop and a profile as the
+plan.
+
+- Before CHARGE it is armed and commands nothing; a running preheat goes on.
+- From CHARGE on the daemon holds the lease as `autopilot` and renews it
+  itself. Presence must be confirmed every 3 min, as under an AI. If it is
+  not fresh at CHARGE (a detected CHARGE), the autopilot waits and the app
+  asks for the confirmation.
+- Its commands have source `Autopilot` and pass the safety layer under the
+  limits below. A trim correction is at most 5 burner points, at most one
+  per 90 s, and all of them together stay within 10 points of the recipe.
+- It ends when the person switches it off (the actuators hold), on a
+  person's command on burner, air or drum, at DROP, when the recording ends,
+  and with the safe state on an emergency stop, a lost link or a missed
+  presence confirmation.
+- An AI may ask for control while it is on. The AI then holds the lease and
+  the autopilot goes on under it; when the AI lets go, the autopilot takes
+  its lease back. An AI cannot take or release a lease under the names
+  `autopilot` or `preheat`.
+
 ## Recipe runner
 
-While an AI holds the lease and the plan is a profile, the daemon sets the
+While an AI or the autopilot holds the lease and the plan is a profile, the daemon sets the
 recipe's steps itself ([ADR 0019](adr/0019-handover-before-charge-and-recipe-runner.md)):
 each at its trigger (a roast time, a bean temperature after the turning point,
 or a time after dry end or first crack, marked or detected), with source

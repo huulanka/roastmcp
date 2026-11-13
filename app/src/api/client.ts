@@ -158,6 +158,9 @@ export const api = {
   preheat: (target_c: number, air: number | null) =>
     request<Snapshot>("POST", "/api/preheat", air === null ? { target_c } : { target_c, air }),
   stopPreheat: () => request<Snapshot>("DELETE", "/api/preheat"),
+  /** The autopilot switch (ADR 0020); switching it on also confirms presence. */
+  startAutopilot: () => request<Snapshot>("POST", "/api/autopilot"),
+  stopAutopilot: () => request<Snapshot>("DELETE", "/api/autopilot"),
   reference: () => request<ReferenceCurve | null>("GET", "/api/reference"),
   setReference: (id: string | null) => request<Snapshot>("PUT", "/api/reference", { id }),
   roasts: () => request<RoastSummary[]>("GET", "/api/roasts"),

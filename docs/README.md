@@ -11,6 +11,7 @@
 
 - **[Artisan and the Cubean+](research/artisan-and-cubean-plus.md)** — How the first machine talks, and why RoastMCP owns the connection
 - **[Preheat control](research/preheat-control.md)** — The Cubean+'s first real preheat, a model of the empty drum, and Artisan's PID
+- **[Simulator calibration](research/simulator-calibration.md)** — The simulator's heat model fitted to four real roasts and the empty drum
 
 ## Architecture Decision Records
 
@@ -32,4 +33,5 @@
 - [0016](adr/0016-batch-numbers-and-deleting-roasts.md) — Batch numbers per lot, and deleting roasts into a trash folder
 - [0017](adr/0017-profile-designer.md) — Profiles from milestones and a recipe, announced while roasting
 - [0018](adr/0018-preheat-air-presence-calm-hold.md) — Preheat at the roast's start air, a presence warning, a calmer hold
-- [0019](adr/0019-handover-before-charge-and-recipe-runner.md) — The AI takes over before CHARGE, the daemon runs the recipe, filter and cooling stay free (proposed)
+- [0019](adr/0019-handover-before-charge-and-recipe-runner.md) — The AI takes over before CHARGE, the daemon runs the recipe, filter and cooling stay free
+- [0020](adr/0020-autopilot-recipe-and-trim.md) — The autopilot runs the recipe and trims the burner, switched on in the app

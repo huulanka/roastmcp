@@ -17,10 +17,11 @@ const AHEAD_S = 10;
  * During a roast with a profile, at the top of the controls: the next recipe
  * step from the daemon, its countdown and its trigger ("FC +0:30").
  *
- * Without an AI the person decides: a beep ten seconds before, and a button
- * that applies the step. While an AI holds control the daemon sets the steps
- * itself (ADR 0019): the button gives way to a quiet "automatic" mark, since
- * pressing anything here would be a takeover.
+ * Without an AI or the autopilot the person decides: a beep ten seconds
+ * before, and a button that applies the step. While an AI or the autopilot
+ * holds control the daemon sets the steps itself (ADR 0019, ADR 0020): the
+ * button gives way to a quiet "automatic" mark, since pressing anything here
+ * would be a takeover.
  */
 export function RecipeCue({ next, disabled }: { next: NextStep; disabled: boolean }) {
   const { t } = useTranslation();
@@ -75,7 +76,7 @@ export function RecipeCue({ next, disabled }: { next: NextStep; disabled: boolea
       {automatic ? (
         <span
           className="flex h-9 shrink-0 items-center gap-1.5 rounded-pill border border-border-strong bg-surface-raised px-3 text-[13px] text-muted-foreground"
-          title={t("The AI is in control: the recipe's steps are set automatically.")}
+          title={t("The recipe's steps are set automatically.")}
         >
           <Bot className="size-4 text-brand-text" aria-hidden />
           {t("automatic")}

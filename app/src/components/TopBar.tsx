@@ -4,13 +4,21 @@ import { useTranslation } from "react-i18next";
 
 import { api } from "@/api/client.ts";
 import type { BackupStatus, Snapshot } from "@/api/types.ts";
+import { AutopilotSwitch } from "@/components/AutopilotSwitch.tsx";
 import { BackupDialog } from "@/components/BackupDialog.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Kbd } from "@/components/ui/kbd.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover.tsx";
 import { setLang } from "@/i18n/index.ts";
 import { backupLine } from "@/lib/backup.ts";
-import { isRecording, PREHEAT_HOLDER, presenceView } from "@/lib/roast.ts";
+import {
+  AUTOPILOT_HOLDER,
+  autopilotOffered,
+  isAiHolder,
+  isRecording,
+  PREHEAT_HOLDER,
+  presenceView,
+} from "@/lib/roast.ts";
 import { cn } from "@/lib/utils.ts";
 import { formatClock, formatNumber } from "@/lib/units.ts";
 import { attempt, confirmPresence, emergencyStop } from "@/state/actions.ts";
@@ -268,59 +276,79 @@ function MachineStatus({
 }
 
 /**
- * Shown only while an AI holds control, asks for it, or is paused by a person.
- * An AI asking for control needs "I'm at the roaster" first; this is the one
- * place that offers it in view (the alarm toast says who asks).
+ * Who is in control: the autopilot switch while a profile is the plan (ADR
+ * 0020), and a pill while an AI or the preheat holds control or an AI is
+ * paused by a person. An AI asking for control needs "I'm at the roaster"
+ * first; this is the one place that offers it in view (the alarm toast says
+ * who asks).
  */
 function AiStatus({ snapshot }: { snapshot: Snapshot }) {
   const { t } = useTranslation();
   const s = snapshot.safety;
   const presence = presenceView(s);
-  // While the preheat holds, an AI may ask to take over before CHARGE (ADR 0019).
-  const asking =
-    s.lease_holder && s.lease_holder !== PREHEAT_HOLDER ? null : (snapshot.control_request ?? null);
+  const autopilot = autopilotOffered(snapshot);
+  const autopilotOn = autopilot && !!snapshot.autopilot;
+  // While the preheat or the autopilot holds, an AI may ask to take over
+  // (ADR 0019, ADR 0020).
+  const asking = isAiHolder(s.lease_holder) ? null : (snapshot.control_request ?? null);
   if (asking) {
     return (
-      <Button
-        className="shrink-0"
-        title={t("{{holder}} asks for control.", { holder: asking })}
-        onClick={() => void confirmPresence()}
-      >
-        {t("I'm at the roaster")}
-      </Button>
+      <span className="flex items-center gap-2">
+        {autopilot && <AutopilotSwitch snapshot={snapshot} compact />}
+        <Button
+          className="shrink-0"
+          title={t("{{holder}} asks for control.", { holder: asking })}
+          onClick={() => void confirmPresence()}
+        >
+          {t("I'm at the roaster")}
+        </Button>
+      </span>
     );
   }
-  if (!s.lease_holder && !s.ai_suspended) return null;
-  const left = s.lease_remaining_s;
+  // The autopilot's pill says it all while the daemon holds a lease of its
+  // own: its own, or the preheat's while it is armed.
+  const leasePill =
+    (s.lease_holder !== null || s.ai_suspended) &&
+    s.lease_holder !== AUTOPILOT_HOLDER &&
+    !(autopilotOn && s.lease_holder === PREHEAT_HOLDER);
+  const askPresence = s.lease_holder !== null && presence.ask;
+  if (!autopilot && !leasePill) return null;
+  // The daemon renews the leases of its own controllers: no countdown to show.
+  const left = isAiHolder(s.lease_holder) ? s.lease_remaining_s : null;
   return (
     <span className="flex items-center gap-2">
-      <span className="flex h-9 shrink-0 items-center gap-2 rounded-pill border border-border-strong bg-surface-raised px-3.5 text-[13px] whitespace-nowrap">
-        {s.lease_holder ? (
-          <>
-            {s.lease_holder === PREHEAT_HOLDER
-              ? t("Preheating")
-              : t("{{holder}} in control", { holder: s.lease_holder })}
-            {left !== null && (
-              <span className="tabular text-muted-foreground">
-                ·{" "}
-                {t("{{t}} left", {
-                  t: left < 60 ? `${Math.max(0, Math.round(left))} s` : formatClock(left),
-                })}
-              </span>
-            )}
-          </>
-        ) : (
-          t("AI paused")
-        )}
-      </span>
-      {s.lease_holder && presence.ask && (
+      {/* Beside an AI's pill the bar is crowded: the mark and the switch stay. */}
+      {autopilot && <AutopilotSwitch snapshot={snapshot} compact={isAiHolder(s.lease_holder)} />}
+      {leasePill && (
+        <span className="flex h-9 shrink-0 items-center gap-2 rounded-pill border border-border-strong bg-surface-raised px-3.5 text-[13px] whitespace-nowrap">
+          {s.lease_holder ? (
+            <>
+              {s.lease_holder === PREHEAT_HOLDER
+                ? t("Preheating")
+                : t("{{holder}} in control", { holder: s.lease_holder })}
+              {left !== null && (
+                <span className="tabular text-muted-foreground">
+                  ·{" "}
+                  {t("{{t}} left", {
+                    t: left < 60 ? `${Math.max(0, Math.round(left))} s` : formatClock(left),
+                  })}
+                </span>
+              )}
+            </>
+          ) : (
+            t("AI paused")
+          )}
+        </span>
+      )}
+      {askPresence && (
         <Button
           variant={presence.urgent ? "default" : "secondary"}
           title={t("Confirms that you are at the roaster. Space does the same.")}
           onClick={() => void confirmPresence()}
         >
           {t("I'm at the roaster")}
-          <Kbd className="ml-1 hidden sm:inline-flex">{t("Space")}</Kbd>
+          {/* Beside the autopilot's pill the bar has no room for the key. */}
+          {!autopilot && <Kbd className="ml-1 hidden sm:inline-flex">{t("Space")}</Kbd>}
         </Button>
       )}
     </span>
@@ -351,7 +379,9 @@ export function TopBar({
     .join(" · ");
 
   return (
-    <header className="flex flex-wrap items-center gap-x-7 gap-y-3 border-b border-border px-gutter py-3.5">
+    // One line from 1280 px on: a second line would push the controls (and
+    // the cooling switch) out of view during a roast; the title gives way.
+    <header className="flex flex-wrap items-center gap-x-7 gap-y-3 border-b border-border px-gutter py-3.5 xl:flex-nowrap">
       <div className="flex min-w-0 flex-[1_1_18rem] items-center gap-3.5">
         <BeanMark className="size-7.5 shrink-0" />
         <div className="flex min-w-0 flex-col">

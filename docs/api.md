@@ -133,6 +133,11 @@ interface Snapshot {
     next: null | { kind: "first_crack_start" | "drop"; bt: number; eta_s: number | null };
   };                                     // next: from the reference's event temperatures
   preheat: null | { target_c: number; state: "heating" | "holding" };
+  autopilot: null | {                    // while the autopilot is switched on (ADR 0020)
+    state: "armed" | "active" | "waiting"; // before CHARGE | in control | waits for a presence confirmation
+    offset: number;                      // burner points its corrections moved away from the recipe
+    corrections: number;
+  };
   control_request: string | null;  // an AI asked for control and waits for "I'm at the roaster" (shown 120 s)
 }
 ```
@@ -152,7 +157,7 @@ interface Snapshot {
 | `POST /api/emergency-stop/reset` | | `Snapshot` |
 | `POST /api/presence` | | `Snapshot` (a person confirmed being at the roaster) |
 | `POST /api/ai/resume` | | `Snapshot` (a person allows AI control again) |
-| `POST /api/ai/lease` | `{ holder }` | `{ holder, expires_in_s }` or 409 `{ error, reason }` |
+| `POST /api/ai/lease` | `{ holder }` | `{ holder, expires_in_s }` or 409 `{ error, reason }`; 400 for the reserved holders `preheat` and `autopilot` |
 | `DELETE /api/ai/lease` | | `Snapshot` |
 | `POST /api/recording/start` | `{ title?, green_weight_g?, beans?, lot_id?, plan?: RoastPlan, batch_no? }` — `plan.profile_version_id` makes a profile version the plan line (wins over `plan.reference_id`) | `Snapshot`; the lot's name becomes `beans` (and the title if none), the plan's reference becomes the reference curve; `batch_no` (e.g. `BRYB-002`) is kept with the roast, starts its file names and gives a lot without a code its code; the simulator ignores it and debits no stock; 404 for an unknown lot |
 | `PATCH /api/recording` | `{ title?, green_weight_g?, roasted_weight_g?, beans?, lot_id?, plan? }` | `Snapshot` |
@@ -187,6 +192,8 @@ to 1.16 cannot be read when it is taken over, every change is refused with
 | `PUT /api/reference` | `{ id?: string, profile_version_id?: string }` | `Snapshot` (a saved roast, or a profile version with its recipe; neither clears it; 404 for an unknown id) |
 | `POST /api/preheat` | `{ target_c, air? }` | `Snapshot` — sets `air` (%) first as the person's command, then preheats to `target_c` (bean probe) and holds it (ADR 0018); without `air` the applied air stays; 400 outside 50 … `max_bt_c - 10` or air outside 0–100, 409 after CHARGE or when automation is not allowed (`reason`) |
 | `DELETE /api/preheat` | | `Snapshot` — stop preheating; the burner holds |
+| `POST /api/autopilot` | | `Snapshot` — the app's autopilot switch (ADR 0020): from CHARGE the daemon sets the recipe's steps and trims the burner to keep the roast on the profile's curve; before CHARGE it is armed. Counts as a presence confirmation and allows automation again, so only the app calls it. 409 without a profile as the plan, after DROP, when disconnected or while the emergency stop is latched (`reason`) |
+| `DELETE /api/autopilot` | | `Snapshot` — switch the autopilot off; the actuators hold and the person has control |
 | `GET /api/backup` | | `{ dir, keep, last }` — the backup folder (`null`: none), how many backups stay there, and how the last one went: `{ at, ok, path?, bytes?, error? }` or `null` |
 | `PUT /api/backup` | `{ dir: string \| null, keep?: number }` | as `GET`; `dir` is a full path and is created right away (400 if that fails), `null` or empty turns backups off |
 | `POST /api/backup/run` | | as `GET`, after a backup made now; 400 with the reason if none is set or it failed |
@@ -232,4 +239,6 @@ replaces a detected one of the same kind (alarm `event_replaced`); phases,
 DTR and the plan use the marked one. At DROP the daemon turns the burner
 off, switches the bean cooling on and ends the AI's lease (see
 [safety.md](safety.md)). Presence can only be confirmed in the
-app, and there is no preheat tool, because starting it confirms presence.
+app, and there is no preheat or autopilot tool, because starting either
+confirms presence. The status shows the autopilot while it is on (state,
+offset from the recipe, corrections).
