@@ -620,4 +620,75 @@ export const de: Record<string, string> = {
   "{{date}} · day {{n}}": "{{date}} · Tag {{n}}",
   "{{roast}} · roasted on {{date}}": "{{roast}} · geröstet am {{date}}",
   "{{score}} points": "{{score}} Punkte",
+  burner: "Brenner",
+  air: "Luft",
+  drum: "Trommel",
+  filter: "Filter",
+  cooling: "Kühlung",
+  "Connected to {{name}}. {{rest}}": "Verbunden mit {{name}}. {{rest}}",
+  "Connected to {{name}}.": "Verbunden mit {{name}}.",
+  "Recipe {{label}}: {{actuator}} {{value}} %.": "Rezept {{label}}: {{actuator}} {{value}} %.",
+  "Autopilot: burner {{value}} % ({{delta}}), the roast heads {{c}} °C above the plan.":
+    "Autopilot: Brenner {{value}} % ({{delta}}), die Röstung läuft {{c}} °C über dem Plan.",
+  "Autopilot: burner {{value}} % ({{delta}}), the roast heads {{c}} °C below the plan.":
+    "Autopilot: Brenner {{value}} % ({{delta}}), die Röstung läuft {{c}} °C unter dem Plan.",
+  "Preheating to {{target}} °C at air {{air}} %. Confirm presence every {{every}} min while it runs (a gong sounds before).":
+    "Vorheizen auf {{target}} °C bei Luft {{air}} %. Bestätige währenddessen alle {{every}} min deine Anwesenheit (vorher ertönt ein Gong).",
+  "{{holder}} asks for control. Press “I'm at the roaster” in the app to allow it.":
+    "{{holder}} bittet um Kontrolle. Drück in der App „Ich bin am Röster“, um sie zu erlauben.",
+  "The roast is saved, but its green weight was not taken off the stock: {{why}}":
+    "Die Röstung ist gespeichert, aber ihr Rohkaffee wurde nicht vom Lager abgebucht: {{why}}",
+  "Saved “{{title}}”.": "„{{title}}“ gespeichert.",
+  "{{kind}} marked at {{at}}; it replaces the one detected at {{was}} (phases, DTR and the plan use the marked one).":
+    "{{kind}} bei {{at}} markiert; ersetzt die erkannte Marke bei {{was}} (Phasen, DTR und Plan nutzen die markierte).",
+  "DROP: burner off, bean cooling on. AI ({{holder}}) handed control back to you.":
+    "DROP: Brenner aus, Bohnenkühlung an. Die KI ({{holder}}) hat dir die Kontrolle zurückgegeben.",
+  "DROP at {{target}} °C expected within {{s}} s: bean cooling on.":
+    "DROP bei {{target}} °C in {{s}} s erwartet: Bohnenkühlung an.",
+  "A recording was interrupted; it was recovered to {{path}}.":
+    "Eine Aufzeichnung wurde unterbrochen; sie wurde nach {{path}} gerettet.",
+  "Recovery failed: {{e}}": "Wiederherstellung fehlgeschlagen: {{e}}",
+  "Roaster connection lost. Check the machine - you have control. ({{e}})":
+    "Verbindung zum Röster verloren. Prüf die Maschine – du hast die Kontrolle. ({{e}})",
+  "Emergency stop ({{reason}}): burner off, air high, drum running.":
+    "Not-Aus ({{reason}}): Brenner aus, Luft hoch, Trommel läuft.",
+  "AI ({{holder}}) disconnected - you have control.":
+    "KI ({{holder}}) getrennt – du hast die Kontrolle.",
+  "Burner off, air high, drum running until you change them.":
+    "Brenner aus, Luft hoch, Trommel läuft, bis du etwas änderst.",
+  "Roaster connection lost. Check the machine - you have control.":
+    "Verbindung zum Röster verloren. Prüf die Maschine – du hast die Kontrolle.",
+  "Presence was not confirmed in time: safe state, AI control ended.":
+    "Anwesenheit nicht rechtzeitig bestätigt: sicherer Zustand, KI-Steuerung beendet.",
+  "Autopilot off - you have control.": "Autopilot aus – du hast die Kontrolle.",
+  "Emergency stop - the autopilot is off.": "Not-Aus – der Autopilot ist aus.",
+  "The plan is not a profile any more - the autopilot is off.":
+    "Der Plan ist kein Profil mehr – der Autopilot ist aus.",
+  "Preheat stopped - you have control.": "Vorheizen gestoppt – du hast die Kontrolle.",
+  "CHARGE - preheat ended, you have control.": "CHARGE – Vorheizen beendet, du hast die Kontrolle.",
+  "Preheat ended - you have control.": "Vorheizen beendet – du hast die Kontrolle.",
+  "Preheat ended: presence not confirmed or control not allowed.":
+    "Vorheizen beendet: Anwesenheit nicht bestätigt oder Steuerung nicht erlaubt.",
+  "The preheat holds on until CHARGE.": "Das Vorheizen hält die Temperatur bis CHARGE.",
+  "Disconnected - the autopilot is off.": "Getrennt – der Autopilot ist aus.",
+  "The link is lost - the autopilot is off.": "Die Verbindung ist weg – der Autopilot ist aus.",
+  "CHARGE detected.": "CHARGE erkannt.",
+  "DROP detected: the roast is saved.": "DROP erkannt: Die Röstung ist gespeichert.",
+  "No new readings from the roaster for 5 seconds.":
+    "Seit 5 Sekunden keine neuen Werte vom Röster.",
+  "You took over. AI control is suspended until you allow it again.":
+    "Du hast übernommen. Die KI-Steuerung pausiert, bis du sie wieder erlaubst.",
+  "Emergency stop released by a person.": "Not-Aus von einer Person gelöst.",
+  "AI released control - you have control.": "Die KI hat abgegeben – du hast die Kontrolle.",
+  "The recording ended - the autopilot is off.":
+    "Die Aufzeichnung ist beendet – der Autopilot ist aus.",
+  "DROP: burner off, bean cooling on. The autopilot is off.":
+    "DROP: Brenner aus, Bohnenkühlung an. Der Autopilot ist aus.",
+  "DROP: burner off, bean cooling on.": "DROP: Brenner aus, Bohnenkühlung an.",
+  "Plan: the best tasted roast, {{roast}}.": "Plan: die am besten verkostete Röstung, {{roast}}.",
+  "Your note for this roast": "Deine Notiz für diese Röstung",
+  "Remove the note": "Notiz entfernen",
+  "Next time with this bean": "Nächstes Mal bei dieser Bohne",
+  "e.g. charge 5 °C hotter, drop a little earlier":
+    "z. B. 5 °C heißer chargen, etwas früher droppen",
 };

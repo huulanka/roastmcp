@@ -57,7 +57,13 @@ pub struct LotPatch {
     /// A new batch code; an empty one removes it.
     #[serde(default)]
     pub batch_code: Option<String>,
+    /// The note for the next roast; an empty one removes it.
+    #[serde(default)]
+    pub next_roast: Option<String>,
 }
+
+/// The longest note for the next roast, in characters.
+const NOTE_MAX: usize = 500;
 
 /// A purchase of more of a lot.
 #[derive(Debug, Clone, Deserialize)]
@@ -251,6 +257,10 @@ impl InventoryStore {
             }
             if let Some(c) = p.batch_code {
                 lot.batch_code = batch_code(&c);
+            }
+            if let Some(n) = p.next_roast {
+                let n = n.trim();
+                lot.next_roast = (!n.is_empty()).then(|| n.chars().take(NOTE_MAX).collect());
             }
             Ok(())
         })?;
@@ -460,6 +470,45 @@ mod tests {
 
         let again = InventoryStore::open(db(dir.path()), &path);
         assert!((again.lot(lot.lot.id).unwrap().stock_g - 5773.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_note_for_the_next_roast_is_kept_trimmed_and_removed_when_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("inventory.json");
+        let mut store = InventoryStore::open(db(dir.path()), &path);
+        let lot = store
+            .add_lot(NewLot {
+                name: "Yellow Bourbon".into(),
+                ..NewLot::default()
+            })
+            .unwrap();
+        let note = |n: &str| LotPatch {
+            next_roast: Some(n.into()),
+            ..LotPatch::default()
+        };
+        let v = store
+            .update_lot(lot.lot.id, note("  charge 10 °C hotter "))
+            .unwrap();
+        assert_eq!(v.lot.next_roast.as_deref(), Some("charge 10 °C hotter"));
+        let again = InventoryStore::open(db(dir.path()), &path);
+        assert_eq!(
+            again.lot(lot.lot.id).unwrap().lot.next_roast.as_deref(),
+            Some("charge 10 °C hotter")
+        );
+        // Other changes leave it alone; an empty note removes it.
+        let v = store
+            .update_lot(
+                lot.lot.id,
+                LotPatch {
+                    archived: Some(false),
+                    ..LotPatch::default()
+                },
+            )
+            .unwrap();
+        assert!(v.lot.next_roast.is_some());
+        let v = store.update_lot(lot.lot.id, note(" ")).unwrap();
+        assert!(v.lot.next_roast.is_none());
     }
 
     #[test]

@@ -282,6 +282,10 @@ pub struct GreenLot {
     /// numbers (`BRYB` → `BRYB-001`, `BRYB-002`, …).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_code: Option<String>,
+    /// What to do differently the next time this lot is roasted, in the
+    /// person's words ("charge 10 °C hotter"); shown when it is picked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_roast: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -296,6 +300,7 @@ impl GreenLot {
             purchase_date: None,
             archived: false,
             batch_code: None,
+            next_roast: None,
             created_at,
         }
     }

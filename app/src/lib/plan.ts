@@ -90,6 +90,29 @@ export function lastRoastOfLot(
   );
 }
 
+/**
+ * The roast of a lot to plan the next one from: the best tasted (by `rank`,
+ * higher is better), else the last one.
+ */
+export function planRoastOfLot(
+  roasts: readonly RoastSummary[],
+  lotId: string | null,
+  rank: ReadonlyMap<string, number>,
+  simulated = false,
+): RoastSummary | null {
+  if (!lotId) return null;
+  const ofLot = roasts.filter(
+    (r) => r.lot_id === lotId && isComplete(r) && (simulated || !r.simulated),
+  );
+  let best: RoastSummary | null = null;
+  for (const r of ofLot) {
+    const score = rank.get(r.id);
+    if (score === undefined) continue;
+    if (!best || score > (rank.get(best.id) ?? -Infinity)) best = r;
+  }
+  return best ?? lastRoastOfLot(roasts, lotId, simulated);
+}
+
 /** Plan values a reference roast suggests: its goal, drop temperature and DTR. */
 export function suggestedTargets(ref: RoastSummary | null): {
   goal: RoastGoal | null;

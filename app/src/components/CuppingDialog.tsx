@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -50,7 +50,7 @@ export function CuppingDialog({
   onClose,
   onSaved,
 }: {
-  roast: { id: string; label: string; roasted_at: string };
+  roast: { id: string; label: string; roasted_at: string; lot_id?: string | null };
   /** The tasting to change; `null` records a new one. */
   cupping: Cupping | null;
   onClose: () => void;
@@ -71,6 +71,24 @@ export function CuppingDialog({
   const [notes, setNotes] = useState(cupping?.notes ?? "");
   const [scores, setScores] = useState<CuppingScores>(cupping?.scores ?? {});
   const [busy, setBusy] = useState(false);
+  /** The lot's note for its next roast, as stored and as being edited. */
+  const [nextRoast, setNextRoast] = useState<{ stored: string; text: string } | null>(null);
+
+  useEffect(() => {
+    if (!roast.lot_id) return;
+    let alive = true;
+    api
+      .lot(roast.lot_id)
+      .then((l) => {
+        const text = l.next_roast ?? "";
+        if (alive) setNextRoast({ stored: text, text });
+      })
+      // Without the lot the field simply does not show.
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [roast.lot_id]);
 
   const derivedRest = day ? restDays(roast.roasted_at, tastedAt(day, roast.roasted_at)) : null;
   const totalValue = total.trim() === "" ? null : parseNumber(total);
@@ -98,6 +116,9 @@ export function CuppingDialog({
     try {
       if (cupping) await api.patchCupping(cupping.id, body);
       else await api.addCupping(roast.id, body);
+      if (roast.lot_id && nextRoast && nextRoast.text.trim() !== nextRoast.stored) {
+        await api.patchLot(roast.lot_id, { next_roast: nextRoast.text.trim() });
+      }
       toast("success", t("Tasting saved"));
       onSaved();
     } catch (e) {
@@ -260,11 +281,27 @@ export function CuppingDialog({
 
               <Field label={t("Note")}>
                 <textarea
-                  className={cn(inputCls, "min-h-24 resize-none py-2.5")}
+                  className={cn(
+                    inputCls,
+                    nextRoast ? "min-h-18" : "min-h-24",
+                    "resize-none py-2.5",
+                  )}
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                 />
               </Field>
+
+              {nextRoast && (
+                <Field label={t("Next time with this bean")}>
+                  <input
+                    className={inputCls}
+                    value={nextRoast.text}
+                    maxLength={500}
+                    placeholder={t("e.g. charge 5 °C hotter, drop a little earlier")}
+                    onChange={(e) => setNextRoast({ ...nextRoast, text: e.target.value })}
+                  />
+                </Field>
+              )}
             </>
           ) : (
             <>
