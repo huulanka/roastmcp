@@ -1,3 +1,10 @@
+# [1.29.0](https://github.com/huulanka/roastmcp/compare/v1.28.0...v1.29.0) (2026-11-14)
+
+
+### Features
+
+* keep a roast's sound on request, learn the fan, and evaluate and mix crack sound ([#52](https://github.com/huulanka/roastmcp/issues/52)) ([2b87302](https://github.com/huulanka/roastmcp/commit/2b8730235f6c9e6a53afd17444599853b642c5c8))
+
 # [1.28.0](https://github.com/huulanka/roastmcp/compare/v1.27.0...v1.28.0) (2026-11-14)
 
 
