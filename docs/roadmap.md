@@ -48,9 +48,11 @@ Next, in order:
 6. **Cupping and care (M4)**: in the daemon and for AI clients — cuppings
    per roast, the rest overview with windows per roast level, maintenance
    tasks with their log and what is due, and the checklist before a roast.
-   Open: the same in the app (cupping form, rest and maintenance views, the
-   checklist in the guided flow), and a restore from a backup shown to work
-   on the author's data.
+   In the app, the **Pflege** (Care) tab holds the maintenance tasks, their
+   log and the checklist; the start dialog shows the checklist and the
+   maintenance due on a first page that informs and never holds the roast
+   back. Open: cupping and rest in the app's archive, and a restore from a
+   backup shown to work on the author's data.
 7. M5, M6 and M8 as below; release through the Homebrew tap.
 
 ## M0: foundations

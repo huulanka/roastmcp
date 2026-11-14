@@ -2,8 +2,18 @@ import { useEffect, useState } from "react";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 
+import { Check, CircleCheck, Wrench } from "lucide-react";
+
 import { api, ApiError } from "@/api/client.ts";
-import type { Lot, ProfileSummary, RoastGoal, RoastPlan, RoastSummary } from "@/api/types.ts";
+import type {
+  Checklist,
+  Lot,
+  MaintenanceTask,
+  ProfileSummary,
+  RoastGoal,
+  RoastPlan,
+  RoastSummary,
+} from "@/api/types.ts";
 import { Field, inputCls, UnitInput } from "@/components/Dialogs.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Kbd } from "@/components/ui/kbd.tsx";
@@ -32,10 +42,12 @@ import {
   suggestedTargets,
 } from "@/lib/plan.ts";
 import { nextBatchNo } from "@/lib/batch.ts";
+import { checklistText, sinceText } from "@/lib/care.ts";
 import { fromTarget, phaseShares } from "@/lib/profile.ts";
 import { bluetoothName } from "@/lib/ports.ts";
 import { formatClock, formatNumber, weightLossPct } from "@/lib/units.ts";
 import { cn } from "@/lib/utils.ts";
+import { refreshCare } from "@/state/care.ts";
 import { applySnapshot, useLive } from "@/state/live.ts";
 import { toast } from "@/state/toasts.ts";
 
@@ -131,6 +143,39 @@ export function StartDialog({
     dtr: "",
   });
   const [busy, setBusy] = useState(false);
+  const [checklist, setChecklist] = useState<Checklist | null>(null);
+  /** The check comes first; it informs and never holds the roast back. */
+  const [page, setPage] = useState<"check" | "roast">("check");
+  const hasCheck = !!checklist && checklist.items.length + checklist.due.length > 0;
+  const onCheck = page === "check" && hasCheck;
+  /** Closing puts the dialog back on its first page for the next roast. */
+  const close = (o: boolean) => {
+    if (!o) setPage("check");
+    onOpenChange(o);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    api
+      .checklist()
+      .then((c) => alive && setChecklist(c))
+      // Without the checklist the dialog opens on the roast, as before.
+      .catch(() => alive && setChecklist(null));
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+
+  const taskDone = async (task: MaintenanceTask) => {
+    try {
+      await api.maintenanceDone(task.id);
+      setChecklist(await api.checklist());
+      refreshCare();
+    } catch (e) {
+      toast("critical", e instanceof ApiError ? e.message : String(e));
+    }
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -200,7 +245,7 @@ export function StartDialog({
         }),
       );
       if (form.lotId) remember(LAST_LOT_KEY, form.lotId);
-      onOpenChange(false);
+      close(false);
     } catch (e) {
       toast("critical", e instanceof ApiError ? e.message : String(e));
     } finally {
@@ -223,253 +268,373 @@ export function StartDialog({
     : "";
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={close}>
       <DialogContent className="gap-0 sm:max-w-[38rem]">
         <form
           className="flex flex-col gap-5"
           onSubmit={(e) => {
             e.preventDefault();
-            void start();
+            if (onCheck) setPage("roast");
+            else void start();
           }}
         >
           <DialogHeader>
             <DialogTitle>{t("Start recording")}</DialogTitle>
-            <DialogDescription>{t("All optional. Targets are guidance only.")}</DialogDescription>
+            <DialogDescription>
+              {onCheck
+                ? t("A quick look before it gets hot.")
+                : t("All optional. Targets are guidance only.")}
+            </DialogDescription>
           </DialogHeader>
 
-          {machine && (
-            <div className="flex min-w-0 items-center gap-2.5 rounded-lg bg-surface-raised px-3.5 py-2.5 text-sm">
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "size-2 shrink-0 rounded-pill",
-                  machine.simulated ? "bg-muted-foreground" : "bg-ok",
-                )}
-              />
-              <span className="shrink-0 font-semibold">
-                {machine.simulated ? t("Simulator") : t("Real roaster")}
-              </span>
-              <span className="truncate text-muted-foreground">{machineLine}</span>
-            </div>
+          {hasCheck && (
+            <ol className="grid grid-cols-2 gap-2" aria-label={t("Steps")}>
+              {(["check", "roast"] as const).map((p, i) => (
+                <li key={p}>
+                  <button
+                    type="button"
+                    onClick={() => setPage(p)}
+                    aria-current={page === p ? "step" : undefined}
+                    className="flex w-full cursor-pointer flex-col gap-1.5 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                  >
+                    <span
+                      className={cn(
+                        "h-1 rounded-pill",
+                        i === 0 || page === "roast" ? "bg-brand" : "bg-surface-raised",
+                      )}
+                    />
+                    <span
+                      className={cn(
+                        "truncate text-[12px]",
+                        page === p ? "font-medium text-foreground" : "text-muted-foreground",
+                      )}
+                    >
+                      {p === "check" ? t("Check") : t("Roast")}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ol>
           )}
 
-          <div className="flex flex-col gap-2">
-            <div
-              className={cn(
-                "grid gap-3",
-                sim
-                  ? "grid-cols-[minmax(0,1fr)_8.5rem]"
-                  : "grid-cols-[minmax(0,1fr)_7.5rem_8.5rem]",
+          {onCheck && checklist && <CheckPage checklist={checklist} onDone={taskDone} />}
+
+          {!onCheck && (
+            <>
+              {machine && (
+                <div className="flex min-w-0 items-center gap-2.5 rounded-lg bg-surface-raised px-3.5 py-2.5 text-sm">
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "size-2 shrink-0 rounded-pill",
+                      machine.simulated ? "bg-muted-foreground" : "bg-ok",
+                    )}
+                  />
+                  <span className="shrink-0 font-semibold">
+                    {machine.simulated ? t("Simulator") : t("Real roaster")}
+                  </span>
+                  <span className="truncate text-muted-foreground">{machineLine}</span>
+                </div>
               )}
-            >
-              <Field label={t("Bean")}>
+
+              <div className="flex flex-col gap-2">
+                <div
+                  className={cn(
+                    "grid gap-3",
+                    sim
+                      ? "grid-cols-[minmax(0,1fr)_8.5rem]"
+                      : "grid-cols-[minmax(0,1fr)_7.5rem_8.5rem]",
+                  )}
+                >
+                  <Field label={t("Bean")}>
+                    <Select
+                      value={form.lotId || NONE}
+                      onValueChange={(v) => {
+                        const id = v === NONE ? "" : v;
+                        const last = lastRoastOfLot(roasts, id || null, sim);
+                        const chosen = lots.find((l) => l.id === id);
+                        set({
+                          lotId: id,
+                          batchNo: chosen && !sim ? nextBatchNo(chosen, roasts) : "",
+                          ...(last?.green_weight_g ? { weight: String(last.green_weight_g) } : {}),
+                          ...fromReference(last),
+                        });
+                      }}
+                    >
+                      <SelectTrigger aria-label={t("Bean")}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {lots.map((l) => (
+                          <SelectItem key={l.id} value={l.id}>
+                            <span className="flex min-w-0 items-baseline justify-between gap-4">
+                              <span className="truncate">{l.name}</span>
+                              <span className="shrink-0 tabular text-[13px] text-muted-foreground">
+                                {kg(l.stock_g)}
+                              </span>
+                            </span>
+                          </SelectItem>
+                        ))}
+                        {lots.length > 0 && <SelectSeparator />}
+                        <SelectItem value={NONE}>
+                          <span className="text-muted-foreground">
+                            {t("Without a bean from the inventory")}
+                          </span>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field label={t("Green weight")}>
+                    <UnitInput
+                      unit="g"
+                      inputMode="decimal"
+                      value={form.weight}
+                      onChange={(e) => set({ weight: e.target.value })}
+                    />
+                  </Field>
+                  {!sim && (
+                    <Field label={t("Batch")}>
+                      <input
+                        className={cn(inputCls, "tabular uppercase")}
+                        value={form.batchNo}
+                        placeholder="BRYB-001"
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(e) => set({ batchNo: e.target.value.toUpperCase() })}
+                      />
+                    </Field>
+                  )}
+                </div>
+                <p className="min-h-5 text-[13px] text-muted-foreground">
+                  {lots.length === 0
+                    ? t("No beans in stock yet: record a purchase in Inventory.")
+                    : lot && lastOfLot
+                      ? t("Last on {{date}}: {{time}} min, drop {{drop}} °C{{loss}}.", {
+                          date: shortDate(lastOfLot.roasted_at),
+                          time: formatClock(lastOfLot.total_s),
+                          drop: formatNumber(lastOfLot.drop_bt, 1),
+                          loss:
+                            lastOfLot.green_weight_g && lastOfLot.roasted_weight_g
+                              ? `, −${formatNumber(weightLossPct(lastOfLot.green_weight_g, lastOfLot.roasted_weight_g), 1)} %`
+                              : "",
+                        })
+                      : null}
+                  {lot && sim && <> {t("Simulator: nothing is debited from stock.")}</>}
+                  {lot && !sim && weight !== null && (
+                    <>
+                      {" "}
+                      {lot.stock_g < weight
+                        ? t("Only {{stock}} in stock.", { stock: kg(lot.stock_g) })
+                        : t("Afterwards {{stock}} in stock.", { stock: kg(lot.stock_g - weight) })}
+                    </>
+                  )}
+                </p>
+              </div>
+
+              <Field label={t("Goal")}>
+                <div
+                  role="radiogroup"
+                  aria-label={t("Goal")}
+                  className="grid grid-cols-4 gap-1 rounded-lg bg-segment-track p-1"
+                >
+                  {GOALS.map((g) => (
+                    <button
+                      key={g}
+                      type="button"
+                      role="radio"
+                      aria-checked={form.goal === g}
+                      onClick={() => set({ goal: form.goal === g ? null : g })}
+                      className={cn(
+                        "h-9 cursor-pointer rounded-md text-[15px] transition-colors duration-150 outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                        form.goal === g
+                          ? "bg-surface-selected font-medium text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {t(GOAL_NAME[g])}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+
+              <Field label={t("Plan")}>
                 <Select
-                  value={form.lotId || NONE}
+                  value={
+                    form.profileVersionId
+                      ? `${PROFILE}${form.profileVersionId}`
+                      : form.refId || NONE
+                  }
                   onValueChange={(v) => {
+                    if (v.startsWith(PROFILE)) {
+                      const versionId = v.slice(PROFILE.length);
+                      set({ profileVersionId: versionId, refId: "" });
+                      // The profile's own targets: its drop temperature and DTR.
+                      void api
+                        .profileVersion(versionId)
+                        .then(({ version }) => {
+                          const { milestones } = fromTarget(version.target);
+                          const dev = phaseShares(milestones).development;
+                          set({
+                            drop: String(Math.round(milestones.drop.bt)),
+                            dtr: String(Math.round(dev)),
+                          });
+                        })
+                        .catch(() => undefined);
+                      return;
+                    }
                     const id = v === NONE ? "" : v;
-                    const last = lastRoastOfLot(roasts, id || null, sim);
-                    const chosen = lots.find((l) => l.id === id);
+                    const s = fromReference(roasts.find((r) => r.id === id) ?? null);
                     set({
-                      lotId: id,
-                      batchNo: chosen && !sim ? nextBatchNo(chosen, roasts) : "",
-                      ...(last?.green_weight_g ? { weight: String(last.green_weight_g) } : {}),
-                      ...fromReference(last),
+                      refId: id,
+                      profileVersionId: "",
+                      drop: s.drop,
+                      dtr: s.dtr,
+                      goal: s.goal ?? form.goal,
                     });
                   }}
                 >
-                  <SelectTrigger aria-label={t("Bean")}>
+                  <SelectTrigger aria-label={t("Plan")} className="py-2">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {lots.map((l) => (
-                      <SelectItem key={l.id} value={l.id}>
-                        <span className="flex min-w-0 items-baseline justify-between gap-4">
-                          <span className="truncate">{l.name}</span>
-                          <span className="shrink-0 tabular text-[13px] text-muted-foreground">
-                            {kg(l.stock_g)}
+                    <SelectItem value={NONE}>
+                      <span className="text-muted-foreground">{t("No plan")}</span>
+                    </SelectItem>
+                    <SelectSeparator />
+                    {profiles
+                      .filter((p) => p.latest)
+                      .map((p) => (
+                        <SelectItem key={p.id} value={`${PROFILE}${p.latest?.id}`}>
+                          <span className="flex min-w-0 items-baseline gap-2">
+                            <span className="truncate">
+                              {p.name} · v{p.latest?.version}
+                            </span>
+                            <span className="shrink-0 text-[13px] text-muted-foreground">
+                              {t("Profile")}
+                            </span>
                           </span>
-                        </span>
+                        </SelectItem>
+                      ))}
+                    {profiles.length > 0 && <SelectSeparator />}
+                    {references.map((r) => (
+                      <SelectItem key={r.id} value={r.id}>
+                        <PlanOption roast={r} />
                       </SelectItem>
                     ))}
-                    {lots.length > 0 && <SelectSeparator />}
-                    <SelectItem value={NONE}>
-                      <span className="text-muted-foreground">
-                        {t("Without a bean from the inventory")}
-                      </span>
-                    </SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
-              <Field label={t("Green weight")}>
-                <UnitInput
-                  unit="g"
-                  inputMode="decimal"
-                  value={form.weight}
-                  onChange={(e) => set({ weight: e.target.value })}
-                />
-              </Field>
-              {!sim && (
-                <Field label={t("Batch")}>
-                  <input
-                    className={cn(inputCls, "tabular uppercase")}
-                    value={form.batchNo}
-                    placeholder="BRYB-001"
-                    spellCheck={false}
-                    autoComplete="off"
-                    onChange={(e) => set({ batchNo: e.target.value.toUpperCase() })}
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field label={t("Drop at")}>
+                  <UnitInput
+                    unit="°C"
+                    inputMode="decimal"
+                    value={form.drop}
+                    onChange={(e) => set({ drop: e.target.value })}
                   />
                 </Field>
-              )}
-            </div>
-            <p className="min-h-5 text-[13px] text-muted-foreground">
-              {lots.length === 0
-                ? t("No beans in stock yet: record a purchase in Inventory.")
-                : lot && lastOfLot
-                  ? t("Last on {{date}}: {{time}} min, drop {{drop}} °C{{loss}}.", {
-                      date: shortDate(lastOfLot.roasted_at),
-                      time: formatClock(lastOfLot.total_s),
-                      drop: formatNumber(lastOfLot.drop_bt, 1),
-                      loss:
-                        lastOfLot.green_weight_g && lastOfLot.roasted_weight_g
-                          ? `, −${formatNumber(weightLossPct(lastOfLot.green_weight_g, lastOfLot.roasted_weight_g), 1)} %`
-                          : "",
-                    })
-                  : null}
-              {lot && sim && <> {t("Simulator: nothing is debited from stock.")}</>}
-              {lot && !sim && weight !== null && (
-                <>
-                  {" "}
-                  {lot.stock_g < weight
-                    ? t("Only {{stock}} in stock.", { stock: kg(lot.stock_g) })
-                    : t("Afterwards {{stock}} in stock.", { stock: kg(lot.stock_g - weight) })}
-                </>
-              )}
-            </p>
-          </div>
-
-          <Field label={t("Goal")}>
-            <div
-              role="radiogroup"
-              aria-label={t("Goal")}
-              className="grid grid-cols-4 gap-1 rounded-lg bg-segment-track p-1"
-            >
-              {GOALS.map((g) => (
-                <button
-                  key={g}
-                  type="button"
-                  role="radio"
-                  aria-checked={form.goal === g}
-                  onClick={() => set({ goal: form.goal === g ? null : g })}
-                  className={cn(
-                    "h-9 cursor-pointer rounded-md text-[15px] transition-colors duration-150 outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
-                    form.goal === g
-                      ? "bg-surface-selected font-medium text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {t(GOAL_NAME[g])}
-                </button>
-              ))}
-            </div>
-          </Field>
-
-          <Field label={t("Plan")}>
-            <Select
-              value={
-                form.profileVersionId ? `${PROFILE}${form.profileVersionId}` : form.refId || NONE
-              }
-              onValueChange={(v) => {
-                if (v.startsWith(PROFILE)) {
-                  const versionId = v.slice(PROFILE.length);
-                  set({ profileVersionId: versionId, refId: "" });
-                  // The profile's own targets: its drop temperature and DTR.
-                  void api
-                    .profileVersion(versionId)
-                    .then(({ version }) => {
-                      const { milestones } = fromTarget(version.target);
-                      const dev = phaseShares(milestones).development;
-                      set({
-                        drop: String(Math.round(milestones.drop.bt)),
-                        dtr: String(Math.round(dev)),
-                      });
-                    })
-                    .catch(() => undefined);
-                  return;
-                }
-                const id = v === NONE ? "" : v;
-                const s = fromReference(roasts.find((r) => r.id === id) ?? null);
-                set({
-                  refId: id,
-                  profileVersionId: "",
-                  drop: s.drop,
-                  dtr: s.dtr,
-                  goal: s.goal ?? form.goal,
-                });
-              }}
-            >
-              <SelectTrigger aria-label={t("Plan")} className="py-2">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NONE}>
-                  <span className="text-muted-foreground">{t("No plan")}</span>
-                </SelectItem>
-                <SelectSeparator />
-                {profiles
-                  .filter((p) => p.latest)
-                  .map((p) => (
-                    <SelectItem key={p.id} value={`${PROFILE}${p.latest?.id}`}>
-                      <span className="flex min-w-0 items-baseline gap-2">
-                        <span className="truncate">
-                          {p.name} · v{p.latest?.version}
-                        </span>
-                        <span className="shrink-0 text-[13px] text-muted-foreground">
-                          {t("Profile")}
-                        </span>
-                      </span>
-                    </SelectItem>
-                  ))}
-                {profiles.length > 0 && <SelectSeparator />}
-                {references.map((r) => (
-                  <SelectItem key={r.id} value={r.id}>
-                    <PlanOption roast={r} />
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-
-          <div className="grid grid-cols-2 gap-3">
-            <Field label={t("Drop at")}>
-              <UnitInput
-                unit="°C"
-                inputMode="decimal"
-                value={form.drop}
-                onChange={(e) => set({ drop: e.target.value })}
-              />
-            </Field>
-            <Field label={t("Development (DTR)")}>
-              <UnitInput
-                unit="%"
-                inputMode="decimal"
-                value={form.dtr}
-                onChange={(e) => set({ dtr: e.target.value })}
-              />
-            </Field>
-          </div>
+                <Field label={t("Development (DTR)")}>
+                  <UnitInput
+                    unit="%"
+                    inputMode="decimal"
+                    value={form.dtr}
+                    onChange={(e) => set({ dtr: e.target.value })}
+                  />
+                </Field>
+              </div>
+            </>
+          )}
 
           <DialogFooter className="pt-1">
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-              {t("Cancel")}
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => (hasCheck && !onCheck ? setPage("check") : close(false))}
+            >
+              {hasCheck && !onCheck ? t("Back") : t("Cancel")}
             </Button>
-            <Button type="submit" disabled={busy}>
-              {t("Start recording")}
-              <Kbd>↵</Kbd>
-            </Button>
+            {onCheck ? (
+              <Button type="submit" autoFocus>
+                {t("Next: {{page}}", { page: t("Roast") })}
+                <Kbd>↵</Kbd>
+              </Button>
+            ) : (
+              <Button type="submit" disabled={busy}>
+                {t("Start recording")}
+                <Kbd>↵</Kbd>
+              </Button>
+            )}
           </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * The check before a roast: the person's items and the maintenance that is
+ * due. It only shows them; the roast can go on either way.
+ */
+function CheckPage({
+  checklist,
+  onDone,
+}: {
+  checklist: Checklist;
+  onDone: (task: MaintenanceTask) => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [busy, setBusy] = useState<string | null>(null);
+  return (
+    <div className="flex flex-col gap-4">
+      {checklist.items.length > 0 && (
+        <ul className="flex flex-col gap-2">
+          {checklist.items.map((item) => (
+            <li
+              key={`${item.key ?? ""}:${item.text}`}
+              className="flex min-h-12 items-center gap-3 rounded-xl border border-border px-3.5 py-2 text-[15px]"
+            >
+              <CircleCheck aria-hidden="true" className="size-5 shrink-0 text-muted-foreground" />
+              {checklistText(item, t)}
+            </li>
+          ))}
+        </ul>
+      )}
+      {checklist.due.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <span className="text-[13px] text-muted-foreground">{t("Maintenance due")}</span>
+          <ul className="flex flex-col gap-2">
+            {checklist.due.map((task) => (
+              <li
+                key={task.id}
+                className="flex min-h-13 items-center gap-3 rounded-xl border border-brand/40 bg-brand/6 py-1.5 pr-1.5 pl-3.5"
+              >
+                <Wrench aria-hidden="true" className="size-5 shrink-0 text-brand-text" />
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate text-[15px]">{task.name}</span>
+                  <span className="truncate text-[13px] text-muted-foreground">
+                    {sinceText(task, t, shortDate)}
+                  </span>
+                </span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={busy !== null}
+                  onClick={() => {
+                    setBusy(task.id);
+                    void onDone(task).finally(() => setBusy(null));
+                  }}
+                >
+                  <Check />
+                  {t("Done")}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 
