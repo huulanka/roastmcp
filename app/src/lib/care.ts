@@ -4,13 +4,16 @@ import type { ChecklistItem, MaintenanceTask } from "@/api/types.ts";
 
 type T = TFunction;
 
-/** Tasks offered when none exist yet; the person takes them over and changes them. */
+/**
+ * Tasks offered when none exist yet; the person takes them over and changes
+ * them. Emptying the chaff collector is not among them: the check before
+ * every roast asks for it already, and it would show twice there.
+ */
 export const SUGGESTED_TASKS: {
   name: string;
   interval_roasts?: number;
   interval_days?: number;
 }[] = [
-  { name: "Empty the chaff collector", interval_roasts: 1 },
   { name: "Clean the drum and the exhaust path", interval_roasts: 25, interval_days: 90 },
   { name: "Check the bean probe", interval_days: 180 },
 ];

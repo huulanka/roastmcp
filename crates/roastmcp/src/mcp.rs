@@ -1371,8 +1371,9 @@ Times as m:ss, temperatures in °C. Be brief; ask before you assume."
                 "Plan the next roast",
                 format!(
                     "Plan my next roast with me. {coffee}\n\n\
-1. Read the lot (stock, process, density, moisture) and its earlier roasts: list_roasts, the \
-last two or three with get_roast, their notes, and get_consistency for the lot.\n\
+1. Read the lot (stock, process, density, moisture, and `next_roast`: my own note for the next \
+roast of it, which comes first) and its earlier roasts: list_roasts, the last two or three \
+with get_roast, their notes, and get_consistency for the lot.\n\
 2. Read the profile it is roasted with (list_profiles, get_profile) and the open experiments \
 (list_experiments): a running experiment says what this roast is to test.\n\
 3. Read how the earlier roasts tasted (get_cuppings for the lot). Ask me what the roast is \

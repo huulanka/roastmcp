@@ -195,7 +195,7 @@ interface Snapshot {
 | `GET /api/profile-versions/{id}` | | `{ profile, version }` — the version a roast's plan names |
 | `GET /api/lots?archived=true` | | `Lot[]`, newest first; archived lots only with `archived=true` |
 | `POST /api/lots` | `{ name, purchase_g?, purchase_date?, batch_code?, …offer-sheet fields of Lot }` | `Lot` (with its opening purchase); blank text is dropped, a honey grade kept only with `process: "honey"`; `batch_code` keeps letters and digits, upper case, at most 8 |
-| `GET /api/lots/{id}` / `PATCH /api/lots/{id}` | patch: `{ name?, archived?, details?, batch_code? }`; `details` (all offer-sheet fields) replaces the lot's details whole; an empty `batch_code` removes it | `Lot` |
+| `GET /api/lots/{id}` / `PATCH /api/lots/{id}` | patch: `{ name?, archived?, details?, batch_code?, next_roast? }`; `details` (all offer-sheet fields) replaces the lot's details whole; an empty `batch_code` removes it; `next_roast` is the person's note for the next roast of the lot (at most 500 characters, shown when the lot is picked to roast), an empty one removes it | `Lot` |
 | `GET /api/lots/{id}/movements` | | `StockMovement[]`, newest first |
 | `POST /api/lots/{id}/purchases` | `{ grams, date?, note? }` | `Lot` |
 | `POST /api/lots/{id}/adjustments` | `{ grams /* signed */, note? }` | `Lot` |

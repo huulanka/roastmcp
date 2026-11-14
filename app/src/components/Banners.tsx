@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils.ts";
 import { beep } from "@/state/audio.ts";
 import { applySnapshot, hasToken, useLive } from "@/state/live.ts";
 import { setActuator } from "@/state/controls.ts";
+import { alarmText } from "@/lib/alarms.ts";
 import { dismissToast, toast, useToasts } from "@/state/toasts.ts";
 
 function Bar({
@@ -169,7 +170,7 @@ export function AlarmWatcher() {
       if (first && age > 30_000) continue;
       toast(
         a.severity === "critical" ? "critical" : a.severity === "warning" ? "warning" : "info",
-        a.message,
+        alarmText(a.message, i18n.t),
       );
       if (a.severity !== "info") beep(a.severity === "critical");
     }
@@ -186,8 +187,10 @@ export function Toasts() {
     critical: "bg-estop",
   } as const;
   return (
-    <div className="pointer-events-none fixed right-gutter bottom-gutter z-50 flex w-96 max-w-[calc(100vw-2rem)] flex-col gap-2">
-      {toasts.map((x) => (
+    // Bottom left: over the event marks at most, never over the controls
+    // (burner, air, cooling) on the right or the safety banners at the top.
+    <div className="pointer-events-none fixed bottom-gutter left-gutter z-50 flex w-[26rem] max-w-[calc(100vw-2rem)] flex-col gap-2">
+      {toasts.slice(-3).map((x) => (
         <div
           key={x.id}
           role={x.kind === "critical" || x.kind === "warning" ? "alert" : "status"}

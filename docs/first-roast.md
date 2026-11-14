@@ -158,7 +158,9 @@ latched the safe state.
    note), then, if you like, scores from 0 to 10 for what you paid attention
    to. **Kurve** compares it with another roast, lined up on first crack;
    **Konsistenz** shows how it sits among the roasts of the same bean or
-   profile.
+   profile. "Nächstes Mal bei dieser Bohne" in the tasting keeps a note on the
+   lot; the start dialog shows it when you pick the bean again, and plans
+   from the best tasted roast of it rather than the last one.
 
 ## 4. Letting Claude watch, then help
 

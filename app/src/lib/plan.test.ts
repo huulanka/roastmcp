@@ -4,6 +4,7 @@ import type { RoastSummary } from "@/api/types.ts";
 import {
   kg,
   lastRoastOfLot,
+  planRoastOfLot,
   parseNumber,
   planPreheat,
   planProgress,
@@ -90,6 +91,23 @@ describe("plan defaults", () => {
       drop: 204,
       dtr: 21,
     });
+  });
+
+  it("plans from the best tasted roast of the lot, else the last", () => {
+    const roasts = [
+      roast("good", "2026-09-01T10:00:00Z"),
+      roast("better", "2026-09-04T10:00:00Z"),
+      roast("untasted", "2026-09-07T10:00:00Z"),
+      roast("other", "2026-09-08T10:00:00Z", { lot_id: "x" }),
+    ];
+    const rank = new Map([
+      ["good", 84],
+      ["better", 86.5],
+      ["other", 90],
+    ]);
+    expect(planRoastOfLot(roasts, "lot", rank)?.id).toBe("better");
+    expect(planRoastOfLot(roasts, "lot", new Map())?.id).toBe("untasted");
+    expect(planRoastOfLot(roasts, null, rank)).toBeNull();
   });
 
   it("formats and parses amounts", () => {

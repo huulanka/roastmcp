@@ -614,6 +614,7 @@ function Detail({
             id,
             label: [batchNo, title].filter(Boolean).join(" · "),
             roasted_at: roast.roasted_at ?? summary?.roasted_at ?? new Date().toISOString(),
+            lot_id: summary?.lot_id ?? null,
           }}
           cupping={tasting === "new" ? null : tasting}
           onClose={() => setTasting(null)}

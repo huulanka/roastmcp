@@ -239,6 +239,8 @@ export interface Lot extends LotDetails {
   archived: boolean;
   /** Start of its roasts' batch numbers, e.g. "BRYB". */
   batch_code?: string | null;
+  /** The person's note for the next roast of this lot. */
+  next_roast?: string | null;
   created_at: string;
   purchase_date?: string;
   stock_g: number;

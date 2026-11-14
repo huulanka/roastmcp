@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import i18n from "i18next";
 import { useTranslation } from "react-i18next";
 
-import { Check, CircleCheck, Wrench } from "lucide-react";
+import { Check, CircleCheck, NotebookPen, Wrench, X } from "lucide-react";
 
 import { api, ApiError } from "@/api/client.ts";
 import type {
@@ -37,11 +37,13 @@ import {
   isComplete,
   kg,
   lastRoastOfLot,
+  planRoastOfLot,
   parseNumber,
   pickableLots,
   suggestedTargets,
 } from "@/lib/plan.ts";
 import { nextBatchNo } from "@/lib/batch.ts";
+import { rank as tastingRank } from "@/lib/tasting.ts";
 import { checklistText, sinceText } from "@/lib/care.ts";
 import { fromTarget, phaseShares } from "@/lib/profile.ts";
 import { bluetoothName } from "@/lib/ports.ts";
@@ -131,6 +133,8 @@ export function StartDialog({
   const sim = machine?.simulated ?? false;
   const [lots, setLots] = useState<Lot[]>([]);
   const [roasts, setRoasts] = useState<RoastSummary[]>([]);
+  /** How good each tasted roast was (its best tasting), to plan from the best. */
+  const [ranks, setRanks] = useState<Map<string, number>>(new Map());
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [form, setForm] = useState<Form>({
     lotId: "",
@@ -184,8 +188,8 @@ export function StartDialog({
       .profiles()
       .then((p) => alive && setProfiles(p))
       .catch(() => alive && setProfiles([]));
-    Promise.all([api.lots(), api.roasts()])
-      .then(([l, r]) => {
+    Promise.all([api.lots(), api.roasts(), api.allCuppings().catch(() => [])])
+      .then(([l, r, c]) => {
         if (!alive) return;
         const pickable = pickableLots(l);
         const lastLot = remembered(LAST_LOT_KEY);
@@ -193,8 +197,14 @@ export function StartDialog({
         const newest = [...r]
           .filter((x) => sim || !x.simulated)
           .sort((a, b) => b.roasted_at.localeCompare(a.roasted_at))[0];
+        const rank = new Map<string, number>();
+        for (const x of c) {
+          const v = tastingRank(x);
+          if (v !== null && v > (rank.get(x.roast_id) ?? -Infinity)) rank.set(x.roast_id, v);
+        }
         setLots(pickable);
         setRoasts(r);
+        setRanks(rank);
         const last = lastRoastOfLot(r, lotId, sim);
         // The amount of the last roast of this bean, else of the last roast.
         const grams = last?.green_weight_g ?? newest?.green_weight_g ?? null;
@@ -203,7 +213,7 @@ export function StartDialog({
           lotId,
           weight: grams ? String(grams) : "",
           batchNo: chosen && !sim ? nextBatchNo(chosen, r) : "",
-          ...fromReference(last),
+          ...fromReference(planRoastOfLot(r, lotId, rank, sim)),
         });
       })
       .catch((e) => toast("warning", e instanceof ApiError ? e.message : String(e)));
@@ -215,6 +225,11 @@ export function StartDialog({
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
   const lot = lots.find((l) => l.id === form.lotId) ?? null;
   const lastOfLot = lastRoastOfLot(roasts, form.lotId || null, sim);
+  // Named when the plan is the best tasted roast rather than the last one.
+  const bestRef =
+    form.refId && form.refId !== lastOfLot?.id && ranks.has(form.refId)
+      ? (roasts.find((r) => r.id === form.refId) ?? null)
+      : null;
   const weight = parseNumber(form.weight);
   const references = roasts
     .filter(isComplete)
@@ -357,7 +372,7 @@ export function StartDialog({
                           lotId: id,
                           batchNo: chosen && !sim ? nextBatchNo(chosen, roasts) : "",
                           ...(last?.green_weight_g ? { weight: String(last.green_weight_g) } : {}),
-                          ...fromReference(last),
+                          ...fromReference(planRoastOfLot(roasts, id || null, ranks, sim)),
                         });
                       }}
                     >
@@ -428,7 +443,48 @@ export function StartDialog({
                         : t("Afterwards {{stock}} in stock.", { stock: kg(lot.stock_g - weight) })}
                     </>
                   )}
+                  {bestRef && (
+                    <>
+                      {" "}
+                      {t("Plan: the best tasted roast, {{roast}}.", {
+                        roast: bestRef.batch_no ?? shortDate(bestRef.roasted_at),
+                      })}
+                    </>
+                  )}
                 </p>
+                {lot?.next_roast && (
+                  <div className="flex items-start gap-3 rounded-xl border border-brand/40 bg-brand/6 py-1.5 pr-1.5 pl-3.5">
+                    <NotebookPen
+                      aria-hidden="true"
+                      className="mt-1.5 size-5 shrink-0 text-brand-text"
+                    />
+                    <span className="flex min-w-0 flex-1 flex-col py-1">
+                      <span className="text-[13px] text-muted-foreground">
+                        {t("Your note for this roast")}
+                      </span>
+                      <span className="text-[15px]">{lot.next_roast}</span>
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={t("Remove the note")}
+                      title={t("Remove the note")}
+                      onClick={() => {
+                        void api
+                          .patchLot(lot.id, { next_roast: "" })
+                          .then((l) =>
+                            setLots((all) => all.map((x) => (x.id === l.id ? { ...x, ...l } : x))),
+                          )
+                          .catch((e) =>
+                            toast("critical", e instanceof ApiError ? e.message : String(e)),
+                          );
+                      }}
+                    >
+                      <X />
+                    </Button>
+                  </div>
+                )}
               </div>
 
               <Field label={t("Goal")}>

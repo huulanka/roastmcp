@@ -141,6 +141,7 @@ export const api = {
     batch_no?: string;
   }) => request<Snapshot>("POST", "/api/recording/start", body),
   lots: (archived = false) => request<Lot[]>("GET", `/api/lots${archived ? "?archived=true" : ""}`),
+  lot: (id: string) => request<Lot>("GET", `/api/lots/${encodeURIComponent(id)}`),
   lotMovements: (id: string) =>
     request<StockMovement[]>("GET", `/api/lots/${encodeURIComponent(id)}/movements`),
   addLot: (
@@ -153,7 +154,14 @@ export const api = {
   ) => request<Lot>("POST", "/api/lots", body),
   patchLot: (
     id: string,
-    body: { name?: string; details?: LotDetails; archived?: boolean; batch_code?: string },
+    body: {
+      name?: string;
+      details?: LotDetails;
+      archived?: boolean;
+      batch_code?: string;
+      /** The note for the next roast; an empty one removes it. */
+      next_roast?: string;
+    },
   ) => request<Lot>("PATCH", `/api/lots/${encodeURIComponent(id)}`, body),
   addPurchase: (id: string, body: { grams: number; date?: string; note?: string }) =>
     request<Lot>("POST", `/api/lots/${encodeURIComponent(id)}/purchases`, body),
