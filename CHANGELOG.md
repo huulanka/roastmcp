@@ -1,3 +1,10 @@
+# [1.27.0](https://github.com/huulanka/roastmcp/compare/v1.26.0...v1.27.0) (2026-11-14)
+
+
+### Features
+
+* the daemon listens during a roast and marks heard first and second crack ([#50](https://github.com/huulanka/roastmcp/issues/50)) ([f986132](https://github.com/huulanka/roastmcp/commit/f9861320c4a790460ce865220700644944c36106))
+
 # [1.26.0](https://github.com/huulanka/roastmcp/compare/v1.25.0...v1.26.0) (2026-11-14)
 
 
