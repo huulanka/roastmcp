@@ -1,3 +1,10 @@
+# [1.23.0](https://github.com/huulanka/roastmcp/compare/v1.22.0...v1.23.0) (2026-11-14)
+
+
+### Features
+
+* plan from the best tasted roast, keep a note for the next roast and translate alarms ([#46](https://github.com/huulanka/roastmcp/issues/46)) ([5e328a0](https://github.com/huulanka/roastmcp/commit/5e328a0343dd5bdea7ae0bf207a44a0fe32892ad))
+
 # [1.22.0](https://github.com/huulanka/roastmcp/compare/v1.21.0...v1.22.0) (2026-11-14)
 
 
