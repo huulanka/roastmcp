@@ -691,4 +691,45 @@ export const de: Record<string, string> = {
   "Next time with this bean": "Nächstes Mal bei dieser Bohne",
   "e.g. charge 5 °C hotter, drop a little earlier":
     "z. B. 5 °C heißer chargen, etwas früher droppen",
+  "Add a roast": "Röstung zuordnen",
+  "An experiment keeps one change and the roasts that test it, so you see what it did.":
+    "Ein Experiment hält eine Änderung und die Röstungen dazu fest, damit du siehst, was sie bewirkt.",
+  "Change one thing at a time, so the cup tells you what it did.":
+    "Ändere eine Sache auf einmal, dann sagt dir die Tasse, was sie bewirkt hat.",
+  "Charging hotter shortens drying without scorching.":
+    "Heißer einfüllen verkürzt die Trocknung, ohne dass die Bohnen ansengen.",
+  Complete: "Abschließen",
+  "Delete experiment?": "Experiment löschen?",
+  "Drying about 20 s shorter, same development.":
+    "Trocknung rund 20 s kürzer, gleiche Entwicklung.",
+  Expected: "Erwartet",
+  Experiment: "Experiment",
+  "Experiment completed": "Experiment abgeschlossen",
+  Experiments: "Experimente",
+  From: "Von",
+  Hypothesis: "Annahme",
+  "Its roasts stay in the archive; only the experiment goes.":
+    "Die Röstungen bleiben im Archiv; nur das Experiment wird entfernt.",
+  "New experiment": "Neues Experiment",
+  "No experiments yet. One hypothesis, one change, then roast and taste.":
+    "Noch keine Experimente. Eine Annahme, eine Änderung, dann rösten und probieren.",
+  "No profile": "Kein Profil",
+  "No roast yet. Roast with the change, then add the roast here.":
+    "Noch keine Röstung. Röste mit der Änderung und ordne die Röstung dann hier zu.",
+  "One change": "Eine Änderung",
+  "Or in your words": "Oder in deinen Worten",
+  Reopen: "Wieder öffnen",
+  Result: "Ergebnis",
+  "Roasts for it": "Röstungen dazu",
+  "Take {{roast}} out of the experiment": "{{roast}} aus dem Experiment nehmen",
+  To: "Nach",
+  "What came out of it?": "Was ist dabei herausgekommen?",
+  "What changes": "Was sich ändert",
+  done: "abgeschlossen",
+  "everything else unchanged": "sonst alles unverändert",
+  "no roast yet": "noch keine Röstung",
+  planned: "geplant",
+  resting: "ruht",
+  running: "läuft",
+  "running since {{date}}": "läuft seit {{date}}",
 };

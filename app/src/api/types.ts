@@ -601,5 +601,21 @@ export interface Comparison {
   /** The largest BT difference after both turning points, °C. */
   max_delta_bt: number | null;
 }
+export type ExperimentStatus = "planned" | "running" | "done";
+/** One hypothesis, one changed variable, the roasts that test it and the conclusion. */
+export interface Experiment {
+  id: string;
+  hypothesis: string;
+  changed_variable: {
+    description: string;
+    structured?: { name: string; from: string; to: string } | null;
+  };
+  expected_outcome?: string | null;
+  conclusion?: string | null;
+  status: ExperimentStatus;
+  profile_version_id?: string | null;
+  roast_ids: string[];
+  created_at: string;
+}
 export type WsMessage =
   { type: "tick"; snapshot: Snapshot; point: Point | null } | { type: "reset" };
