@@ -139,6 +139,16 @@ interface Snapshot {
     roasts: number;                      // how many roasts bt comes from
     basis: "lot" | "roasts" | "typical"; // earlier roasts of the lot | of any coffee | 192 °C
   };
+  audio: {                               // listening for cracks (ADR 0021)
+    mode: "mark" | "show" | "off";
+    state: "off" | "idle" | "starting" | "listening" | "silent" | "error";
+                                         // idle: not recording; silent: only zeros (no microphone permission)
+    device: string | null; rate: number | null; error: string | null;
+    crack_20s: number;                   // crack-band pops (0.4–4 kHz) in the last 20 s
+    high_10s: number;                    // high-band pops (6–16 kHz) in the last 10 s
+    crack_db: number | null; high_db: number | null; // band levels now, dBFS
+    simulated: boolean;                  // the simulator's synthetic roaster, not a microphone
+  };
   preheat: null | { target_c: number; state: "heating" | "holding" };
   autopilot: null | {                    // while the autopilot is switched on (ADR 0020)
     state: "armed" | "active" | "waiting"; // before CHARGE | in control | waits for a presence confirmation
@@ -154,7 +164,7 @@ interface Snapshot {
 | Method & path | Body | Response |
 |---|---|---|
 | `GET /api/status` | | `Snapshot` |
-| `GET /api/live` | | `{ points: Point[], events, notes: {t,text,origin}[], control_log: { t, at, previous, request: {actuator, value, source, reason}, outcome }[] }` — every request, applied (with `clamped_from` if limited) or rejected (with a reason); the running recording, or the preview (last 10 min) when not recording |
+| `GET /api/live` | | `{ points: Point[], events, notes: {t,text,origin}[], pops: {t,band,db}[], control_log: { t, at, previous, request: {actuator, value, source, reason}, outcome }[] }` — every request, applied (with `clamped_from` if limited) or rejected (with a reason); the running recording, or the preview (last 10 min) when not recording |
 | `GET /api/ports` | | `string[]` serial ports, then on macOS paired Bluetooth serial devices as `bluetooth:<name>` (Bluetooth direct, ADR 0013) |
 | `POST /api/connect` | `{ simulator: boolean, port?: string }` | `Snapshot`; `port` is a serial port or `bluetooth:<name>` |
 | `POST /api/disconnect` | | `Snapshot` |
@@ -169,8 +179,8 @@ interface Snapshot {
 | `POST /api/recording/start` | `{ title?, green_weight_g?, beans?, lot_id?, plan?: RoastPlan, batch_no? }` — `plan.profile_version_id` makes a profile version the plan line (wins over `plan.reference_id`) | `Snapshot`; the lot's name becomes `beans` (and the title if none), the plan's reference becomes the reference curve; `batch_no` (e.g. `BRYB-002`) is kept with the roast, starts its file names and gives a lot without a code its code; the simulator ignores it and debits no stock; 404 for an unknown lot |
 | `PATCH /api/recording` | `{ title?, green_weight_g?, roasted_weight_g?, beans?, lot_id?, plan? }` | `Snapshot` |
 | `POST /api/recording/stop` | | `{ id, json_path, alog_path }` (saves the roast) |
-| `POST /api/events` | `{ kind, origin? }` | `RoastEvent` (marks at the latest `t`; replaces an earlier event of the same kind) |
-| `DELETE /api/events/{kind}` | | `Snapshot` (undo a mark) |
+| `POST /api/events` | `{ kind, origin? }` | `RoastEvent` (marks at the latest `t`; replaces an earlier event of the same kind, a detected or heard one with the alarm `event_replaced`) |
+| `DELETE /api/events/{kind}` | | `Snapshot` (undo a mark). A crack the microphone heard (origin `detector`) is heard once per roast: undone, it is not marked again |
 | `POST /api/notes` | `{ text }` | `Snapshot` |
 | `GET /api/roasts` | | `{ id, title, roasted_at, total_s, drop_bt, green_weight_g, roasted_weight_g, batch_no, … }[]`, newest first; `batch_no` is the roast's, or for an imported Artisan file the one its name starts with (`BR011_…`) |
 | `GET /api/roasts/{id}` | | the roast (`.roast.json` content); each sample also carries `ror` (°C/min), computed as the live value |
@@ -222,6 +232,8 @@ to 1.16 cannot be read when it is taken over, every change is refused with
 | `GET /api/backup` | | `{ dir, keep, last }` — the backup folder (`null`: none), how many backups stay there, and how the last one went: `{ at, ok, path?, bytes?, error? }` or `null` |
 | `PUT /api/backup` | `{ dir: string \| null, keep?: number }` | as `GET`; `dir` is a full path and is created right away (400 if that fails), `null` or empty turns backups off |
 | `POST /api/backup/run` | | as `GET`, after a backup made now; 400 with the reason if none is set or it failed |
+| `GET /api/audio` | | `{ settings: { mode: "mark"\|"show"\|"off", device: string \| null, sensitivity: "low"\|"normal"\|"high", record: boolean }, devices: string[], status }` — listening for cracks (ADR 0021); `status` as the snapshot's `audio`; `device` null is the system's default input |
+| `PUT /api/audio` | `settings` (all fields; missing ones take their defaults) | as `GET`; saved; a running recording listens again with them, keeping what was heard |
 | `POST /api/shutdown` | | 202; the daemon exits as on Ctrl-C (safe state if the burner is on, recording saved) |
 
 ## WebSocket `GET /api/ws?token=…`
@@ -234,6 +246,13 @@ The server sends JSON text messages:
   `/api/live` once and then append points.
 - `{ "type": "reset" }`: the curve started over (recording started or
   stopped): fetch `/api/live` again.
+- `{ "type": "audio", t, columns, bands, per_s, spectrum, pops, crack_db,
+  high_db, crack_20s, high_10s }`: ten times a second while listening.
+  `spectrum` is base64 of `columns × bands` bytes: new spectrogram columns,
+  each `bands` (64) levels log-spaced from 100 Hz to 16 kHz, 0 = −120 dBFS,
+  255 = −30 dBFS; `per_s` columns make one second of roast time. `pops` are
+  `{ t, band: "crack" | "high", db }` on the recording clock; `t` is the
+  recording time of the newest column.
 
 ## MCP
 

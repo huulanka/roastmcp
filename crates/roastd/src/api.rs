@@ -119,6 +119,7 @@ pub fn router(state: AppState, ui_dir: Option<PathBuf>) -> Router {
         .route("/profiles/{id}", get(profile_get).patch(profile_patch))
         .route("/profiles/{id}/versions", post(profile_version_add))
         .route("/profile-versions/{id}", get(profile_version_get))
+        .route("/audio", get(audio_get).put(audio_set))
         .route("/backup", get(backup_status).put(backup_set))
         .route("/backup/run", post(backup_run))
         .route("/lots", get(lots).post(lot_add))
@@ -998,6 +999,50 @@ async fn roast_patch(
 
 // --------------------------------------------------------------- backup
 
+/// Listening for cracks: the settings, the input devices and the state.
+#[derive(serde::Serialize)]
+struct AudioView {
+    settings: crate::audio::AudioSettings,
+    devices: Vec<String>,
+    status: crate::engine::AudioStatus,
+}
+
+async fn audio_view(st: &AppState) -> anyhow::Result<AudioView> {
+    let devices = tokio::task::spawn_blocking(crate::audio::input_devices)
+        .await
+        .unwrap_or_default();
+    let (settings, status) = st
+        .engine
+        .call(|e| (e.audio_settings(), e.audio_status()))
+        .await?;
+    Ok(AudioView {
+        settings,
+        devices,
+        status,
+    })
+}
+
+async fn audio_get(State(st): State<AppState>) -> impl IntoResponse {
+    match audio_view(&st).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => engine_gone(&e).into_response(),
+    }
+}
+
+async fn audio_set(
+    State(st): State<AppState>,
+    Json(settings): Json<crate::audio::AudioSettings>,
+) -> impl IntoResponse {
+    if let Err(e) = st
+        .engine
+        .call(move |e| e.set_audio_settings(settings))
+        .await
+    {
+        return engine_gone(&e).into_response();
+    }
+    audio_get(State(st)).await.into_response()
+}
+
 async fn backup_status(State(st): State<AppState>) -> Json<BackupStatus> {
     Json(backup::status(&st.store))
 }
@@ -1341,6 +1386,7 @@ mod tests {
             events: Vec::new(),
             control_log: Vec::new(),
             notes: Vec::new(),
+            sound: None,
         };
         let v = with_ror(&r).unwrap();
         let samples = v["samples"].as_array().unwrap();

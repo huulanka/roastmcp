@@ -12,9 +12,12 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum = { version = "0.8", features = ["ws"] }
+base64 = "0.23.1"
 chrono.workspace = true
+cpal = "0.18.2"
 dirs = "7"
 roast-alog.workspace = true
+roast-audio.workspace = true
 roast-control.workspace = true
 roast-core.workspace = true
 roast-driver.workspace = true

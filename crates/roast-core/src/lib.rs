@@ -26,6 +26,7 @@ pub mod reference;
 pub mod roast;
 pub mod ror;
 pub mod sample;
+pub mod sound;
 pub mod state;
 #[cfg(test)]
 mod testutil;
@@ -63,6 +64,7 @@ pub use roast::{
 };
 pub use ror::{RorConfig, RorTracker, ror_series};
 pub use sample::Sample;
+pub use sound::{PopBand, RoastSound, SoundLevel, SoundPop};
 pub use state::RoastState;
 
 /// Converts degrees Fahrenheit to degrees Celsius.

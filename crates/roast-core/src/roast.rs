@@ -43,6 +43,9 @@ pub struct Roast {
     pub control_log: Vec<ControlLogEntry>,
     #[serde(default)]
     pub notes: Vec<Note>,
+    /// What the microphone heard (ADR 0021).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sound: Option<crate::sound::RoastSound>,
 }
 
 impl Roast {
@@ -272,6 +275,7 @@ mod tests {
             }],
             control_log: vec![],
             notes: vec![],
+            sound: None,
         }
     }
 

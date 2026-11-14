@@ -452,6 +452,7 @@ mod tests {
             plan: None,
             profile_version_id: None,
             experiment_id: None,
+            sound: None,
             origin: RoastOrigin::Recorded,
             samples: vec![
                 sample(0.0, 200.0, Some(80.0)),

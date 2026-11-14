@@ -10,5 +10,7 @@
   </dict>
   <key>NSBluetoothAlwaysUsageDescription</key>
   <string>RoastMCP connects to Bluetooth coffee roasters.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>RoastMCP listens for first and second crack while a roast is recorded. The sound stays on this Mac.</string>
 </dict>
 </plist>
