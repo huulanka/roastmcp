@@ -3,6 +3,7 @@ import { useEffect, useRef, useSyncExternalStore } from "react";
 import { api, ApiError } from "@/api/client.ts";
 import type { EventKind, Snapshot } from "@/api/types.ts";
 import { endedRoast } from "@/lib/roast.ts";
+import { refreshCare } from "./care.ts";
 import { applySnapshot, useLive } from "./live.ts";
 import { toast } from "./toasts.ts";
 
@@ -72,7 +73,11 @@ export function SaveWatcher(): null {
   useEffect(() => {
     if (!snapshot) return;
     const ended = endedRoast(prev.current, snapshot);
-    if (ended) setJustSaved(ended);
+    if (ended) {
+      setJustSaved(ended);
+      // One more roast: maintenance may have come due.
+      refreshCare();
+    }
     prev.current = snapshot;
   }, [snapshot]);
   return null;

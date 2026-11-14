@@ -22,6 +22,7 @@ import {
 import { cn } from "@/lib/utils.ts";
 import { formatClock, formatNumber } from "@/lib/units.ts";
 import { attempt, confirmPresence, emergencyStop } from "@/state/actions.ts";
+import { useCareDue } from "@/state/care.ts";
 import { applySnapshot } from "@/state/live.ts";
 import { stateLabel, type Screen } from "@/state/helpers.ts";
 import { setThemeMode, useThemeMode, type ThemeMode } from "@/state/theme.ts";
@@ -367,6 +368,7 @@ export function TopBar({
   onConnect: () => void;
 }) {
   const { t } = useTranslation();
+  const careDue = useCareDue();
   const rec = snapshot?.recording ?? null;
   const recording = snapshot ? isRecording(snapshot.state) : false;
   const title = recording ? rec?.title || t("Untitled roast") : "RoastMCP";
@@ -390,14 +392,14 @@ export function TopBar({
         </div>
       </div>
       <nav aria-label={t("Screens")} className="flex gap-1 rounded-lg bg-segment-track p-1">
-        {(["roast", "inventory", "archive", "profiles"] as const).map((s) => (
+        {(["roast", "inventory", "archive", "profiles", "care"] as const).map((s) => (
           <button
             key={s}
             type="button"
             onClick={() => onScreen(s)}
             aria-current={screen === s ? "page" : undefined}
             className={cn(
-              "h-touch cursor-pointer rounded-md px-4.5 text-sm transition-colors duration-150 outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+              "inline-flex h-touch cursor-pointer items-center rounded-md px-4.5 text-sm transition-colors duration-150 outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
               screen === s
                 ? "bg-surface-selected font-medium text-foreground"
                 : "text-muted-foreground hover:text-foreground",
@@ -409,7 +411,17 @@ export function TopBar({
                 ? t("Inventory")
                 : s === "archive"
                   ? t("Archive")
-                  : t("Profiles")}
+                  : s === "profiles"
+                    ? t("Profiles")
+                    : t("Care")}
+            {s === "care" && careDue > 0 && (
+              <span
+                aria-label={careDue === 1 ? t("1 task due") : t("{{n}} tasks due", { n: careDue })}
+                className="ml-2 inline-flex h-5.5 min-w-5.5 items-center justify-center rounded-pill bg-brand/12 px-1.5 tabular text-[13px] font-medium text-brand-text"
+              >
+                {careDue}
+              </span>
+            )}
           </button>
         ))}
       </nav>

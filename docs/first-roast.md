@@ -126,7 +126,12 @@ latched the safe state.
    **Einkauf erfassen** asks for name and amount, then optionally, page by
    page, origin, processing, quality and supplier as on the importer's offer
    sheet. "Sack nachgewogen?" sets the stock to what the scale says.
-3. Press **Start recording**: pick the bean from the inventory (its stock is
+3. Press **Start recording**: the first page, **Check**, lists what to look
+   at before it gets hot (extinguisher, chaff, exhaust, cooling tray, staying
+   at the roaster) and any maintenance that is due; "Erledigt" logs a task.
+   It only informs, **Weiter** always goes on. Change the items and the
+   maintenance tasks under **Pflege** (top tab). On the second page pick the
+   bean from the inventory (its stock is
    shown and debited when the roast is saved), the green weight, the goal and,
    as the plan, an earlier roast (by default the last one of this bean); its
    drop temperature and DTR become the targets, editable. During the roast the

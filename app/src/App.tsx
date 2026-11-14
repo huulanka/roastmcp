@@ -6,10 +6,12 @@ import { PresenceWatcher } from "@/components/PresenceWatcher.tsx";
 import { TopBar } from "@/components/TopBar.tsx";
 import type { Screen } from "@/state/helpers.ts";
 import { ArchiveScreen } from "@/screens/ArchiveScreen.tsx";
+import { CareScreen } from "@/screens/CareScreen.tsx";
 import { InventoryView } from "@/screens/InventoryView.tsx";
 import { ProfilesScreen } from "@/screens/ProfilesScreen.tsx";
 import { RoastScreen } from "@/screens/RoastScreen.tsx";
 import { SaveWatcher } from "@/state/actions.ts";
+import { refreshCare } from "@/state/care.ts";
 import { startLive, useLive } from "@/state/live.ts";
 
 export function App() {
@@ -18,6 +20,7 @@ export function App() {
   const [connectOpen, setConnectOpen] = useState(false);
 
   useEffect(() => startLive(), []);
+  useEffect(() => refreshCare(), []);
 
   return (
     <div className="flex h-full flex-col bg-background text-foreground">
@@ -36,6 +39,8 @@ export function App() {
         </main>
       ) : screen === "archive" ? (
         <ArchiveScreen />
+      ) : screen === "care" ? (
+        <CareScreen />
       ) : (
         <ProfilesScreen />
       )}

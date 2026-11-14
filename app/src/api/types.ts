@@ -438,5 +438,45 @@ export interface Roast {
   control_log?: unknown[];
   notes?: { t: number; text: string; origin?: string }[];
 }
+/** Why a maintenance task is due. */
+export interface DueReason {
+  by: "roasts" | "days";
+  since: number;
+  interval: number;
+}
+/** A recurring maintenance task with how long ago it was done. */
+export interface MaintenanceTask {
+  id: string;
+  name: string;
+  description?: string;
+  machine_id?: string;
+  interval_roasts?: number;
+  interval_days?: number;
+  last_done_at?: string;
+  archived: boolean;
+  created_at: string;
+  /** Roasts on a real machine since it was last done (or added). */
+  roasts_since: number;
+  /** Whole days since it was last done (or added). */
+  days_since: number;
+  due: DueReason | null;
+}
+export interface MaintenanceLogEntry {
+  id: string;
+  task_id: string;
+  task_name: string;
+  done_at: string;
+  note?: string;
+}
+/** One thing to check before a roast; `key` names a built-in item. */
+export interface ChecklistItem {
+  key?: string;
+  text: string;
+}
+/** The checklist before a roast: the person's items and the maintenance due. */
+export interface Checklist {
+  items: ChecklistItem[];
+  due: MaintenanceTask[];
+}
 export type WsMessage =
   { type: "tick"; snapshot: Snapshot; point: Point | null } | { type: "reset" };

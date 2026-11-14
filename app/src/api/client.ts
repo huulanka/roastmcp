@@ -1,11 +1,15 @@
 import type {
   Actuator,
   BackupStatus,
+  Checklist,
+  ChecklistItem,
   CommandOutcome,
   EventKind,
   Live,
   Lot,
   LotDetails,
+  MaintenanceLogEntry,
+  MaintenanceTask,
   ProfileDetail,
   ProfileInfo,
   ProfileSummary,
@@ -218,6 +222,38 @@ export const api = {
     id: string,
     body: { name?: string; intended_beans?: string; batch_size_g?: number; archived?: boolean },
   ) => request<ProfileDetail>("PATCH", `/api/profiles/${encodeURIComponent(id)}`, body),
+  maintenance: (archived = false) =>
+    request<MaintenanceTask[]>("GET", `/api/maintenance${archived ? "?archived=true" : ""}`),
+  addMaintenanceTask: (body: {
+    name: string;
+    description?: string;
+    interval_roasts?: number;
+    interval_days?: number;
+  }) => request<MaintenanceTask>("POST", "/api/maintenance/tasks", body),
+  /** An interval of 0 removes it; an empty description too. */
+  patchMaintenanceTask: (
+    id: string,
+    body: {
+      name?: string;
+      description?: string;
+      interval_roasts?: number;
+      interval_days?: number;
+      archived?: boolean;
+    },
+  ) => request<MaintenanceTask>("PATCH", `/api/maintenance/tasks/${encodeURIComponent(id)}`, body),
+  maintenanceDone: (id: string, note?: string) =>
+    request<MaintenanceTask>(
+      "POST",
+      `/api/maintenance/tasks/${encodeURIComponent(id)}/done`,
+      note ? { note } : {},
+    ),
+  maintenanceLog: (limit = 50) =>
+    request<MaintenanceLogEntry[]>("GET", `/api/maintenance/log?limit=${limit}`),
+  /** Takes a log entry back; its task counts from the entry before it. */
+  deleteMaintenanceLog: (id: string) =>
+    request<MaintenanceTask>("DELETE", `/api/maintenance/log/${encodeURIComponent(id)}`),
+  checklist: () => request<Checklist>("GET", "/api/checklist"),
+  setChecklist: (items: ChecklistItem[]) => request<Checklist>("PUT", "/api/checklist", { items }),
   /** Moves a roast to the trash folder and credits its green coffee back. */
   deleteRoast: (id: string) =>
     request<{ credited_g: number; trash_path: string }>(
