@@ -323,7 +323,12 @@ came at in earlier roasts of the lot (`roast-core::crack`). Sound is kept
 only in memory unless recording it is switched on. `roastmcp audio analyze
 <file>` plays a recorded `.wav` or `.flac` through the same detector next to
 the roast recorded at that time and prints the pops and how far the heard
-cracks lie from the marks.
+cracks lie from the marks; `roastmcp audio eval` does so for every roast
+whose sound was kept and counts how many lie within ±10 s, and `roastmcp
+audio mix` makes labelled test sound from cut crack pops, fan noise and
+voices. The daemon listens during the preheat too, to learn the fan's
+noise per air level; with "keep the sound" on, a roast's sound is written
+as FLAC to `roasts/sound/`.
 
 In the app a microphone pill above the curve shows whether the daemon
 listens and counts the pops, which also show as ticks along the bottom of

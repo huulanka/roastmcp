@@ -104,9 +104,11 @@ impl std::fmt::Debug for Capture {
 
 impl Capture {
     /// Starts listening; `send` gets the events (from the capture thread).
+    /// With `record`, the sound is also kept in that FLAC file.
     pub fn start(
         source: Source,
         sensitivity: Sensitivity,
+        record: Option<std::path::PathBuf>,
         send: impl Fn(AudioEvent) + Send + 'static,
     ) -> Capture {
         let stop = Arc::new(AtomicBool::new(false));
@@ -114,9 +116,13 @@ impl Capture {
         let thread = std::thread::Builder::new()
             .name("roast-audio".into())
             .spawn(move || match source {
-                Source::Microphone(device) => {
-                    microphone(device.as_deref(), sensitivity, &flag, &send)
-                }
+                Source::Microphone(device) => microphone(
+                    device.as_deref(),
+                    sensitivity,
+                    record.as_deref(),
+                    &flag,
+                    &send,
+                ),
                 Source::Synthetic(rates) => synthetic(&rates, sensitivity, &flag, &send),
             })
             .ok();
@@ -144,10 +150,27 @@ struct Feeder<'a> {
     rate: u32,
     last_sound: Instant,
     send: &'a (dyn Fn(AudioEvent) + Send),
+    recorder: Option<roast_audio::file::Recorder>,
 }
 
 impl Feeder<'_> {
+    /// Closes the recording, if any (FLAC beside the roast).
+    fn finish(&mut self) {
+        if let Some(r) = self.recorder.take() {
+            match r.finish() {
+                Ok(path) => tracing::info!("roast sound kept in {}", path.display()),
+                Err(e) => tracing::warn!("the roast sound could not be kept: {e}"),
+            }
+        }
+    }
+
     fn feed(&mut self, samples: &[f32]) {
+        if let Some(r) = self.recorder.as_mut()
+            && let Err(e) = r.write(samples)
+        {
+            tracing::warn!("recording the sound stopped: {e}");
+            self.recorder = None;
+        }
         if samples.iter().any(|&s| s != 0.0) {
             self.last_sound = Instant::now();
         }
@@ -164,6 +187,7 @@ impl Feeder<'_> {
 fn microphone(
     name: Option<&str>,
     sensitivity: Sensitivity,
+    record: Option<&std::path::Path>,
     stop: &AtomicBool,
     send: &(dyn Fn(AudioEvent) + Send),
 ) {
@@ -229,12 +253,22 @@ fn microphone(
         device: device.to_string(),
         rate,
     });
+    let recorder = record.and_then(
+        |path| match roast_audio::file::Recorder::create(path, rate) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                tracing::warn!("the roast sound cannot be recorded: {e}");
+                None
+            }
+        },
+    );
     let mut feeder = Feeder {
         listener: Listener::new(rate, sensitivity),
         total: 0,
         rate,
         last_sound: Instant::now(),
         send,
+        recorder,
     };
     let mut buf = Vec::new();
     let mut next = Instant::now() + CHUNK;
@@ -254,6 +288,7 @@ fn microphone(
         }
     }
     drop(stream);
+    feeder.finish();
 }
 
 /// A stream callback that mixes the channels down and sends the samples on.
@@ -298,6 +333,7 @@ fn synthetic(
         rate: RATE,
         last_sound: Instant::now(),
         send,
+        recorder: None,
     };
     let per_chunk = (RATE / 10) as usize;
     let mut buf = vec![0.0; per_chunk];
@@ -357,6 +393,7 @@ mod tests {
         let cap = Capture::start(
             Source::Synthetic(rates),
             Sensitivity::Normal,
+            None,
             move |ev| match ev {
                 AudioEvent::Started { .. } => s2.store(true, Ordering::Relaxed),
                 AudioEvent::Chunk { heard, .. } => {

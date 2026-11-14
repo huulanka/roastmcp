@@ -76,8 +76,8 @@ enum AudioCommand {
     /// and compare what it hears with the roast's marks. The roast is the
     /// one recorded while the sound ran, unless `--roast` names one.
     Analyze {
-        /// The sound file.
-        file: PathBuf,
+        /// The sound file; without one, the sound kept with `--roast`.
+        file: Option<PathBuf>,
         /// A roast id from the archive, or a `.roast.json` / `.alog` file.
         #[arg(long)]
         roast: Option<String>,
@@ -91,6 +91,48 @@ enum AudioCommand {
         /// Print the whole analysis as JSON.
         #[arg(long)]
         json: bool,
+    },
+    /// Every roast whose sound was kept (and the files in `--dir`): first
+    /// crack as heard against as marked, and how many lie within ±10 s.
+    Eval {
+        /// A folder of recordings named by their start time
+        /// (`2026-11-14_19-02-11.flac`), e.g. ~/RoastMCP-Ton.
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        /// low, normal or high.
+        #[arg(long, default_value = "normal", value_parser = parse_sensitivity)]
+        sensitivity: roast_audio::Sensitivity,
+    },
+    /// Mix a test sound with exact labels: crack pops (cut from recordings,
+    /// or synthetic) in fan noise, first crack swelling and fading, voices
+    /// before it; writes the WAV and its labels as JSON, and checks what the
+    /// detector hears.
+    Mix {
+        /// The WAV to write (labels beside it as .json).
+        out: PathBuf,
+        /// Fan noise to mix into, looped (default: synthetic).
+        #[arg(long)]
+        noise: Option<PathBuf>,
+        /// Recordings to cut crack pops from (default: synthetic pops).
+        #[arg(long)]
+        pops: Vec<PathBuf>,
+        /// Length, s.
+        #[arg(long, default_value_t = 180.0)]
+        seconds: f64,
+        /// First crack starts here, s.
+        #[arg(long, default_value_t = 60.0)]
+        fc_at: f64,
+        /// Second crack starts here, s.
+        #[arg(long)]
+        sc_at: Option<f64>,
+        /// Pop peaks above the noise, dB.
+        #[arg(long, default_value_t = 20.0)]
+        pop_db: f32,
+        /// No voices before first crack.
+        #[arg(long)]
+        no_voices: bool,
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
     },
 }
 
@@ -262,6 +304,33 @@ fn main() -> anyhow::Result<()> {
                 json,
             },
         ),
+        Command::Audio(AudioCommand::Eval { dir, sensitivity }) => {
+            audio::eval(&data_dir, dir.as_deref(), sensitivity)
+        }
+        Command::Audio(AudioCommand::Mix {
+            out,
+            noise,
+            pops,
+            seconds,
+            fc_at,
+            sc_at,
+            pop_db,
+            no_voices,
+            seed,
+        }) => audio::mix(&audio::MixArgs {
+            out,
+            noise,
+            pops,
+            spec: roast_audio::mix::MixSpec {
+                seconds,
+                fc_at,
+                sc_at,
+                pop_db,
+                voices: !no_voices,
+                seed,
+                ..Default::default()
+            },
+        }),
         Command::Backup { to } => backup(&data_dir, to),
         Command::Restore { file } => restore(&data_dir, &file),
     }

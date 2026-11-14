@@ -17,6 +17,11 @@ pub fn fc_pops(s: Sensitivity) -> usize {
 }
 /// … within this many seconds.
 pub const FC_WINDOW_S: f64 = 20.0;
+/// A heard first crack reaches back to single pops before its series that
+/// came at most this far apart …
+pub const FC_LEAD_GAP_S: f64 = 15.0;
+/// … and at most this far before the series, s.
+pub const FC_LEAD_MAX_S: f64 = 30.0;
 /// First crack is over after this long without a crack-band pop, s.
 pub const FC_END_QUIET_S: f64 = 30.0;
 /// Second crack: this many high-band pops …
@@ -62,6 +67,8 @@ pub struct HeardCrack {
 pub struct CrackLogic {
     sensitivity: Sensitivity,
     crack: VecDeque<f64>,
+    /// Crack-band pops of the last minute, for reaching back.
+    earlier: VecDeque<f64>,
     high: VecDeque<f64>,
     /// Crack-band pops since first crack started, and the latest of them.
     since_fc: usize,
@@ -76,6 +83,7 @@ impl CrackLogic {
         CrackLogic {
             sensitivity,
             crack: VecDeque::new(),
+            earlier: VecDeque::new(),
             high: VecDeque::new(),
             since_fc: 0,
             last_fc_pop: None,
@@ -113,6 +121,7 @@ impl CrackLogic {
         match pop.band {
             Band::Crack => {
                 self.crack.push_back(pop.t);
+                self.earlier.push_back(pop.t);
                 if let Some((fc_t, _)) = ctx.first_crack
                     && pop.t >= fc_t
                 {
@@ -155,6 +164,13 @@ impl CrackLogic {
         while self.crack.front().is_some_and(|&t| now - t > FC_WINDOW_S) {
             self.crack.pop_front();
         }
+        while self
+            .earlier
+            .front()
+            .is_some_and(|&t| now - t > FC_WINDOW_S + FC_LEAD_MAX_S + FC_LEAD_GAP_S)
+        {
+            self.earlier.pop_front();
+        }
         while self.high.front().is_some_and(|&t| now - t > SC_WINDOW_S) {
             self.high.pop_front();
         }
@@ -176,7 +192,19 @@ impl CrackLogic {
         if series.len() < fc_pops(self.sensitivity) {
             return None;
         }
-        let t = series[0];
+        // The series often begins with a few single pops: reach back to them.
+        let mut t = series[0];
+        for &p in self
+            .earlier
+            .iter()
+            .rev()
+            .filter(|&&p| p < series[0] && p >= after)
+        {
+            if t - p > FC_LEAD_GAP_S || series[0] - p > FC_LEAD_MAX_S {
+                break;
+            }
+            t = p;
+        }
         self.since_fc = series.len();
         self.last_fc_pop = series.last().copied();
         self.suppress(EventKind::FirstCrackStart);
@@ -246,6 +274,18 @@ mod tests {
         assert_eq!(h.kind, EventKind::FirstCrackStart);
         assert_eq!(h.t, 460.0);
         assert_eq!(h.pops, 5);
+    }
+
+    #[test]
+    fn single_pops_just_before_the_series_belong_to_it() {
+        let mut l = CrackLogic::new(Sensitivity::Normal);
+        let c = ctx(194.0);
+        let mut heard = None;
+        // A lone pop long before, two up to 15 s apart before the series.
+        for t in [400.0, 444.0, 459.0, 470.0, 472.0, 474.0, 476.0, 478.0] {
+            heard = l.pop(pop(t, Band::Crack), &c).or(heard);
+        }
+        assert_eq!(heard.map(|h| h.t), Some(444.0));
     }
 
     #[test]

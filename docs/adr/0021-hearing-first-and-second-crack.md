@@ -67,7 +67,9 @@ A single pop says little; the rate says a lot.
 
 - **First crack start**: at least 5 crack-band pops within 20 s (4 at high
   sensitivity, 6 at low). It is placed at the **first pop of that series**,
-  not at the moment the rule fires. It is only believed after CHARGE, after
+  not at the moment the rule fires, reaching back to single pops just
+  before it (at most 15 s apart, at most 30 s back): a first crack often
+  starts with a few lone pops. It is only believed after CHARGE, after
   dry end when dry end is marked, and while the bean temperature is inside
   the window of §4.
 - **First crack end**: after first crack, the last pop before 30 s without
@@ -141,9 +143,12 @@ app's child, so the permission is the app's.
 - Recordings with the person's marks are the test set. A command plays them
   through the detector and shows the deviation from the marks. Target from
   the roadmap: ±10 s in most roasts.
-- **Calibration**: during the preheat the daemon learns each band's noise at
-  each air level; it raises the threshold where the fan is loud and shows
-  "+14 dB above the fan".
+- **Calibration**: during the preheat (it listens then, without marking)
+  and between pops in a roast the daemon learns each band's noise at each
+  air level and shows how far the pops rise above it ("+14 dB above the
+  fan"). The pop threshold already follows the noise of the last seconds,
+  so a louder fan needs no fixed offset; the learned levels show whether
+  the microphone stands well.
 - **Crack mixer**: real crack pops cut from the person's recordings and the
   public dataset, mixed into the machine's own fan noise at each air level,
   with a crescendo and decay like a real first crack and distractors (spoon,
