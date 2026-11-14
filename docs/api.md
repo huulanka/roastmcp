@@ -150,6 +150,11 @@ interface Snapshot {
     simulated: boolean;                  // the simulator's synthetic roaster, not a microphone
     heard: { kind: EventKind; t: number; bt: number | null; pops: number }[];
                                          // cracks heard in this recording (marked or not)
+    fan_db: number | null;               // the fan's crack-band level at the current air, as learned
+    pop_db: number | null;               // median rise of the crack-band pops of the last 20 s, dB
+    noise: { air: number; crack_db: number; high_db: number | null; seconds: number }[];
+                                         // the fan per air level (10 % steps), learned while nothing pops
+    recording_sound: boolean;            // the sound is kept as roasts/sound/<roast id>.flac
   };
   preheat: null | { target_c: number; state: "heating" | "holding" };
   autopilot: null | {                    // while the autopilot is switched on (ADR 0020)

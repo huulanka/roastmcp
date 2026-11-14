@@ -510,7 +510,7 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
     let inventory = InventoryStore::open(Arc::clone(&opts.store), &opts.inventory_path);
     let learned = LearnedStore::open(Arc::clone(&opts.store), &opts.control_path);
     let profiles = ProfileStore::open(Arc::clone(&opts.store), &opts.profiles_path);
-    let hearing = hearing::Hearing::new(crate::audio::load_settings(&opts.store));
+    let hearing = hearing::Hearing::new(crate::audio::load_settings(&opts.store), &opts.store);
     let mut engine = Engine {
         hearing,
         archive,
@@ -1313,6 +1313,10 @@ impl Engine {
         });
         let plant = self.learned.preheat(&machine_key, air);
         let ambient = self.last_ambient.unwrap_or(DEFAULT_AMBIENT_C);
+        // The preheat is when the daemon learns the fan's noise (ADR 0021 §10).
+        if self.roast.is_none() && !self.hearing_active() {
+            self.start_hearing();
+        }
         self.preheat = Some(Preheat {
             ctl: PreheatController::new(target_c, ambient, PreheatTuning::default(), plant),
             machine_key,
@@ -1351,6 +1355,9 @@ impl Engine {
         let Some(p) = self.preheat.take() else {
             return;
         };
+        if self.roast.is_none() {
+            self.stop_hearing();
+        }
         self.safety.set_preheat_holder(None);
         let learned = p.ctl.plant();
         if let Err(e) = self.learned.set_preheat(&p.machine_key, p.air, learned) {
@@ -2888,6 +2895,46 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(saved.sound.unwrap().pops.len(), 13);
+    }
+
+    #[tokio::test]
+    async fn the_preheat_learns_the_fans_noise_per_air_level() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| {
+                e.start_preheat(150.0, Some(30.0)).unwrap();
+                assert!(e.hearing_active(), "listening during the preheat");
+                for _ in 0..20 {
+                    e.on_audio(crate::audio::AudioEvent::Chunk {
+                        heard: roast_audio::Heard {
+                            crack_db: Some(-60.0),
+                            high_db: Some(-70.0),
+                            ..Default::default()
+                        },
+                        end_s: 1.0,
+                        silent: false,
+                    });
+                }
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        let row = s
+            .audio
+            .noise
+            .iter()
+            .find(|r| r.air == 30)
+            .expect("air 30 learned");
+        assert!((row.level.crack_db + 60.0).abs() < 0.01);
+        assert_eq!(s.audio.fan_db, Some(-60.0));
+        // Saved when listening stops, and there on the next start.
+        h.call(|e| e.stop_preheat()).await.unwrap();
+        let saved: std::collections::HashMap<String, serde_json::Value> = h
+            .call(|e| e.opts.store.setting("audio_noise").unwrap().unwrap())
+            .await
+            .unwrap();
+        assert!(saved["simulator"]["30"]["crack_db"].as_f64().is_some());
     }
 
     #[tokio::test]

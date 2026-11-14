@@ -59,4 +59,11 @@ pub struct RoastSound {
     /// The cracks it heard.
     #[serde(default)]
     pub heard: Vec<HeardMark>,
+    /// The kept sound (FLAC beside the roast files, in `sound/`), when
+    /// recording the sound was switched on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// Recording time at which the sound starts, s.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_t: Option<f64>,
 }

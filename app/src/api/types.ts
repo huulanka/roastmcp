@@ -421,6 +421,8 @@ export interface RoastSound {
   pops: SoundPop[];
   levels: { t: number; crack_db: number; high_db?: number | null }[];
   heard?: HeardMark[];
+  /** The kept sound file, when keeping the sound was on. */
+  file?: string | null;
 }
 export type AudioMode = "mark" | "show" | "off";
 export type Sensitivity = "low" | "normal" | "high";
@@ -440,6 +442,14 @@ export interface AudioStatus {
   high_db: number | null;
   simulated: boolean;
   heard: HeardMark[];
+  /** The fan's crack-band level at the current air, as learned, dBFS. */
+  fan_db?: number | null;
+  /** How far the pops of the last 20 s rose above the noise (median), dB. */
+  pop_db?: number | null;
+  /** The fan's noise per air level, learned during preheats and roasts. */
+  noise?: { air: number; crack_db: number; high_db?: number | null; seconds: number }[];
+  /** The sound is being kept as a file. */
+  recording_sound?: boolean;
 }
 export interface AudioSettings {
   mode: AudioMode;

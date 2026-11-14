@@ -11,6 +11,10 @@ pub enum FileError {
     Flac(#[from] claxon::Error),
     #[error("unknown sound format (use .wav or .flac): {0}")]
     Format(String),
+    #[error("cannot write the FLAC file: {0}")]
+    Encode(String),
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
 }
 
 /// Mono samples (full scale ±1) and their rate.
@@ -114,6 +118,102 @@ pub fn write_wav(path: &Path, rate: u32, samples: &[f32]) -> Result<(), FileErro
     Ok(())
 }
 
+/// Writes 16-bit mono samples as a FLAC file (about a third of the WAV).
+///
+/// # Errors
+/// When encoding or writing fails.
+pub fn write_flac(path: &Path, rate: u32, samples: &[i16]) -> Result<(), FileError> {
+    use flacenc::component::BitRepr as _;
+    use flacenc::error::Verify as _;
+    let config = flacenc::config::Encoder::default()
+        .into_verified()
+        .map_err(|(_, e)| FileError::Encode(format!("{e:?}")))?;
+    let wide: Vec<i32> = samples.iter().map(|&s| i32::from(s)).collect();
+    let source = flacenc::source::MemSource::from_samples(&wide, 1, 16, rate as usize);
+    let stream = flacenc::encode_with_fixed_block_size(&config, source, config.block_size)
+        .map_err(|e| FileError::Encode(format!("{e:?}")))?;
+    let mut sink = flacenc::bitsink::ByteSink::new();
+    stream
+        .write(&mut sink)
+        .map_err(|e| FileError::Encode(format!("{e:?}")))?;
+    std::fs::write(path, sink.as_slice())?;
+    Ok(())
+}
+
+/// Turns a 16-bit mono WAV into a FLAC beside it and removes the WAV.
+/// Returns the FLAC's path.
+///
+/// # Errors
+/// When the WAV cannot be read or the FLAC cannot be written (the WAV stays).
+pub fn wav_to_flac(wav: &Path) -> Result<std::path::PathBuf, FileError> {
+    let mut r = hound::WavReader::open(wav)?;
+    let rate = r.spec().sample_rate;
+    let samples: Result<Vec<i16>, _> = r.samples::<i16>().collect();
+    let flac = wav.with_extension("flac");
+    write_flac(&flac, rate, &samples?)?;
+    std::fs::remove_file(wav)?;
+    Ok(flac)
+}
+
+/// Writes sound as it comes to a WAV file and turns it into FLAC at the end
+/// (ADR 0021 §9: only when the person switched recording on).
+pub struct Recorder {
+    writer: hound::WavWriter<std::io::BufWriter<std::fs::File>>,
+    path: std::path::PathBuf,
+}
+
+impl std::fmt::Debug for Recorder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Recorder")
+            .field("path", &self.path)
+            .finish()
+    }
+}
+
+impl Recorder {
+    /// Starts `<flac path>.wav`; the FLAC replaces it in [`Recorder::finish`].
+    ///
+    /// # Errors
+    /// When the file cannot be created.
+    pub fn create(flac: &Path, rate: u32) -> Result<Self, FileError> {
+        if let Some(dir) = flac.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let path = flac.with_extension("wav");
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: rate,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        Ok(Recorder {
+            writer: hound::WavWriter::create(&path, spec)?,
+            path,
+        })
+    }
+
+    /// Appends mono samples (full scale ±1).
+    ///
+    /// # Errors
+    /// When writing fails.
+    pub fn write(&mut self, samples: &[f32]) -> Result<(), FileError> {
+        for &s in samples {
+            self.writer
+                .write_sample((s.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16)?;
+        }
+        Ok(())
+    }
+
+    /// Closes the WAV and turns it into FLAC; returns the file kept.
+    ///
+    /// # Errors
+    /// When closing fails; a failed FLAC leaves the WAV and says so.
+    pub fn finish(self) -> Result<std::path::PathBuf, FileError> {
+        self.writer.finalize()?;
+        wav_to_flac(&self.path)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,6 +230,13 @@ mod tests {
         assert_eq!(back.samples.len(), 4800);
         assert!((back.samples[100] - s[100]).abs() < 1e-3);
         assert!(read(&dir.join("t.mp3")).is_err());
+
+        let flac = wav_to_flac(&path).unwrap_or_else(|e| panic!("{e}"));
+        assert!(!path.exists(), "the WAV is gone");
+        let back = read(&flac).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(back.rate, 48_000);
+        assert_eq!(back.samples.len(), 4800);
+        assert!((back.samples[100] - s[100]).abs() < 1e-3);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

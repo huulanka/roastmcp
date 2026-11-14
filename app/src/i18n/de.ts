@@ -821,4 +821,12 @@ export const de: Record<string, string> = {
     "Das Mikrofon liefert nur Stille: Erlaube RoastMCP das Mikrofon in den Systemeinstellungen (Datenschutz & Sicherheit).",
   "no microphone was found": "kein Mikrofon gefunden",
   "the microphone stopped": "das Mikrofon hat aufgehört",
+  "The fan, learned per air level": "Der Lüfter, gelernt je Luftstufe",
+  "Air {{n}} %": "Luft {{n}} %",
+  "Keep the sound of each roast": "Ton jeder Röstung aufbewahren",
+  "As FLAC beside the roast, about 35 MB. Stays on this computer; it makes the detector better.":
+    "Als FLAC neben der Röstung, etwa 35 MB. Bleibt auf diesem Computer und macht die Erkennung besser.",
+  "The roast keeps the times of the pops, a level a second and, as you chose, its sound.":
+    "Die Röstung behält die Zeitpunkte der Knacks, einen Pegel je Sekunde und, wie gewählt, ihren Ton.",
+  "Above the fan": "Über dem Lüfter",
 };

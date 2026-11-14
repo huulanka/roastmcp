@@ -7,6 +7,7 @@ import { api, ApiError } from "@/api/client.ts";
 import type { AudioSettings, AudioStatus, AudioView, Sensitivity, Snapshot } from "@/api/types.ts";
 import { Segmented } from "@/components/TopBar.tsx";
 import { Button } from "@/components/ui/button.tsx";
+import { Switch } from "@/components/ui/switch.tsx";
 import {
   Dialog,
   DialogContent,
@@ -301,10 +302,48 @@ function MicForm({ view, onView }: { view: AudioView; onView: (v: AudioView) => 
           </>
         )}
       </div>
+      {(view.status.noise?.length ?? 0) > 0 && (
+        <div className="flex flex-col gap-2">
+          <span className="text-[13px] text-muted-foreground">
+            {t("The fan, learned per air level")}
+          </span>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 tabular text-[13px]">
+            {view.status.noise?.map((n) => (
+              <div key={n.air} className="contents">
+                <dt className="text-muted-foreground">{t("Air {{n}} %", { n: n.air })}</dt>
+                <dd>
+                  {formatNumber(n.crack_db, 0)} dBFS
+                  {typeof n.high_db === "number" && ` · ${formatNumber(n.high_db, 0)} dBFS`}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
+      <label className="flex items-start justify-between gap-4">
+        <span className="flex flex-col gap-0.5">
+          <span className="text-sm">{t("Keep the sound of each roast")}</span>
+          <span className="text-[13px] text-muted-foreground">
+            {t(
+              "As FLAC beside the roast, about 35 MB. Stays on this computer; it makes the detector better.",
+            )}
+          </span>
+        </span>
+        <Switch
+          checked={s.record}
+          disabled={busy || s.mode === "off"}
+          onCheckedChange={(record) => void save({ record })}
+          aria-label={t("Keep the sound of each roast")}
+        />
+      </label>
       <p className="text-[13px] text-muted-foreground">
-        {t(
-          "The sound stays in memory and only while recording. The roast keeps the times of the pops and a level a second, never the sound.",
-        )}
+        {s.record
+          ? t(
+              "The roast keeps the times of the pops, a level a second and, as you chose, its sound.",
+            )
+          : t(
+              "The sound stays in memory and only while recording. The roast keeps the times of the pops and a level a second, never the sound.",
+            )}
       </p>
     </div>
   );

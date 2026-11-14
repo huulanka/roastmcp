@@ -335,6 +335,12 @@ export function SoundView({
           </span>
         </div>
         <div className="flex flex-col gap-0.5">
+          <span className="text-[13px] text-muted-foreground">{t("Above the fan")}</span>
+          <span className="tabular text-xl font-medium">
+            {typeof audio?.pop_db === "number" ? `+${formatNumber(audio.pop_db, 0)} dB` : "–"}
+          </span>
+        </div>
+        <div className="flex flex-col gap-0.5">
           <span className="text-[13px] text-muted-foreground">{t("Crack band level")}</span>
           <span className="tabular text-xl font-medium">
             {typeof audio?.crack_db === "number" ? `${formatNumber(audio.crack_db, 0)} dBFS` : "–"}

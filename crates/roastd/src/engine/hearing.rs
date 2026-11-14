@@ -2,6 +2,7 @@
 //! recording, maps pops to the roast clock, marks heard cracks and sends the
 //! app what it hears.
 
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
@@ -36,10 +37,53 @@ pub(crate) struct Hearing {
     /// Pops per second of sound the synthetic roaster makes, set from the
     /// simulated bean temperature.
     synth: Option<Arc<Mutex<(f64, f64)>>>,
+    /// The fan's noise per machine and air level (ADR 0021 §10).
+    noise: HashMap<String, BTreeMap<u32, NoiseLevel>>,
+    /// Recording time of the latest pop.
+    last_pop: f64,
+}
+
+/// The settings key of the learned noise.
+const NOISE_KEY: &str = "audio_noise";
+/// Air is learned in steps of this many percent.
+const AIR_STEP: f64 = 10.0;
+/// No pop for this long: the frame is the fan's, s.
+const QUIET_S: f64 = 2.0;
+
+/// The bands' level at one air setting, learned while nothing pops.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, serde::Deserialize)]
+pub struct NoiseLevel {
+    pub crack_db: f32,
+    #[serde(default)]
+    pub high_db: Option<f32>,
+    /// Seconds learned (frames of 100 ms / 10).
+    pub seconds: f32,
+}
+
+impl NoiseLevel {
+    fn learn(&mut self, crack: f32, high: Option<f32>) {
+        // A plain mean at first, then a slow moving average.
+        let w = (0.1 / self.seconds.max(0.1)).max(0.01);
+        self.crack_db += w * (crack - self.crack_db);
+        self.high_db = match (self.high_db, high) {
+            (Some(a), Some(b)) => Some(a + w * (b - a)),
+            (a, b) => b.or(a),
+        };
+        self.seconds += 0.1;
+    }
+}
+
+/// The learned noise at one air setting, for the app.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct NoiseRow {
+    pub air: u32,
+    #[serde(flatten)]
+    pub level: NoiseLevel,
 }
 
 impl Hearing {
-    pub(crate) fn new(settings: AudioSettings) -> Self {
+    pub(crate) fn new(settings: AudioSettings, store: &roast_store::Store) -> Self {
+        let noise = store.setting(NOISE_KEY).ok().flatten().unwrap_or_default();
         let logic = CrackLogic::new(settings.sensitivity);
         Hearing {
             settings,
@@ -56,6 +100,8 @@ impl Hearing {
             crack_db: None,
             high_db: None,
             synth: None,
+            noise,
+            last_pop: f64::NEG_INFINITY,
         }
     }
 }
@@ -80,6 +126,15 @@ pub struct AudioStatus {
     simulated: bool,
     /// The cracks heard in this recording, as they were marked.
     heard: Vec<roast_core::HeardMark>,
+    /// The fan's crack-band level at the current air, as learned, dBFS.
+    pub(crate) fan_db: Option<f32>,
+    /// How far the crack-band pops of the last 20 s rose above the noise
+    /// (median), dB.
+    pop_db: Option<f32>,
+    /// The learned noise of this machine per air level.
+    pub(crate) noise: Vec<NoiseRow>,
+    /// The sound is being kept as a file.
+    recording_sound: bool,
 }
 
 /// One pop in the WebSocket message.
@@ -113,6 +168,19 @@ impl Engine {
             } else {
                 Vec::new()
             },
+            fan_db: self
+                .noise_table()
+                .and_then(|n| n.get(&self.air_bucket()?).map(|l| l.crack_db)),
+            pop_db: self.recent_pop_db(),
+            noise: self
+                .noise_table()
+                .map(|n| {
+                    n.iter()
+                        .map(|(&air, &level)| NoiseRow { air, level })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            recording_sound: h.capture.is_some() && h.sound.file.is_some(),
         }
     }
 
@@ -120,7 +188,55 @@ impl Engine {
         self.hearing.settings.clone()
     }
 
-    /// Starts listening for the running recording (unless switched off).
+    pub(crate) fn hearing_active(&self) -> bool {
+        self.hearing.capture.is_some()
+    }
+
+    fn machine_key(&self) -> Option<String> {
+        self.machine.as_ref().map(|m| {
+            if m.simulated {
+                "simulator".to_owned()
+            } else {
+                m.id.clone()
+            }
+        })
+    }
+
+    fn noise_table(&self) -> Option<&BTreeMap<u32, NoiseLevel>> {
+        self.hearing.noise.get(&self.machine_key()?)
+    }
+
+    /// The current air, in learning steps.
+    fn air_bucket(&self) -> Option<u32> {
+        let air = *self
+            .safety
+            .status(self.now())
+            .actuators
+            .get(&roast_core::Actuator::Air)?;
+        Some(((air / AIR_STEP).round() * AIR_STEP) as u32)
+    }
+
+    fn recent_pop_db(&self) -> Option<f32> {
+        let now = self.t();
+        let mut v: Vec<f32> = self
+            .hearing
+            .sound
+            .pops
+            .iter()
+            .rev()
+            .take_while(|p| now - p.t <= 20.0)
+            .filter(|p| p.band == Band::Crack)
+            .map(|p| p.db)
+            .collect();
+        if v.is_empty() {
+            return None;
+        }
+        v.sort_by(f32::total_cmp);
+        Some(v[v.len() / 2])
+    }
+
+    /// Starts listening: for the running recording, or during the preheat
+    /// to learn the fan (unless switched off).
     pub(crate) fn start_hearing(&mut self) {
         self.stop_hearing();
         let h = &mut self.hearing;
@@ -145,19 +261,37 @@ impl Engine {
         self.hearing.generation += 1;
         self.hearing.state = "starting";
         self.hearing.scale = if simulated { self.time_scale } else { 1.0 };
+        self.hearing.last_pop = f64::NEG_INFINITY;
+        // The sound is kept only for a recording, from a microphone, when
+        // the person switched it on (ADR 0021 §9).
+        let record = match (&self.roast, self.hearing.settings.record && !simulated) {
+            (Some(r), true) => {
+                let name = format!("{}.flac", r.id);
+                self.hearing.sound.file = Some(name.clone());
+                Some(self.opts.roasts_dir.join("sound").join(name))
+            }
+            _ => None,
+        };
         let generation = self.hearing.generation;
         let tx = self.tx.clone();
         self.hearing.capture = Some(Capture::start(
             source,
             self.hearing.settings.sensitivity,
+            record,
             move |ev| {
                 let _ = tx.send(Msg::Audio(generation, ev));
             },
         ));
     }
 
-    /// Stops listening; what was heard stays for the roast.
+    /// Stops listening; what was heard stays for the roast, the learned
+    /// noise is saved.
     pub(crate) fn stop_hearing(&mut self) {
+        if self.hearing.capture.is_some()
+            && let Err(e) = self.opts.store.set_setting(NOISE_KEY, &self.hearing.noise)
+        {
+            tracing::warn!("the learned noise could not be saved: {e}");
+        }
         let h = &mut self.hearing;
         h.capture = None;
         h.generation += 1;
@@ -227,12 +361,27 @@ impl Engine {
     }
 
     fn on_heard(&mut self, heard: Heard, end_s: f64, silent: bool) {
-        if self.roast.is_none() {
-            return;
-        }
         let scale = self.hearing.scale;
         let now = self.t();
-        let zero = *self.hearing.zero.get_or_insert(now - end_s * scale);
+        if self.hearing.zero.is_none() {
+            self.hearing.zero = Some(now - end_s * scale);
+            if self.roast.is_some() {
+                self.hearing.sound.start_t = self.hearing.zero;
+            }
+        }
+        let zero = self.hearing.zero.unwrap_or(now);
+        if let Some(p) = heard.pops.last() {
+            self.hearing.last_pop = zero + p.t * scale;
+        }
+        self.learn_noise(&heard, now);
+        if self.roast.is_none() {
+            // The preheat: only the fan is learned, and the app sees the sound.
+            self.hearing.state = if silent { "silent" } else { "listening" };
+            self.hearing.crack_db = heard.crack_db;
+            self.hearing.high_db = heard.high_db;
+            self.publish_audio(&heard, &[], now);
+            return;
+        }
         let was = self.hearing.state;
         self.hearing.state = if silent { "silent" } else { "listening" };
         if silent && was != "silent" {
@@ -278,6 +427,29 @@ impl Engine {
             self.on_crack_heard(h);
         }
         self.publish_audio(&heard, &wire, now);
+    }
+
+    /// Frames without a pop nearby are the fan's: learned per air level.
+    fn learn_noise(&mut self, heard: &Heard, now: f64) {
+        let (Some(crack), Some(air), Some(key)) =
+            (heard.crack_db, self.air_bucket(), self.machine_key())
+        else {
+            return;
+        };
+        if !heard.pops.is_empty() || now - self.hearing.last_pop < QUIET_S * self.hearing.scale {
+            return;
+        }
+        self.hearing
+            .noise
+            .entry(key)
+            .or_default()
+            .entry(air)
+            .or_insert(NoiseLevel {
+                crack_db: crack,
+                high_db: heard.high_db,
+                seconds: 0.0,
+            })
+            .learn(crack, heard.high_db);
     }
 
     fn crack_context(&self) -> RoastContext {
