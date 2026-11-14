@@ -160,6 +160,7 @@ pub fn from_py_value(alog: &PyValue) -> Result<Roast, AlogError> {
         events,
         control_log,
         notes,
+        sound: None,
     })
 }
 

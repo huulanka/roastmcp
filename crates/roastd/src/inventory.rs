@@ -434,6 +434,7 @@ mod tests {
             },
             control_log: Vec::new(),
             notes: Vec::new(),
+            sound: None,
         }
     }
 

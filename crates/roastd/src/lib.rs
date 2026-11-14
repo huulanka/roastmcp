@@ -3,6 +3,7 @@
 //! `roastmcp mcp`) the MCP tools.
 
 pub mod api;
+pub mod audio;
 pub mod backup;
 pub mod cuppings;
 mod driver_thread;

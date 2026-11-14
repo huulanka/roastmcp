@@ -480,7 +480,7 @@ fn tools() -> Value {
         "cool_end"
     ]);
     let mut tools = json!([
-        {"name": "get_status", "description": "Current state: connection, roast state, BT, rate of rise (°C/min), actuators, events, phases, safety (lease, presence, emergency stop), recent alarms.",
+        {"name": "get_status", "description": "Current state: connection, roast state, BT, rate of rise (°C/min), actuators, events, phases, safety (lease, presence, emergency stop), recent alarms; first_crack (the BT where first crack usually comes for this lot, and the window a heard crack is believed in) and audio (whether the daemon listens, crack-band pops in the last 20 s, high-band pops in the last 10 s). Events with origin detector were heard by the microphone; a person's mark replaces them.",
          "inputSchema": {"type": "object", "properties": {}}},
         {"name": "get_curve", "description": "The curve of the running roast (or the preview), downsampled. Times are recording seconds; subtract charge_t for roast time.",
          "inputSchema": {"type": "object", "properties": {
@@ -792,6 +792,13 @@ fn compact_status(seen: &mut Seen, s: &Value) -> Value {
         "recipe": recipe_compact(s.get("recipe")),
         "preheat": s.get("preheat"),
         "autopilot": s.get("autopilot"),
+        "hearing": s.get("audio").filter(|a| !a.is_null()).map(|a| json!({
+            "state": a.get("state"),
+            "mode": a.get("mode"),
+            "crack_pops_20s": a.get("crack_20s"),
+            "high_pops_10s": a.get("high_10s"),
+        })),
+        "first_crack_expected": s.get("first_crack"),
         "safety": {
             "lease_holder": safety.get("lease_holder"),
             "lease_remaining_s": round(safety.get("lease_remaining_s")),
