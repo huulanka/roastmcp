@@ -1,3 +1,10 @@
+# [1.25.0](https://github.com/huulanka/roastmcp/compare/v1.24.0...v1.25.0) (2026-11-14)
+
+
+### Features
+
+* expect first crack where earlier roasts of the lot cracked, and ADR 0021 ([#48](https://github.com/huulanka/roastmcp/issues/48)) ([123dab9](https://github.com/huulanka/roastmcp/commit/123dab9c2d636f6b39191a29c138fa05d335c728))
+
 # [1.24.0](https://github.com/huulanka/roastmcp/compare/v1.23.0...v1.24.0) (2026-11-14)
 
 
