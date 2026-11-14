@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "@/api/client.ts";
 import type { BackupStatus, Snapshot } from "@/api/types.ts";
 import { AutopilotSwitch } from "@/components/AutopilotSwitch.tsx";
+import { MicDialog } from "@/components/Hearing.tsx";
 import { BackupDialog } from "@/components/BackupDialog.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Kbd } from "@/components/ui/kbd.tsx";
@@ -90,6 +91,7 @@ function SettingsMenu() {
   const [backup, setBackup] = useState<BackupStatus | null>(null);
   const [backupOpen, setBackupOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [micOpen, setMicOpen] = useState(false);
   // A failed backup must not go unseen: look now and then, and on opening.
   useEffect(() => {
     const load = () =>
@@ -174,6 +176,24 @@ function SettingsMenu() {
             </div>
           </div>
           <div className="flex flex-col gap-2 border-t border-border pt-3">
+            <span className="text-[13px] text-muted-foreground">{t("Microphone")}</span>
+            <div className="flex items-center justify-between gap-3">
+              <span className="min-w-0 text-[13px] text-foreground">
+                {t("Listens for first and second crack")}
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setMicOpen(true);
+                }}
+              >
+                {t("Set up")}
+              </Button>
+            </div>
+          </div>
+          <div className="flex flex-col gap-2 border-t border-border pt-3">
             <span className="text-[13px] text-muted-foreground">{t("Keyboard")}</span>
             <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-sm">
               {keys.map(([k, v]) => (
@@ -193,6 +213,7 @@ function SettingsMenu() {
           </div>
         </PopoverContent>
       </Popover>
+      <MicDialog open={micOpen} onOpenChange={setMicOpen} />
       <BackupDialog
         open={backupOpen}
         onOpenChange={setBackupOpen}

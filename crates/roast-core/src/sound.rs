@@ -32,6 +32,19 @@ pub struct SoundLevel {
     pub high_db: Option<f32>,
 }
 
+/// A crack the detector heard, as it marked it (the mark itself may have
+/// been replaced or undone since).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct HeardMark {
+    pub kind: crate::event::EventKind,
+    /// Seconds since the recording started: the first pop of the series.
+    pub t: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bt: Option<f64>,
+    /// Pops in the series.
+    pub pops: usize,
+}
+
 /// What the microphone heard during a roast.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RoastSound {
@@ -43,4 +56,7 @@ pub struct RoastSound {
     /// One level a second.
     #[serde(default)]
     pub levels: Vec<SoundLevel>,
+    /// The cracks it heard.
+    #[serde(default)]
+    pub heard: Vec<HeardMark>,
 }

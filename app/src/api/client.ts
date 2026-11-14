@@ -1,5 +1,7 @@
 import type {
   Actuator,
+  AudioSettings,
+  AudioView,
   Alignment,
   Comparison,
   ConsistencyResult,
@@ -189,6 +191,8 @@ export const api = {
     id: string,
     body: { title?: string; roasted_weight_g?: number; roast_degree?: RoastDegree },
   ) => request<Roast>("PATCH", `/api/roasts/${encodeURIComponent(id)}`, body),
+  audio: () => request<AudioView>("GET", "/api/audio"),
+  setAudio: (settings: AudioSettings) => request<AudioView>("PUT", "/api/audio", settings),
   backup: () => request<BackupStatus>("GET", "/api/backup"),
   setBackup: (body: { dir: string | null; keep?: number }) =>
     request<BackupStatus>("PUT", "/api/backup", body),

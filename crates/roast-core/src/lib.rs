@@ -64,7 +64,7 @@ pub use roast::{
 };
 pub use ror::{RorConfig, RorTracker, ror_series};
 pub use sample::Sample;
-pub use sound::{PopBand, RoastSound, SoundLevel, SoundPop};
+pub use sound::{HeardMark, PopBand, RoastSound, SoundLevel, SoundPop};
 pub use state::RoastState;
 
 /// Converts degrees Fahrenheit to degrees Celsius.

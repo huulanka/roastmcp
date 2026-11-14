@@ -325,6 +325,13 @@ only in memory unless recording it is switched on. `roastmcp audio analyze
 the roast recorded at that time and prints the pops and how far the heard
 cracks lie from the marks.
 
+In the app a microphone pill above the curve shows whether the daemon
+listens and counts the pops, which also show as ticks along the bottom of
+the chart. A heard crack brings a gong and a banner with Undo and Mark now.
+The Sound view draws the live spectrogram of the last minute from the
+WebSocket `audio` messages; the archive shows when first crack was heard
+against when it was marked.
+
 ## Desktop app
 
 Tauri v2 with Vite, React, TypeScript, Tailwind CSS and shadcn/ui; uPlot for the

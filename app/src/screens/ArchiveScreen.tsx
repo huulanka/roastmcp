@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Copy, Download, Ellipsis, Plus, Trash2, Upload } from "lucide-react";
+import { Copy, Download, Ellipsis, Mic, Plus, Trash2, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { api, ApiError } from "@/api/client.ts";
@@ -16,6 +16,7 @@ import { ConsistencyView } from "@/components/ConsistencyView.tsx";
 import { CuppingDialog } from "@/components/CuppingDialog.tsx";
 import { UnitInput } from "@/components/Dialogs.tsx";
 import { RoastChart } from "@/components/RoastChart.tsx";
+import { heardVsMarked } from "@/lib/hearing.ts";
 import { TastingView } from "@/components/TastingView.tsx";
 import { Segmented } from "@/components/TopBar.tsx";
 import {
@@ -263,6 +264,11 @@ function Detail({
       data: cmp ? mergeReference(own, cmp.points, cmp.rorFrom) : own,
       markers: buildMarkers(events, base, (k) => t(EVENT_NAME[k])),
       band: developmentBand(events, base, last),
+      pops: (roast.sound?.pops ?? []).map((p) => ({
+        x: p.t - (base ?? 0),
+        high: p.band === "high",
+      })),
+      heard: heardVsMarked(roast),
     };
   }, [roast, id, t, compareId, compared, fcAligned, summary, other]);
 
@@ -492,11 +498,31 @@ function Detail({
               data={chart.data}
               markers={chart.markers}
               band={chart.band}
+              pops={chart.pops}
               actuators
               refName={other ? (other.batch_no ?? t("Comparison")) : undefined}
               label={t("Roast curve of {{title}}", { title: roast.title || id })}
             />
           </div>
+          {chart.heard && (
+            <p className="-mt-2 flex items-center gap-2 text-[13px] text-muted-foreground">
+              <Mic className="size-4 shrink-0 text-brand-text" aria-hidden="true" />
+              {chart.heard.same
+                ? t("First crack heard and marked at {{heard}} ({{n}} pops).", {
+                    heard: formatClock(chart.heard.heardS),
+                    n: chart.heard.pops,
+                  })
+                : chart.heard.markedS === null
+                  ? t("First crack heard at {{heard}}, not marked.", {
+                      heard: formatClock(chart.heard.heardS),
+                    })
+                  : t("First crack heard {{heard}} / marked {{marked}} ({{delta}} s apart).", {
+                      heard: formatClock(chart.heard.heardS),
+                      marked: formatClock(chart.heard.markedS),
+                      delta: formatNumber(Math.abs(chart.heard.heardS - chart.heard.markedS), 0),
+                    })}
+            </p>
+          )}
           {other && align === "first_crack" && !fcAligned && (
             <p className="-mt-2 text-[13px] text-muted-foreground">
               {t("One of the two has no first crack: lined up on charge.")}

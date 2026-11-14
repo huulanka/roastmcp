@@ -1,5 +1,8 @@
 import type { TFunction } from "i18next";
 
+import type { EventKind } from "@/api/types.ts";
+import { EVENT_NAME } from "@/lib/chartData.ts";
+
 type T = TFunction;
 
 /**
@@ -43,6 +46,18 @@ export const PATTERNS: { re: RegExp; key: string }[] = [
   {
     re: /^(?<kind>.+) marked at (?<at>\S+); it replaces the one detected at (?<was>\S+) \(phases, DTR and the plan use the marked one\)\.$/,
     key: "{{kind}} marked at {{at}}; it replaces the one detected at {{was}} (phases, DTR and the plan use the marked one).",
+  },
+  {
+    re: /^(?<kind>.+) marked at (?<at>\S+); it replaces the one heard at (?<was>\S+) \(phases, DTR and the plan use the marked one\)\.$/,
+    key: "{{kind}} marked at {{at}}; it replaces the one heard at {{was}} (phases, DTR and the plan use the marked one).",
+  },
+  {
+    re: /^(?<kind>\S+) heard and marked: (?<at>.+) \((?<n>\d+) pops\)\. Your mark replaces it\.$/,
+    key: "{{kind}} heard and marked: {{at}} ({{n}} pops). Your mark replaces it.",
+  },
+  {
+    re: /^Not listening for first crack: (?<why>.+)\.$/,
+    key: "Not listening for first crack: {{why}}.",
   },
   {
     re: /^DROP: burner off, bean cooling on\. AI \((?<holder>.+)\) handed control back to you\.$/,
@@ -95,6 +110,7 @@ export const STATIC_ALARMS = [
   "The recording ended - the autopilot is off.",
   "DROP: burner off, bean cooling on. The autopilot is off.",
   "DROP: burner off, bean cooling on.",
+  "The microphone delivers only silence: allow RoastMCP to use the microphone in the system settings (Privacy & Security).",
 ];
 
 const ACTUATOR_NAME: Record<string, string> = {
@@ -119,6 +135,9 @@ export function alarmText(message: string, t: T): string {
       parts.rest = rest;
     }
     if (parts.actuator !== undefined) parts.actuator = t(ACTUATOR_NAME[parts.actuator]);
+    if (parts.kind !== undefined && parts.kind in EVENT_NAME)
+      parts.kind = t(EVENT_NAME[parts.kind as EventKind]);
+    if (parts.why !== undefined) parts.why = t(parts.why);
     return t(p.key, parts);
   }
   return message;

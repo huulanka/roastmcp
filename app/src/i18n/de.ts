@@ -732,4 +732,93 @@ export const de: Record<string, string> = {
   resting: "ruht",
   running: "läuft",
   "running since {{date}}": "läuft seit {{date}}",
+  // First and second crack by ear (ADR 0021).
+  heard: "gehört",
+  "Microphone off": "Mikrofon aus",
+  "Listens while recording": "Hört beim Aufzeichnen",
+  "Microphone…": "Mikrofon …",
+  "{{n}} pops": "{{n}} Knacks",
+  Listening: "Hört zu",
+  "Microphone silent": "Mikrofon stumm",
+  "Microphone error": "Mikrofon-Fehler",
+  "Microphone off: open the settings": "Mikrofon aus: Einstellungen öffnen",
+  "Microphone: listens while recording. Open the settings":
+    "Mikrofon: hört beim Aufzeichnen. Einstellungen öffnen",
+  "Microphone starting. Open the settings": "Mikrofon startet. Einstellungen öffnen",
+  "Microphone: {{n}} pops in 20 s. Open the settings":
+    "Mikrofon: {{n}} Knacks in 20 s. Einstellungen öffnen",
+  "Microphone: first crack heard. Open the settings":
+    "Mikrofon: 1. Crack gehört. Einstellungen öffnen",
+  "Microphone: {{text}}. Open the settings": "Mikrofon: {{text}}. Einstellungen öffnen",
+  "{{name}} heard and marked: {{at}}": "{{name}} gehört und markiert: {{at}}",
+  "Sounds like {{name}}: {{at}}": "Klingt nach {{name}}: {{at}}",
+  "{{n}} pops in 20 s. Not right? Your mark replaces the heard one.":
+    "{{n}} Knacks in 20 s. Stimmt nicht? Deine Marke ersetzt die gehörte.",
+  "{{n}} pops in 20 s. Listening only: mark it if you hear it too.":
+    "{{n}} Knacks in 20 s. Nur zum Anzeigen: markiere ihn, wenn du ihn auch hörst.",
+  Undo: "Rückgängig",
+  "Mark now": "Jetzt markieren",
+  "Off: the microphone stays closed.": "Aus: Das Mikrofon bleibt zu.",
+  "Listens from the start of a recording to its end.":
+    "Hört vom Start einer Aufzeichnung bis zu ihrem Ende.",
+  "Opening the microphone…": "Mikrofon wird geöffnet …",
+  "Listening to the simulator's roaster.": "Hört dem Röster des Simulators zu.",
+  "Listening: {{device}}, {{rate}} kHz.": "Hört zu: {{device}}, {{rate}} kHz.",
+  "Only silence: allow RoastMCP to use the microphone in System Settings → Privacy & Security → Microphone.":
+    "Nur Stille: Erlaube RoastMCP das Mikrofon unter Systemeinstellungen → Datenschutz & Sicherheit → Mikrofon.",
+  "The microphone does not work.": "Das Mikrofon funktioniert nicht.",
+  "When it hears a crack": "Wenn es einen Crack hört",
+  "Mark it": "Markieren",
+  "Only show": "Nur zeigen",
+  "First and second crack are marked when heard, between 170 and 205 °C after dry end. Your own mark always wins.":
+    "1. und 2. Crack werden markiert, sobald sie zu hören sind, zwischen 170 und 205 °C nach dem Trocknen. Deine eigene Marke gewinnt immer.",
+  "The pops and the rate are shown; you mark the cracks yourself.":
+    "Knacks und Rate werden gezeigt; die Cracks markierst du selbst.",
+  "Nothing is heard.": "Es wird nichts gehört.",
+  Microphone: "Mikrofon",
+  "System default": "Systemstandard",
+  "{{name}} (not found)": "{{name}} (nicht gefunden)",
+  Sensitivity: "Empfindlichkeit",
+  Low: "Niedrig",
+  Normal: "Normal",
+  High: "Hoch",
+  "Crack band 0.4–4 kHz": "Crack-Band 0,4–4 kHz",
+  "High band 6–16 kHz": "Hoch-Band 6–16 kHz",
+  "The sound stays in memory and only while recording. The roast keeps the times of the pops and a level a second, never the sound.":
+    "Der Ton bleibt im Speicher und nur während einer Aufzeichnung. Die Röstung behält die Zeitpunkte der Knacks und einen Pegel je Sekunde, nie den Ton.",
+  "RoastMCP listens for first and second crack while a roast is recorded.":
+    "RoastMCP hört beim Aufzeichnen einer Röstung auf den 1. und 2. Crack.",
+  marked: "markiert",
+  "you marked it": "von dir markiert",
+  "not marked": "nicht markiert",
+  "Crack band 0.4–4 kHz · first crack": "Crack-Band 0,4–4 kHz · 1. Crack",
+  "High band 6–16 kHz · second crack": "Hoch-Band 6–16 kHz · 2. Crack",
+  "from {{n}} pops in 20 s": "ab {{n}} Knacks in 20 s",
+  "Waiting for sound…": "Warte auf Ton …",
+  "Spectrogram of the last 60 seconds: {{n}} pops in 20 s":
+    "Spektrogramm der letzten 60 Sekunden: {{n}} Knacks in 20 s",
+  "Pops in 20 s": "Knacks in 20 s",
+  "High band": "Hoch-Band",
+  "{{n}} in 10 s": "{{n}} in 10 s",
+  quiet: "ruhig",
+  "Crack band level": "Pegel Crack-Band",
+  "Only to watch. Detection runs the same while the curve is shown; sound is only kept in memory.":
+    "Nur zum Zuschauen. Die Erkennung läuft genauso, wenn die Kurve gezeigt wird; der Ton bleibt nur im Speicher.",
+  Sound: "Ton",
+  "The last 60 s, live": "die letzten 60 s, live",
+  "Listens for first and second crack": "Hört auf den 1. und 2. Crack",
+  "First crack heard and marked at {{heard}} ({{n}} pops).":
+    "1. Crack gehört und markiert bei {{heard}} ({{n}} Knacks).",
+  "First crack heard at {{heard}}, not marked.": "1. Crack gehört bei {{heard}}, nicht markiert.",
+  "First crack heard {{heard}} / marked {{marked}} ({{delta}} s apart).":
+    "1. Crack gehört {{heard}} / markiert {{marked}} ({{delta}} s auseinander).",
+  "{{kind}} marked at {{at}}; it replaces the one heard at {{was}} (phases, DTR and the plan use the marked one).":
+    "{{kind}} markiert bei {{at}}; ersetzt den bei {{was}} gehörten (Phasen, DTR und Plan nutzen den markierten).",
+  "{{kind}} heard and marked: {{at}} ({{n}} pops). Your mark replaces it.":
+    "{{kind}} gehört und markiert: {{at}} ({{n}} Knacks). Deine Marke ersetzt ihn.",
+  "Not listening for first crack: {{why}}.": "Kein Hören auf den 1. Crack: {{why}}.",
+  "The microphone delivers only silence: allow RoastMCP to use the microphone in the system settings (Privacy & Security).":
+    "Das Mikrofon liefert nur Stille: Erlaube RoastMCP das Mikrofon in den Systemeinstellungen (Datenschutz & Sicherheit).",
+  "no microphone was found": "kein Mikrofon gefunden",
+  "the microphone stopped": "das Mikrofon hat aufgehört",
 };

@@ -78,6 +78,8 @@ pub struct AudioStatus {
     high_db: Option<f32>,
     /// The device listens to a simulator.
     simulated: bool,
+    /// The cracks heard in this recording, as they were marked.
+    heard: Vec<roast_core::HeardMark>,
 }
 
 /// One pop in the WebSocket message.
@@ -106,6 +108,11 @@ impl Engine {
             crack_db: h.crack_db,
             high_db: h.high_db,
             simulated: h.synth.is_some(),
+            heard: if self.roast.is_some() {
+                h.sound.heard.clone()
+            } else {
+                Vec::new()
+            },
         }
     }
 
@@ -188,7 +195,7 @@ impl Engine {
     /// What the roast's sound looks like when saved.
     pub(crate) fn roast_sound(&self) -> Option<RoastSound> {
         let s = &self.hearing.sound;
-        (!s.pops.is_empty() || !s.levels.is_empty()).then(|| s.clone())
+        (!s.pops.is_empty() || !s.levels.is_empty() || !s.heard.is_empty()).then(|| s.clone())
     }
 
     pub(crate) fn on_audio(&mut self, ev: AudioEvent) {
@@ -290,11 +297,19 @@ impl Engine {
     }
 
     fn on_crack_heard(&mut self, h: HeardCrack) {
-        if self.hearing.settings.mode != AudioMode::Mark {
-            return;
-        }
         let bt = self.bt_at(h.t);
         let charge = self.roast.as_ref().and_then(roast_core::Roast::charge_t);
+        // Kept in every mode: the archive compares it with the marks.
+        self.hearing.sound.heard.push(roast_core::HeardMark {
+            kind: h.kind,
+            t: h.t,
+            bt,
+            pops: h.pops,
+        });
+        if self.hearing.settings.mode != AudioMode::Mark {
+            self.publish(None);
+            return;
+        }
         let Some(roast) = self.roast.as_mut() else {
             return;
         };

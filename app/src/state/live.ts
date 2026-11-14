@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from "react";
 
 import { api, ApiError, getToken, wsUrl } from "@/api/client.ts";
-import type { ControlLogEntry, Note, Point, Snapshot, WsMessage } from "@/api/types.ts";
+import type { ControlLogEntry, Note, Point, Snapshot, SoundPop, WsMessage } from "@/api/types.ts";
+import { pushSoundFrame, resetSound } from "@/state/sound.ts";
 
 export interface LiveState {
   snapshot: Snapshot | null;
@@ -10,6 +11,8 @@ export interface LiveState {
   notes: Note[];
   /** Control actions of the running recording, newest last. */
   controlLog: ControlLogEntry[];
+  /** Pops the microphone heard in the running recording (ADR 0021). */
+  pops: SoundPop[];
   /** WebSocket is open. */
   online: boolean;
   /** At least one successful exchange happened since the last failure. */
@@ -23,6 +26,7 @@ let state: LiveState = {
   points: [],
   notes: [],
   controlLog: [],
+  pops: [],
   online: false,
   reachable: true,
   authError: false,
@@ -59,17 +63,22 @@ function appendPoint(points: Point[], p: Point): Point[] {
 
 let syncing = false;
 let pending: Point[] = [];
+let pendingPops: SoundPop[] = [];
 
 async function sync(): Promise<void> {
   syncing = true;
   pending = [];
+  pendingPops = [];
   try {
     const [snapshot, live] = await Promise.all([api.status(), api.live()]);
     let points = live.points;
     for (const p of pending) points = appendPoint(points, p);
+    const known = live.pops ?? [];
+    const lastPop = known.length ? known[known.length - 1].t : -Infinity;
     set({
       snapshot,
       points,
+      pops: [...known, ...pendingPops.filter((p) => p.t > lastPop)],
       notes: live.notes ?? [],
       controlLog: live.control_log ?? [],
       reachable: true,
@@ -81,6 +90,7 @@ async function sync(): Promise<void> {
   } finally {
     syncing = false;
     pending = [];
+    pendingPops = [];
   }
 }
 
@@ -141,7 +151,14 @@ export function startLive(): () => void {
         return;
       }
       if (msg.type === "reset") {
+        resetSound();
         void sync();
+      } else if (msg.type === "audio") {
+        pushSoundFrame(msg);
+        if (msg.pops.length) {
+          if (syncing) pendingPops.push(...msg.pops);
+          else set({ pops: [...state.pops, ...msg.pops] });
+        }
       } else if (msg.type === "tick") {
         const patch: Partial<LiveState> = { snapshot: msg.snapshot };
         if (msg.point) {

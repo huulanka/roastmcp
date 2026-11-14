@@ -28,6 +28,14 @@ const AHEAD_S = 45;
 export type ChartView = "whole" | "follow";
 const NO_OVERLAY: ChartOverlay = { now: null, projected: null, target: null };
 
+/** A pop on the chart's time axis. */
+export interface ChartPop {
+  x: number;
+  /** Second crack's band (6–16 kHz); otherwise first crack's. */
+  high: boolean;
+}
+const NO_POPS: readonly ChartPop[] = [];
+
 function css(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "gray";
 }
@@ -48,6 +56,7 @@ export function RoastChart({
   markers,
   band = null,
   overlay = NO_OVERLAY,
+  pops = NO_POPS,
   minSpanS = 0,
   actuators = false,
   view = "whole",
@@ -59,6 +68,8 @@ export function RoastChart({
   /** Lightly tinted span, the development phase. */
   band?: ChartBand | null;
   overlay?: ChartOverlay;
+  /** Pops the microphone heard (ADR 0021): ticks along the bottom, x on the chart's axis. */
+  pops?: readonly ChartPop[];
   minSpanS?: number;
   /** Also draw burner and air (stepped, lower third). */
   actuators?: boolean;
@@ -77,6 +88,7 @@ export function RoastChart({
   const dataRef = useRef(data);
   const bandRef = useRef(band);
   const overlayRef = useRef(overlay);
+  const popsRef = useRef(pops);
   const viewRef = useRef(view);
   const refNameRef = useRef(refName);
   useEffect(() => {
@@ -106,8 +118,9 @@ export function RoastChart({
     markerRef.current = markers;
     bandRef.current = band;
     overlayRef.current = overlay;
+    popsRef.current = pops;
     plot.current?.redraw(false);
-  }, [markers, band, overlay]);
+  }, [markers, band, overlay, pops]);
 
   useEffect(() => {
     dataRef.current = data;
@@ -361,6 +374,21 @@ export function RoastChart({
                   y,
                 );
               }
+            }
+
+            // Pops along the bottom of the plot.
+            if (popsRef.current.length) {
+              const crack = css("--chart-projection");
+              const high = css("--chart-ror-axis");
+              for (const p of popsRef.current) {
+                const x = Math.round(u.valToPos(p.x, "x", true));
+                if (x < left || x > left + width) continue;
+                ctx.fillStyle = p.high ? high : crack;
+                ctx.globalAlpha = 0.85;
+                const h = (p.high ? 7 : 11) * dpr;
+                ctx.fillRect(x - dpr, top + height - h - 2 * dpr, 2 * dpr, h);
+              }
+              ctx.globalAlpha = 1;
             }
 
             // Projection: a short dashed segment from now, then the next milestone.
