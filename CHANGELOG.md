@@ -1,3 +1,10 @@
+# [1.30.0](https://github.com/huulanka/roastmcp/compare/v1.29.0...v1.30.0) (2026-11-14)
+
+
+### Features
+
+* train a small crack model that decides first crack once it hits the marks better ([#53](https://github.com/huulanka/roastmcp/issues/53)) ([570c599](https://github.com/huulanka/roastmcp/commit/570c599bff4591de1728485373e792048426e5e9))
+
 # [1.29.0](https://github.com/huulanka/roastmcp/compare/v1.28.0...v1.29.0) (2026-11-14)
 
 
