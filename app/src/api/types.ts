@@ -397,6 +397,8 @@ export interface RoastSummary {
   goal?: RoastGoal | null;
   /** Batch number on the label, e.g. "BRYB-002" (imports: from the file name). */
   batch_no?: string | null;
+  /** The profile version the roast followed. */
+  profile_version_id?: string | null;
 }
 export interface RoastSample {
   t: number;
@@ -477,6 +479,125 @@ export interface ChecklistItem {
 export interface Checklist {
   items: ChecklistItem[];
   due: MaintenanceTask[];
+}
+/** Attribute scores of a tasting, each 0–10; left out when not rated. */
+export interface CuppingScores {
+  fragrance_aroma?: number;
+  flavor?: number;
+  aftertaste?: number;
+  acidity?: number;
+  body?: number;
+  sweetness?: number;
+  balance?: number;
+  overall?: number;
+}
+export interface Cupping {
+  id: string;
+  roast_id: string;
+  cupped_at: string;
+  rest_days: number;
+  scores: CuppingScores;
+  /** The total on the person's own scale, e.g. SCA 0–100. */
+  overall_score?: number;
+  descriptors: string[];
+  notes?: string;
+  brew_method?: string;
+  /** Mean of the attribute scores given. */
+  mean_score?: number | null;
+  roast_title?: string;
+  batch_no?: string | null;
+  lot_id?: string | null;
+}
+/** What a tasting is saved with; scores and descriptors replace the stored ones. */
+export interface CuppingInput {
+  cupped_at?: string;
+  rest_days?: number;
+  scores?: CuppingScores;
+  overall_score?: number;
+  descriptors?: string[];
+  notes?: string;
+  brew_method?: string;
+}
+export type RestState = "resting" | "ready" | "past_best";
+/** One roast in the rest overview: how long it rests and its window. */
+export interface RestEntry {
+  roast_id: string;
+  title: string;
+  batch_no?: string | null;
+  beans?: string | null;
+  roasted_at: string;
+  level: "light" | "medium" | "dark";
+  level_from: "colour" | "default";
+  rest_days: number;
+  ready_from: string;
+  best_until: string;
+  state: RestState;
+  cuppings: number;
+}
+/** The figures of one roast, times in seconds since CHARGE. */
+export interface RoastFigures {
+  charge_bt_c?: number | null;
+  turning_point_s?: number | null;
+  turning_point_bt_c?: number | null;
+  dry_end_s?: number | null;
+  dry_end_bt_c?: number | null;
+  first_crack_s?: number | null;
+  first_crack_bt_c?: number | null;
+  total_s?: number | null;
+  drop_bt_c?: number | null;
+  development_s?: number | null;
+  dtr_pct?: number | null;
+  weight_loss_pct?: number | null;
+  colour_whole?: number | null;
+  colour_ground?: number | null;
+}
+export interface Spread {
+  n: number;
+  mean: number;
+  sd: number;
+  min: number;
+  max: number;
+}
+export type SpreadKey =
+  | "charge_bt_c"
+  | "dry_end_s"
+  | "first_crack_s"
+  | "first_crack_bt_c"
+  | "total_s"
+  | "drop_bt_c"
+  | "development_s"
+  | "dtr_pct"
+  | "weight_loss_pct";
+export interface ConsistencyResult {
+  consistency: { roasts: number; curve_sd_c: number | null } & Partial<
+    Record<SpreadKey, Spread | null>
+  >;
+  roasts: {
+    id: string;
+    title: string;
+    roasted_at: string;
+    batch_no?: string | null;
+    figures: RoastFigures;
+  }[];
+  unfinished: number;
+}
+export type Alignment = "charge" | "first_crack";
+/** Two saved roasts side by side. */
+export interface Comparison {
+  align: Alignment;
+  a: RoastFigures;
+  b: RoastFigures;
+  delta: RoastFigures;
+  curve: {
+    t: number;
+    a_bt: number | null;
+    b_bt: number | null;
+    delta_bt: number | null;
+    a_ror: number | null;
+    b_ror: number | null;
+  }[];
+  /** The largest BT difference after both turning points, °C. */
+  max_delta_bt: number | null;
 }
 export type WsMessage =
   { type: "tick"; snapshot: Snapshot; point: Point | null } | { type: "reset" };

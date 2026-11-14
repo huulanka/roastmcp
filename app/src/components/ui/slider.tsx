@@ -8,6 +8,7 @@ function Slider({
   value,
   min = 0,
   max = 100,
+  "aria-label": ariaLabel,
   ...props
 }: React.ComponentProps<typeof SliderPrimitive.Root>) {
   const _values = React.useMemo(
@@ -41,6 +42,8 @@ function Slider({
         <SliderPrimitive.Thumb
           data-slot="slider-thumb"
           key={index}
+          // The thumb is what assistive technology announces as the slider.
+          aria-label={ariaLabel}
           className="relative block size-5 shrink-0 cursor-grab rounded-pill border-3 border-surface bg-[var(--slider-range,var(--brand))] transition-[box-shadow] select-none after:absolute after:-inset-3 hover:ring-4 hover:ring-ring/25 focus-visible:ring-4 focus-visible:ring-ring/40 focus-visible:outline-hidden active:cursor-grabbing disabled:pointer-events-none"
         />
       ))}

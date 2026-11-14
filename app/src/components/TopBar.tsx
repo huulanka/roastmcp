@@ -44,7 +44,7 @@ export function BeanMark({ className }: { className?: string }) {
 }
 
 /** A small segmented choice (navigation, settings). */
-function Segmented<T extends string>({
+export function Segmented<T extends string>({
   label,
   value,
   options,
@@ -71,7 +71,7 @@ function Segmented<T extends string>({
           aria-checked={value === o.value}
           onClick={() => onChange(o.value)}
           className={cn(
-            "h-touch flex-1 cursor-pointer rounded-md px-3 text-sm transition-colors duration-150 outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+            "h-touch flex-1 cursor-pointer rounded-md px-3 text-sm whitespace-nowrap transition-colors duration-150 outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
             value === o.value
               ? "bg-surface-selected font-medium text-foreground"
               : "text-muted-foreground hover:text-foreground",
