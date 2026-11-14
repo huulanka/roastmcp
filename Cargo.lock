@@ -1620,7 +1620,7 @@ dependencies = [
 
 [[package]]
 name = "roast-alog"
-version = "1.27.0"
+version = "1.28.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1631,14 +1631,14 @@ dependencies = [
 
 [[package]]
 name = "roast-api"
-version = "1.27.0"
+version = "1.28.0"
 dependencies = [
  "roast-core",
 ]
 
 [[package]]
 name = "roast-audio"
-version = "1.27.0"
+version = "1.28.0"
 dependencies = [
  "claxon",
  "hound",
@@ -1651,7 +1651,7 @@ dependencies = [
 
 [[package]]
 name = "roast-bluetooth"
-version = "1.27.0"
+version = "1.28.0"
 dependencies = [
  "objc2",
  "objc2-core-foundation",
@@ -1662,7 +1662,7 @@ dependencies = [
 
 [[package]]
 name = "roast-control"
-version = "1.27.0"
+version = "1.28.0"
 dependencies = [
  "roast-core",
  "roast-driver",
@@ -1672,7 +1672,7 @@ dependencies = [
 
 [[package]]
 name = "roast-core"
-version = "1.27.0"
+version = "1.28.0"
 dependencies = [
  "chrono",
  "proptest",
@@ -1684,7 +1684,7 @@ dependencies = [
 
 [[package]]
 name = "roast-driver"
-version = "1.27.0"
+version = "1.28.0"
 dependencies = [
  "roast-bluetooth",
  "roast-core",
@@ -1696,7 +1696,7 @@ dependencies = [
 
 [[package]]
 name = "roast-machine"
-version = "1.27.0"
+version = "1.28.0"
 dependencies = [
  "roast-core",
  "serde",
@@ -1707,7 +1707,7 @@ dependencies = [
 
 [[package]]
 name = "roast-safety"
-version = "1.27.0"
+version = "1.28.0"
 dependencies = [
  "roast-core",
  "roast-machine",
@@ -1716,7 +1716,7 @@ dependencies = [
 
 [[package]]
 name = "roast-store"
-version = "1.27.0"
+version = "1.28.0"
 dependencies = [
  "chrono",
  "roast-core",
@@ -1730,14 +1730,14 @@ dependencies = [
 
 [[package]]
 name = "roast-twin"
-version = "1.27.0"
+version = "1.28.0"
 dependencies = [
  "roast-core",
 ]
 
 [[package]]
 name = "roastd"
-version = "1.27.0"
+version = "1.28.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1765,7 +1765,7 @@ dependencies = [
 
 [[package]]
 name = "roastmcp"
-version = "1.27.0"
+version = "1.28.0"
 dependencies = [
  "anyhow",
  "chrono",

@@ -1,3 +1,10 @@
+# [1.28.0](https://github.com/huulanka/roastmcp/compare/v1.27.0...v1.28.0) (2026-11-14)
+
+
+### Features
+
+* the app shows what the microphone hears, with pops, undo and a sound view ([#51](https://github.com/huulanka/roastmcp/issues/51)) ([4aa1a66](https://github.com/huulanka/roastmcp/commit/4aa1a6639f9408307bf7616810dbf419323a9e58))
+
 # [1.27.0](https://github.com/huulanka/roastmcp/compare/v1.26.0...v1.27.0) (2026-11-14)
 
 
