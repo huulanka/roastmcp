@@ -151,6 +151,14 @@ latched the safe state.
 5. DROP, marked or detected, saves the roast as `.roast.json` and `.alog`
    (open it in Artisan or upload it wherever you use `.alog`) and asks for the
    roasted weight.
+6. Afterwards, in **Archiv**: the chip on each roast says whether it still
+   rests, is ready to drink or is past its best (the window follows the
+   measured colour; "Trinkreif" lists the ready ones). Under **Verkostung**
+   write down how it tastes: first the impression (total, brew, flavours,
+   note), then, if you like, scores from 0 to 10 for what you paid attention
+   to. **Kurve** compares it with another roast, lined up on first crack;
+   **Konsistenz** shows how it sits among the roasts of the same bean or
+   profile.
 
 ## 4. Letting Claude watch, then help
 

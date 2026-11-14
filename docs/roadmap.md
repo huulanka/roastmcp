@@ -34,8 +34,9 @@ Next, in order:
    of `.alog` files from the app (file picker or drop). In the daemon and
    for AI clients: comparison lined up on CHARGE or first crack, consistency
    statistics per lot or profile, experiments, ambient conditions, and the
-   prompts `debrief_roast` and `plan_next_roast`. Open: the same in the
-   app (alignment on first crack, consistency, experiments).
+   prompts `debrief_roast` and `plan_next_roast`. In the app: comparison
+   lined up on first crack (with development time and the largest gap) and
+   consistency per bean or profile. Open: experiments in the app.
 4. **Store and backup**: done — SQLite database for roasts, inventory,
    profiles and settings; checked backups to a chosen folder after every
    roast and daily; `roastmcp restore`
@@ -51,7 +52,9 @@ Next, in order:
    In the app, the **Pflege** (Care) tab holds the maintenance tasks, their
    log and the checklist; the start dialog shows the checklist and the
    maintenance due on a first page that informs and never holds the roast
-   back. Open: cupping and rest in the app's archive, and a restore from a
+   back. The archive shows where each roast is in its rest window (with a
+   "ready to drink" filter) and records tastings on two pages: the
+   impression, then optional scores from 0 to 10. Open: a restore from a
    backup shown to work on the author's data.
 7. M5, M6 and M8 as below; release through the Homebrew tap.
 

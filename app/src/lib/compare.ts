@@ -24,8 +24,12 @@ export function diff(a: number | null | undefined, b: number | null | undefined)
 /**
  * Another roast as the dashed comparison curve: its samples from CHARGE to
  * DROP on a clock that starts at its CHARGE, and from when its RoR is drawn.
+ * `shiftS` moves it along the clock, e.g. to line up both first cracks.
  */
-export function comparisonCurve(roast: Roast): {
+export function comparisonCurve(
+  roast: Roast,
+  shiftS = 0,
+): {
   points: { t: number; bt: number | null; ror: number | null }[];
   rorFrom: number | null;
 } {
@@ -45,7 +49,37 @@ export function comparisonCurve(roast: Roast): {
         if (s.t < from || ror === null || (ror < 0 && s.t - from < 30)) ror = null;
         else shown = true;
       }
-      return { t: s.t - off, bt: s.bt, ror };
+      return { t: s.t - off + shiftS, bt: s.bt, ror };
     });
-  return { points, rorFrom: from === null ? null : from - off };
+  return { points, rorFrom: from === null ? null : from - off + shiftS };
+}
+
+/**
+ * How far the other roast's clock moves so both first cracks line up: own
+ * first crack minus the other's (seconds since CHARGE), 0 if one has none.
+ */
+export function firstCrackShift(
+  own: number | null | undefined,
+  other: number | null | undefined,
+): number {
+  return typeof own === "number" && typeof other === "number" ? own - other : 0;
+}
+
+/** Where on the shared clock the curves are furthest apart, near the given largest difference. */
+export function furthestAt(
+  curve: { t: number; delta_bt: number | null }[],
+  max: number | null,
+): number | null {
+  if (max === null) return null;
+  let at: number | null = null;
+  let gap = Infinity;
+  for (const row of curve) {
+    if (row.delta_bt === null) continue;
+    const g = Math.abs(Math.abs(row.delta_bt) - max);
+    if (g < gap) {
+      gap = g;
+      at = row.t;
+    }
+  }
+  return at;
 }

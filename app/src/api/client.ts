@@ -1,5 +1,11 @@
 import type {
   Actuator,
+  Alignment,
+  Comparison,
+  ConsistencyResult,
+  Cupping,
+  CuppingInput,
+  RestEntry,
   BackupStatus,
   Checklist,
   ChecklistItem,
@@ -252,6 +258,39 @@ export const api = {
   /** Takes a log entry back; its task counts from the entry before it. */
   deleteMaintenanceLog: (id: string) =>
     request<MaintenanceTask>("DELETE", `/api/maintenance/log/${encodeURIComponent(id)}`),
+  cuppings: (roastId: string) =>
+    request<Cupping[]>("GET", `/api/cuppings?roast=${encodeURIComponent(roastId)}`),
+  allCuppings: () => request<Cupping[]>("GET", "/api/cuppings"),
+  addCupping: (roastId: string, body: CuppingInput) =>
+    request<Cupping>("POST", `/api/roasts/${encodeURIComponent(roastId)}/cuppings`, body),
+  /** Scores and descriptors replace the stored ones; empty notes or brew method remove them. */
+  patchCupping: (id: string, body: CuppingInput) =>
+    request<Cupping>("PATCH", `/api/cuppings/${encodeURIComponent(id)}`, body),
+  deleteCupping: (id: string) =>
+    request<Record<string, never>>("DELETE", `/api/cuppings/${encodeURIComponent(id)}`),
+  /** Roasts that rest, are in their window or were past it within the last 14 days. */
+  rest: () => request<RestEntry[]>("GET", "/api/rest"),
+  /** How alike the roasts of a lot, a profile or a chosen set are. */
+  consistency: (
+    group: { lot_id: string } | { profile_id: string } | { ids: string[] },
+    simulated = false,
+  ) => {
+    const q =
+      "lot_id" in group
+        ? `lot_id=${encodeURIComponent(group.lot_id)}`
+        : "profile_id" in group
+          ? `profile_id=${encodeURIComponent(group.profile_id)}`
+          : `ids=${group.ids.map(encodeURIComponent).join(",")}`;
+    return request<ConsistencyResult>(
+      "GET",
+      `/api/consistency?${q}${simulated ? "&simulated=true" : ""}`,
+    );
+  },
+  compare: (a: string, b: string, align: Alignment, stepS = 5) =>
+    request<Comparison>(
+      "GET",
+      `/api/roasts/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}&align=${align}&step_s=${stepS}`,
+    ),
   checklist: () => request<Checklist>("GET", "/api/checklist"),
   setChecklist: (items: ChecklistItem[]) => request<Checklist>("PUT", "/api/checklist", { items }),
   /** Moves a roast to the trash folder and credits its green coffee back. */

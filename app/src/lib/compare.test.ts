@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import type { Roast } from "@/api/types.ts";
-import { comparisonCurve, diff, signed, signedClock } from "./compare.ts";
+import {
+  comparisonCurve,
+  diff,
+  firstCrackShift,
+  furthestAt,
+  signed,
+  signedClock,
+} from "./compare.ts";
 
 describe("differences between two roasts", () => {
   it("carry their sign and vanish when they round to nothing", () => {
@@ -34,5 +41,28 @@ describe("the comparison curve", () => {
     // No RoR before the turning point, nor while it is still negative after.
     expect(c.points.map((p) => p.ror)).toEqual([null, null, 5, 95]);
     expect(c.rorFrom).toBe(100);
+  });
+});
+
+describe("lining up on first crack", () => {
+  it("moves the other roast by the difference of both first cracks", () => {
+    expect(firstCrackShift(527, 545)).toBe(-18);
+    expect(firstCrackShift(527, null)).toBe(0);
+    const roast: Roast = {
+      id: "b",
+      samples: [100, 200].map((t) => ({ t, bt: 150, ror: 5 })),
+      events: [{ kind: "charge", t: 100, bt: 200, origin: "human" }],
+    } as Roast;
+    expect(comparisonCurve(roast, -18).points.map((p) => p.t)).toEqual([-18, 82]);
+  });
+
+  it("finds where the curves are furthest apart", () => {
+    const curve = [
+      { t: -300, delta_bt: 1.2 },
+      { t: -310, delta_bt: -4.1 },
+      { t: 0, delta_bt: null },
+    ];
+    expect(furthestAt(curve, 4.1)).toBe(-310);
+    expect(furthestAt(curve, null)).toBeNull();
   });
 });
