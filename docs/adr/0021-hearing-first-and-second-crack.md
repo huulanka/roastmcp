@@ -155,10 +155,25 @@ app's child, so the permission is the app's.
   voices, the cooling tray). Exact labels for training and testing, and the
   simulator's test cracks. Popcorn only from CC0/CC-BY sources and only for
   variety; nothing from YouTube.
-- **A small model** (a CNN on log-mel windows of about 1 s, 100k–1M
-  parameters, ONNX, run with `tract`) trained on those recordings and the
-  public dataset. It replaces the rules only where it hits the person's marks
-  better.
+- **A small model** trained on those recordings and mixed sound. It replaces
+  the rules only where it hits the person's marks better. Built (step 6) as
+  a network with one hidden layer of 16 units in plain Rust, not the CNN in
+  ONNX run with `tract` first sketched: on one second of the spectrogram
+  (pooled to 16 bands: mean, peak and flux) and the pop counts of the last
+  1–20 s, a window every half second, it gives the chance that first crack is
+  going on; seven of the last ten windows decide. It has about 1,150 weights,
+  trains in seconds on the person's machine (`roastmcp audio train`) and needs
+  neither a runtime nor a file from elsewhere. Training measures it against
+  the rules on marked roasts it was not trained on (up to five folds), and
+  the daemon lets it decide first crack start only when it hit more marks
+  within ±10 s. It decides under the same common sense as the rule (after
+  CHARGE and dry end, inside the temperature window, once) and needs at
+  least two crack-band pops in the last 20 s; first crack is placed at the
+  first pop of that series. First crack end and second crack stay with the
+  rules. On synthetic mixes alone it is no better than the rules, so a
+  model trained without marked roasts is kept but does not decide. The
+  public dataset is not used yet: its 16 kHz clips lack the 48 kHz
+  spectrogram the features come from.
 
 ### 11. The simulator cracks too
 Connected to the simulator, the daemon listens to a synthetic source instead
@@ -175,7 +190,7 @@ recipe steps can be tried without a roaster.
 4. The app: pill, pop strip, banner, sound view, settings, archive.
 5. Calibration, recording the sound, evaluation against the marks, crack
    mixer.
-6. The small model.
+6. The small model (`roastmcp audio train`).
 
 ## Consequences
 - The app needs the microphone permission (`NSMicrophoneUsageDescription`,

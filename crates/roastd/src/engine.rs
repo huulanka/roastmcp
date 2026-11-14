@@ -2898,6 +2898,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_model_that_hits_the_marks_better_decides_first_crack() {
+        use roast_audio::model::{Evaluation, FEATURES, Model};
+        // A model that only knows the pop counts: ten pops a second is first
+        // crack, none is not.
+        let data: Vec<(Vec<f32>, bool)> = (0..400)
+            .map(|i| {
+                let rate = if i % 2 == 0 {
+                    5.0 + (i % 7) as f32
+                } else {
+                    (i % 3) as f32 * 0.1
+                };
+                let mut x = vec![0.0; FEATURES];
+                for (k, s) in [1.0, 5.0, 10.0, 20.0].iter().enumerate() {
+                    x[FEATURES - 6 + k] = rate * s;
+                }
+                (x, i % 2 == 0)
+            })
+            .collect();
+        let mut model = Model::train(&data, 20, 3, "test");
+        model.evaluation = Evaluation {
+            roasts: 3,
+            rules_within: 1,
+            model_within: 2,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        h.call(move |e| {
+            e.opts
+                .store
+                .set_setting(roast_audio::model::SETTINGS_KEY, &model)
+                .unwrap();
+            e.start_recording(RecordingMeta::default()).unwrap();
+            e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+        })
+        .await
+        .unwrap();
+        let heard = |s: &Snapshot| {
+            s.events
+                .iter()
+                .find(|e| e.kind == EventKind::FirstCrackStart)
+                .cloned()
+        };
+        // A pop and two columns every 100 ms of sound.
+        let frame = |i: usize| {
+            let t = i as f64 * 0.1;
+            let crate::audio::AudioEvent::Chunk { mut heard, .. } = chunk(&[t + 0.05], 0.0) else {
+                unreachable!()
+            };
+            heard.columns = vec![[0; roast_audio::COLUMN_BANDS]; 2];
+            crate::audio::AudioEvent::Chunk {
+                heard,
+                end_s: t + 0.1,
+                silent: false,
+            }
+        };
+        let s = h
+            .call(move |e| {
+                e.stop_hearing();
+                e.hearing.zero = None;
+                e.last_bt = Some(193.0);
+                for i in 0..10 {
+                    e.on_audio(frame(i));
+                }
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert!(s.audio.model.as_ref().is_some_and(|m| m.decides));
+        assert!(
+            heard(&s).is_none(),
+            "ten pops: the rule would have, the model waits"
+        );
+        let s = h
+            .call(move |e| {
+                for i in 10..80 {
+                    e.on_audio(frame(i));
+                }
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        let fc = heard(&s).expect("the model heard first crack");
+        assert_eq!(fc.origin, EventOrigin::Detector);
+    }
+
+    #[tokio::test]
     async fn the_preheat_learns_the_fans_noise_per_air_level() {
         let dir = tempfile::tempdir().unwrap();
         let h = simulator(dir.path()).await;

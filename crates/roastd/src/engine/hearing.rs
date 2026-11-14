@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use roast_audio::crack::{CrackLogic, HeardCrack, RoastContext};
+use roast_audio::model::{Evaluation, Model, ModelEar};
 use roast_audio::{Band, Heard};
 use roast_core::{
     EventKind, EventOrigin, FIRST_CRACK_WINDOW_C, RoastEvent, RoastSound, SoundLevel, SoundPop,
@@ -41,6 +42,22 @@ pub(crate) struct Hearing {
     noise: HashMap<String, BTreeMap<u32, NoiseLevel>>,
     /// Recording time of the latest pop.
     last_pop: f64,
+    /// The trained model, when one was kept (ADR 0021 §10).
+    model: Option<ModelStatus>,
+    /// The model listening along, when it decides first crack.
+    ear: Option<ModelEar>,
+}
+
+/// The trained model as the snapshot shows it.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelStatus {
+    trained_on: String,
+    /// Held-out windows it got right, 0…1.
+    accuracy: f32,
+    evaluation: Evaluation,
+    /// It hit the marks more often than the rules: it decides first crack
+    /// start.
+    pub(crate) decides: bool,
 }
 
 /// The settings key of the learned noise.
@@ -102,6 +119,8 @@ impl Hearing {
             synth: None,
             noise,
             last_pop: f64::NEG_INFINITY,
+            model: None,
+            ear: None,
         }
     }
 }
@@ -135,6 +154,8 @@ pub struct AudioStatus {
     pub(crate) noise: Vec<NoiseRow>,
     /// The sound is being kept as a file.
     recording_sound: bool,
+    /// The trained model, if `roastmcp audio train` kept one.
+    pub(crate) model: Option<ModelStatus>,
 }
 
 /// One pop in the WebSocket message.
@@ -181,6 +202,7 @@ impl Engine {
                 })
                 .unwrap_or_default(),
             recording_sound: h.capture.is_some() && h.sound.file.is_some(),
+            model: h.model.clone(),
         }
     }
 
@@ -239,8 +261,25 @@ impl Engine {
     /// to learn the fan (unless switched off).
     pub(crate) fn start_hearing(&mut self) {
         self.stop_hearing();
+        // The model is read again each time: training needs no restart.
+        let model: Option<Model> = self
+            .opts
+            .store
+            .setting(roast_audio::model::SETTINGS_KEY)
+            .unwrap_or_else(|e| {
+                tracing::warn!("the crack model could not be read: {e}");
+                None
+            });
         let h = &mut self.hearing;
+        h.model = model.as_ref().map(|m| ModelStatus {
+            trained_on: m.trained_on.clone(),
+            accuracy: m.accuracy,
+            evaluation: m.evaluation,
+            decides: m.evaluation.better(),
+        });
+        h.ear = model.filter(|m| m.evaluation.better()).map(ModelEar::new);
         h.logic = CrackLogic::new(h.settings.sensitivity);
+        h.logic.set_model_decides(h.ear.is_some());
         h.sound = RoastSound::default();
         h.zero = None;
         h.crack_db = None;
@@ -319,6 +358,8 @@ impl Engine {
             self.hearing.sound = keep;
             self.hearing.logic = logic;
             self.hearing.logic.set_sensitivity(settings.sensitivity);
+            let decides = self.hearing.ear.is_some();
+            self.hearing.logic.set_model_decides(decides);
         } else {
             self.hearing.sound = keep;
         }
@@ -419,6 +460,17 @@ impl Engine {
             let ctx = self.crack_context();
             let pop = roast_audio::Pop { t, ..*p };
             if let Some(h) = self.hearing.logic.pop(pop, &ctx) {
+                self.on_crack_heard(h);
+            }
+        }
+        if let Some(at) = self
+            .hearing
+            .ear
+            .as_mut()
+            .and_then(|e| e.push(&heard, end_s))
+        {
+            let ctx = self.crack_context();
+            if let Some(h) = self.hearing.logic.model_heard(zero + at * scale, &ctx) {
                 self.on_crack_heard(h);
             }
         }

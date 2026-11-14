@@ -155,6 +155,12 @@ interface Snapshot {
     noise: { air: number; crack_db: number; high_db: number | null; seconds: number }[];
                                          // the fan per air level (10 % steps), learned while nothing pops
     recording_sound: boolean;            // the sound is kept as roasts/sound/<roast id>.flac
+    model: null | {                      // the model from `roastmcp audio train` (ADR 0021 §10)
+      trained_on: string; accuracy: number; // held-out windows right, 0…1
+      evaluation: { roasts: number; rules_within: number; model_within: number };
+                                         // first crack within ±10 s of the marks, on roasts it was not trained on
+      decides: boolean;                  // it hit more marks than the rules: it decides first crack start
+    };
   };
   preheat: null | { target_c: number; state: "heating" | "holding" };
   autopilot: null | {                    // while the autopilot is switched on (ADR 0020)

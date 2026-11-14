@@ -320,6 +320,20 @@ function MicForm({ view, onView }: { view: AudioView; onView: (v: AudioView) => 
           </dl>
         </div>
       )}
+      {view.status.model && (
+        <p className="text-[13px] text-muted-foreground">
+          {view.status.model.decides
+            ? t(
+                "The trained model decides first crack: {{m}} of {{n}} marks hit, the rules {{r}}.",
+                {
+                  m: view.status.model.evaluation.model_within,
+                  n: view.status.model.evaluation.roasts,
+                  r: view.status.model.evaluation.rules_within,
+                },
+              )
+            : t("A model is trained; the rules decide until it hits your marks better.")}
+        </p>
+      )}
       <label className="flex items-start justify-between gap-4">
         <span className="flex flex-col gap-0.5">
           <span className="text-sm">{t("Keep the sound of each roast")}</span>

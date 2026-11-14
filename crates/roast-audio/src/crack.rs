@@ -22,6 +22,9 @@ pub const FC_WINDOW_S: f64 = 20.0;
 pub const FC_LEAD_GAP_S: f64 = 15.0;
 /// … and at most this far before the series, s.
 pub const FC_LEAD_MAX_S: f64 = 30.0;
+/// The model hears first crack only with this many crack-band pops in the
+/// last [`FC_WINDOW_S`]: the sound alone (a voice, the spoon) is not enough.
+pub const MODEL_MIN_POPS: usize = 2;
 /// First crack is over after this long without a crack-band pop, s.
 pub const FC_END_QUIET_S: f64 = 30.0;
 /// Second crack: this many high-band pops …
@@ -75,6 +78,9 @@ pub struct CrackLogic {
     last_fc_pop: Option<f64>,
     /// Kinds the person undid, or already heard: not heard again in this roast.
     suppressed: Vec<EventKind>,
+    /// First crack start is the model's to hear, not the rate rule's
+    /// (ADR 0021 §10).
+    model_decides: bool,
 }
 
 impl CrackLogic {
@@ -88,7 +94,39 @@ impl CrackLogic {
             since_fc: 0,
             last_fc_pop: None,
             suppressed: Vec::new(),
+            model_decides: false,
         }
+    }
+
+    /// Hands first crack start to the model; end and second crack stay
+    /// with the rules.
+    pub fn set_model_decides(&mut self, yes: bool) {
+        self.model_decides = yes;
+    }
+
+    /// The model says first crack has been going on since `at` (recording
+    /// clock). Heard under the same common sense as the rule: after CHARGE
+    /// and dry end, inside the window, once; and only with at least
+    /// [`MODEL_MIN_POPS`] crack-band pops in the last 20 s, placed at the
+    /// first of them (reaching back like the rule).
+    pub fn model_heard(&mut self, at: f64, ctx: &RoastContext) -> Option<HeardCrack> {
+        if !self.may_hear_first_crack(ctx) {
+            return None;
+        }
+        let after = ctx.dry_end.unwrap_or(f64::NEG_INFINITY);
+        let series: Vec<f64> = self.crack.iter().copied().filter(|&t| t >= after).collect();
+        if series.len() < MODEL_MIN_POPS || series.last().is_none_or(|&last| last < at) {
+            return None;
+        }
+        let t = self.reach_back(series[0], after);
+        self.since_fc = series.len();
+        self.last_fc_pop = series.last().copied();
+        self.suppress(EventKind::FirstCrackStart);
+        Some(HeardCrack {
+            kind: EventKind::FirstCrackStart,
+            t,
+            pops: series.len(),
+        })
     }
 
     pub fn set_sensitivity(&mut self, s: Sensitivity) {
@@ -176,15 +214,34 @@ impl CrackLogic {
         }
     }
 
-    fn first_crack(&mut self, ctx: &RoastContext) -> Option<HeardCrack> {
-        if ctx.first_crack.is_some()
-            || !ctx.charged
-            || self.suppressed.contains(&EventKind::FirstCrackStart)
+    fn may_hear_first_crack(&self, ctx: &RoastContext) -> bool {
+        ctx.first_crack.is_none()
+            && ctx.charged
+            && !self.suppressed.contains(&EventKind::FirstCrackStart)
+            && ctx
+                .bt
+                .is_some_and(|bt| bt >= ctx.window.0 && bt <= ctx.window.1)
+    }
+
+    /// The series often begins with a few single pops: reach back to them.
+    fn reach_back(&self, first: f64, after: f64) -> f64 {
+        let mut t = first;
+        for &p in self
+            .earlier
+            .iter()
+            .rev()
+            .filter(|&&p| p < first && p >= after)
         {
-            return None;
+            if t - p > FC_LEAD_GAP_S || first - p > FC_LEAD_MAX_S {
+                break;
+            }
+            t = p;
         }
-        let bt = ctx.bt?;
-        if bt < ctx.window.0 || bt > ctx.window.1 {
+        t
+    }
+
+    fn first_crack(&mut self, ctx: &RoastContext) -> Option<HeardCrack> {
+        if self.model_decides || !self.may_hear_first_crack(ctx) {
             return None;
         }
         let after = ctx.dry_end.unwrap_or(f64::NEG_INFINITY);
@@ -192,19 +249,7 @@ impl CrackLogic {
         if series.len() < fc_pops(self.sensitivity) {
             return None;
         }
-        // The series often begins with a few single pops: reach back to them.
-        let mut t = series[0];
-        for &p in self
-            .earlier
-            .iter()
-            .rev()
-            .filter(|&&p| p < series[0] && p >= after)
-        {
-            if t - p > FC_LEAD_GAP_S || series[0] - p > FC_LEAD_MAX_S {
-                break;
-            }
-            t = p;
-        }
+        let t = self.reach_back(series[0], after);
         self.since_fc = series.len();
         self.last_fc_pop = series.last().copied();
         self.suppress(EventKind::FirstCrackStart);
@@ -355,6 +400,26 @@ mod tests {
         assert_eq!(end.kind, EventKind::FirstCrackEnd);
         assert_eq!(end.t, 512.0);
         assert!(l.tick(560.0, &c).is_none(), "once");
+    }
+
+    #[test]
+    fn the_model_decides_first_crack_under_the_same_common_sense() {
+        let mut l = CrackLogic::new(Sensitivity::Normal);
+        l.set_model_decides(true);
+        let c = ctx(194.0);
+        for t in [452.0, 466.0, 470.0, 473.0, 476.0, 478.0] {
+            assert!(l.pop(pop(t, Band::Crack), &c).is_none(), "not the rule's");
+        }
+        assert!(l.model_heard(465.0, &ctx(165.0)).is_none(), "too cold");
+        let h = l
+            .model_heard(465.0, &c)
+            .unwrap_or_else(|| panic!("not heard"));
+        // From the first pop after the model's start, reaching back to 452.
+        assert_eq!(
+            (h.kind, h.t, h.pops),
+            (EventKind::FirstCrackStart, 452.0, 5)
+        );
+        assert!(l.model_heard(470.0, &c).is_none(), "once");
     }
 
     #[test]

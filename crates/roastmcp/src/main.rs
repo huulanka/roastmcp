@@ -91,6 +91,9 @@ enum AudioCommand {
         /// Print the whole analysis as JSON.
         #[arg(long)]
         json: bool,
+        /// Let the model from `audio train` decide first crack start.
+        #[arg(long)]
+        model: bool,
     },
     /// Every roast whose sound was kept (and the files in `--dir`): first
     /// crack as heard against as marked, and how many lie within ±10 s.
@@ -99,6 +102,31 @@ enum AudioCommand {
         /// (`2026-11-14_19-02-11.flac`), e.g. ~/RoastMCP-Ton.
         #[arg(long)]
         dir: Option<PathBuf>,
+        /// low, normal or high.
+        #[arg(long, default_value = "normal", value_parser = parse_sensitivity)]
+        sensitivity: roast_audio::Sensitivity,
+    },
+    /// Train the detector's small model (ADR 0021 §10) on the roasts whose
+    /// sound was kept (and the files in `--dir`) with their marked first
+    /// crack, plus mixed sound. It is measured against the rules on roasts it
+    /// was not trained on and decides first crack in the daemon only if it
+    /// hits the marks more often.
+    Train {
+        /// A folder of recordings named by their start time.
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        /// Your roaster's fan noise for the mixes (default: synthetic).
+        #[arg(long)]
+        noise: Option<PathBuf>,
+        /// Recordings to cut crack pops from for the mixes.
+        #[arg(long)]
+        pops: Vec<PathBuf>,
+        /// Mixed sounds to learn from besides your roasts.
+        #[arg(long, default_value_t = 12)]
+        mixes: usize,
+        /// Passes over the data.
+        #[arg(long, default_value_t = 15)]
+        epochs: usize,
         /// low, normal or high.
         #[arg(long, default_value = "normal", value_parser = parse_sensitivity)]
         sensitivity: roast_audio::Sensitivity,
@@ -294,6 +322,7 @@ fn main() -> anyhow::Result<()> {
             start,
             sensitivity,
             json,
+            model,
         }) => audio::analyze(
             &data_dir,
             &audio::AnalyzeArgs {
@@ -302,6 +331,25 @@ fn main() -> anyhow::Result<()> {
                 start,
                 sensitivity,
                 json,
+                model,
+            },
+        ),
+        Command::Audio(AudioCommand::Train {
+            dir,
+            noise,
+            pops,
+            mixes,
+            epochs,
+            sensitivity,
+        }) => audio::train(
+            &data_dir,
+            &audio::TrainArgs {
+                dir,
+                noise,
+                pops,
+                mixes,
+                epochs,
+                sensitivity,
             },
         ),
         Command::Audio(AudioCommand::Eval { dir, sensitivity }) => {
