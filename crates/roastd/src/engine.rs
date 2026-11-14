@@ -36,6 +36,9 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use crate::driver_thread::{DriverCmd, DriverEvent, spawn_driver};
 use crate::files::{self, Archive};
 
+mod hearing;
+pub use hearing::AudioStatus;
+
 /// How long the curve is kept while not recording, seconds.
 const PREVIEW_KEEP_S: f64 = 600.0;
 /// Readings older than this count as stale, seconds.
@@ -53,6 +56,8 @@ pub enum Msg {
     Driver(u64, DriverEvent),
     /// Periodic safety tick.
     Tick,
+    /// Something from the audio thread of generation `.0` (ADR 0021).
+    Audio(u64, crate::audio::AudioEvent),
 }
 
 /// A cheap, cloneable handle to the engine.
@@ -272,6 +277,8 @@ pub struct Snapshot {
     autopilot: Option<AutopilotStatus>,
     /// Where first crack is expected in the running recording (ADR 0021).
     first_crack: Option<CrackExpectation>,
+    /// Listening for cracks (ADR 0021).
+    audio: AudioStatus,
 }
 
 /// The autopilot: it runs the recipe and keeps the roast on the plan's curve.
@@ -373,6 +380,8 @@ pub struct Live {
     events: Vec<RoastEvent>,
     notes: Vec<Note>,
     control_log: Vec<ControlLogEntry>,
+    /// The pops heard in this recording (ADR 0021).
+    pops: Vec<roast_core::SoundPop>,
 }
 
 /// Body of `POST /api/connect`.
@@ -483,6 +492,8 @@ pub struct Engine {
     trim_offset: f64,
     /// Where first crack is expected in the running recording (ADR 0021).
     first_crack: Option<CrackExpectation>,
+    /// Listening for cracks (ADR 0021).
+    hearing: hearing::Hearing,
 }
 
 /// Starts the engine task and its safety ticker.
@@ -499,7 +510,9 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
     let inventory = InventoryStore::open(Arc::clone(&opts.store), &opts.inventory_path);
     let learned = LearnedStore::open(Arc::clone(&opts.store), &opts.control_path);
     let profiles = ProfileStore::open(Arc::clone(&opts.store), &opts.profiles_path);
+    let hearing = hearing::Hearing::new(crate::audio::load_settings(&opts.store));
     let mut engine = Engine {
+        hearing,
         archive,
         safety: Safety::new(SafetyConfig::from_profile(&opts.profile)),
         opts,
@@ -558,6 +571,11 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
                     }
                 }
                 Msg::Tick => engine.on_tick(),
+                Msg::Audio(generation, ev) => {
+                    if generation == engine.hearing.generation {
+                        engine.on_audio(ev);
+                    }
+                }
             }
         }
     });
@@ -654,6 +672,7 @@ impl Engine {
             alarms: self.alarms.iter().cloned().collect(),
             control_seq: self.roast.as_ref().map_or(0, |r| r.control_log.len()),
             first_crack: self.roast.as_ref().and(self.first_crack),
+            audio: self.audio_status(),
         }
     }
 
@@ -1526,6 +1545,11 @@ impl Engine {
             events,
             notes,
             control_log,
+            pops: if self.roast.is_some() {
+                self.hearing.sound.pops.clone()
+            } else {
+                Vec::new()
+            },
         }
     }
 
@@ -1642,6 +1666,7 @@ impl Engine {
         if let Some(d) = self.driver.take() {
             let _ = d.send(DriverCmd::Stop);
         }
+        self.stop_hearing();
         self.generation += 1;
         self.safety.set_connected(false);
         self.end_autopilot("Disconnected - the autopilot is off.");
@@ -1764,6 +1789,7 @@ impl Engine {
         self.last_ror = ror;
         self.last_ambient = r.ambient_c.or(self.last_ambient);
         self.last_reading_t = Some(t);
+        self.drive_synthetic_cracks();
         let actuators = self.safety.status(self.now()).actuators;
         let point = Point {
             t,
@@ -2171,10 +2197,12 @@ impl Engine {
             events: Vec::new(),
             control_log: Vec::new(),
             notes: Vec::new(),
+            sound: None,
         });
         self.reset_curve();
         self.reset_recipe();
         self.first_crack = Some(self.crack_expectation());
+        self.start_hearing();
         self.state = RoastState::Recording;
         self.last_autosave = Instant::now();
         self.audit(serde_json::json!({"type": "recording_started"}));
@@ -2267,10 +2295,13 @@ impl Engine {
 
     /// Stops and saves the recording.
     pub fn stop_recording(&mut self) -> Result<Saved, Fail> {
-        let roast = self
+        let sound = self.roast_sound();
+        let mut roast = self
             .roast
             .take()
             .ok_or_else(|| Fail::conflict("no recording is running", None))?;
+        roast.sound = sound;
+        self.stop_hearing();
         let saved = self.archive.save(&roast);
         self.state = if self.conn == Conn::Connected {
             RoastState::Connected
@@ -2348,14 +2379,16 @@ impl Engine {
             let detected = roast
                 .events
                 .iter()
-                .find(|e| e.kind == kind && e.origin == EventOrigin::Auto)
-                .map(|e| e.t);
+                .find(|e| {
+                    e.kind == kind && matches!(e.origin, EventOrigin::Auto | EventOrigin::Detector)
+                })
+                .map(|e| (e.t, e.origin == EventOrigin::Detector));
             replaced = detected.zip(roast.charge_t());
             roast.events.retain(|e| e.kind != kind);
             roast.events.push(event.clone());
             roast.events.sort_by(|a, b| a.t.total_cmp(&b.t));
         }
-        if let Some((old, charge)) = replaced.filter(|_| kind != EventKind::Charge) {
+        if let Some(((old, heard), charge)) = replaced.filter(|_| kind != EventKind::Charge) {
             let clock = |t: f64| {
                 let s = (t - charge).max(0.0).round() as i64;
                 format!("{}:{:02}", s / 60, s % 60)
@@ -2364,8 +2397,9 @@ impl Engine {
                 "info",
                 "event_replaced",
                 format!(
-                    "{kind} marked at {}; it replaces the one detected at {} (phases, DTR and the plan use the marked one).",
+                    "{kind} marked at {}; it replaces the one {} at {} (phases, DTR and the plan use the marked one).",
                     clock(t),
+                    if heard { "heard" } else { "detected" },
                     clock(old)
                 ),
             );
@@ -2510,6 +2544,10 @@ impl Engine {
             .roast
             .as_mut()
             .ok_or_else(|| Fail::conflict("no recording is running", None))?;
+        let heard = roast
+            .events
+            .iter()
+            .any(|e| e.kind == kind && e.origin == EventOrigin::Detector);
         roast.events.retain(|e| e.kind != kind);
         let has = |k| roast.events.iter().any(|e| e.kind == k);
         self.state = if has(EventKind::Drop) {
@@ -2519,6 +2557,10 @@ impl Engine {
         } else {
             RoastState::Recording
         };
+        if heard {
+            // Undo of a heard mark: not heard again in this roast (ADR 0021 §5).
+            self.heard_mark_undone(kind);
+        }
         self.audit(serde_json::json!({"type": "event_removed", "kind": kind}));
         self.publish(None);
         Ok(self.snapshot())
@@ -2742,6 +2784,110 @@ mod tests {
         let fc = s.first_crack.unwrap();
         assert_eq!(fc.basis, roast_core::CrackBasis::Roasts);
         assert!((fc.bt - 197.0).abs() < 1e-9);
+    }
+
+    /// Pops at these sound times, the last chunk ending at `end_s`.
+    fn chunk(times: &[f64], end_s: f64) -> crate::audio::AudioEvent {
+        crate::audio::AudioEvent::Chunk {
+            heard: roast_audio::Heard {
+                pops: times
+                    .iter()
+                    .map(|&t| roast_audio::Pop {
+                        t,
+                        band: roast_audio::Band::Crack,
+                        strength_db: 8.0,
+                    })
+                    .collect(),
+                ..Default::default()
+            },
+            end_s,
+            silent: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_heard_first_crack_is_marked_a_persons_mark_replaces_it_and_undo_sticks() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        h.call(|e| {
+            e.start_recording(RecordingMeta::default()).unwrap();
+            e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+        })
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let heard = |s: &Snapshot| {
+            s.events
+                .iter()
+                .find(|e| e.kind == EventKind::FirstCrackStart)
+                .cloned()
+        };
+        // Too cold: the pops are counted, nothing is marked.
+        let s = h
+            .call(|e| {
+                e.stop_hearing();
+                e.hearing.zero = None;
+                e.last_bt = Some(150.0);
+                e.on_audio(chunk(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6], 0.7));
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert!(heard(&s).is_none());
+        assert_eq!(s.audio.crack_20s, 6);
+
+        // In the window: marked at the first pop of the series.
+        let s = h
+            .call(|e| {
+                e.last_bt = Some(193.0);
+                e.on_audio(chunk(&[0.8], 0.9));
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        let fc = heard(&s).expect("first crack heard");
+        assert_eq!(fc.origin, EventOrigin::Detector);
+        assert!(s.alarms.iter().any(|a| a.kind == "crack_heard"));
+        let live = h.call(|e| e.live()).await.unwrap();
+        assert_eq!(live.pops.len(), 7);
+
+        // The person's mark replaces it and says so.
+        let s = h
+            .call(|e| {
+                e.mark_event(EventKind::FirstCrackStart, EventOrigin::Human)
+                    .unwrap();
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert_eq!(heard(&s).unwrap().origin, EventOrigin::Human);
+        assert!(
+            s.alarms
+                .iter()
+                .any(|a| a.kind == "event_replaced" && a.message.contains("heard"))
+        );
+
+        // A crack is heard once per roast: removed or undone, it does not
+        // come back.
+        let s = h
+            .call(|e| {
+                e.unmark_event(EventKind::FirstCrackStart).unwrap();
+                e.on_audio(chunk(&[1.0, 1.1, 1.2, 1.3, 1.4, 1.5], 1.6));
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert!(heard(&s).is_none(), "not marked again");
+
+        // The saved roast keeps the pops.
+        let saved = h
+            .call(|e| {
+                let s = e.stop_recording().unwrap();
+                e.archive.find(s.id).unwrap().unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(saved.sound.unwrap().pops.len(), 13);
     }
 
     #[tokio::test]

@@ -8,14 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::spectrum::FRAMES_PER_S;
 
 /// Which band a pop was heard in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Band {
-    /// 0.4–4 kHz: first crack.
-    Crack,
-    /// 6–16 kHz: second crack.
-    High,
-}
+pub use roast_core::PopBand as Band;
 
 /// One pop.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

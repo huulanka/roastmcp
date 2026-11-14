@@ -145,6 +145,7 @@ pub(crate) fn roast() -> Roast {
         ],
         control_log: vec![],
         notes: vec![],
+        sound: None,
     }
 }
 
