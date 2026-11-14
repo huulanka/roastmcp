@@ -127,7 +127,10 @@ roasts within a stated error.
 ## M6: hearing first crack
 
 - Microphone capture, first-crack detector, crack meter in the app,
-  first-crack prediction.
+  first-crack prediction ([ADR 0021](adr/0021-hearing-first-and-second-crack.md)):
+  pops in two bands, first and second crack marked with origin `detector`,
+  the person's mark wins, a live sound view, calibration per air level,
+  opt-in recording, evaluation against marked roasts, a small own model.
 
 *Go on when:* first crack detected within ±10 s of the hand-marked time in most
 of a set of recorded roasts.

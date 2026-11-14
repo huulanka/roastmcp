@@ -22,9 +22,9 @@ use roast_control::{
 };
 use roast_core::{
     Actuator, ActuatorValues, BatchInfo, CommandOutcome, CommandRequest, CommandSource,
-    ControlLogEntry, EventDetector, EventKind, EventOrigin, Note, Phases, PlannedAction,
-    Projection, ReferenceCurve, ReferenceKind, RejectReason, Roast, RoastEvent, RoastOrigin,
-    RoastPlan, RoastState, RorConfig, RorTracker, Sample, phases, project,
+    ControlLogEntry, CrackExpectation, EventDetector, EventKind, EventOrigin, Note, Phases,
+    PlannedAction, Projection, ReferenceCurve, ReferenceKind, RejectReason, Roast, RoastEvent,
+    RoastOrigin, RoastPlan, RoastState, RorConfig, RorTracker, Sample, phases, project,
 };
 use roast_driver::{RoasterDriver, SimulatedMachine, simulator_profile};
 use roast_machine::MachineProfile;
@@ -270,6 +270,8 @@ pub struct Snapshot {
     recipe: Option<RecipeStatus>,
     /// The autopilot, while it is switched on (ADR 0020).
     autopilot: Option<AutopilotStatus>,
+    /// Where first crack is expected in the running recording (ADR 0021).
+    first_crack: Option<CrackExpectation>,
 }
 
 /// The autopilot: it runs the recipe and keeps the roast on the plan's curve.
@@ -479,6 +481,8 @@ pub struct Engine {
     /// How far the autopilot's corrections moved this roast's recipe,
     /// burner points; kept when it is switched off and on again.
     trim_offset: f64,
+    /// Where first crack is expected in the running recording (ADR 0021).
+    first_crack: Option<CrackExpectation>,
 }
 
 /// Starts the engine task and its safety ticker.
@@ -534,6 +538,7 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
         autopilot: None,
         burner_changed_at: None,
         trim_offset: 0.0,
+        first_crack: None,
         learned,
         inventory,
         profiles,
@@ -648,6 +653,7 @@ impl Engine {
             safety: self.safety.status(now),
             alarms: self.alarms.iter().cloned().collect(),
             control_seq: self.roast.as_ref().map_or(0, |r| r.control_log.len()),
+            first_crack: self.roast.as_ref().and(self.first_crack),
         }
     }
 
@@ -692,7 +698,12 @@ impl Engine {
             .into_iter()
             .rev()
             .collect();
-        project(&recent, events, self.reference.as_ref())
+        project(
+            &recent,
+            events,
+            self.reference.as_ref(),
+            self.first_crack.map(|c| c.bt),
+        )
     }
 
     // ----------------------------------------------------------------- recipe
@@ -2163,11 +2174,44 @@ impl Engine {
         });
         self.reset_curve();
         self.reset_recipe();
+        self.first_crack = Some(self.crack_expectation());
         self.state = RoastState::Recording;
         self.last_autosave = Instant::now();
         self.audit(serde_json::json!({"type": "recording_started"}));
         self.publish_reset();
         Ok(self.snapshot())
+    }
+
+    /// Where first crack is expected in the running recording: at the
+    /// temperature it came at in earlier roasts of the lot, else of any
+    /// coffee (simulator roasts only in the simulator).
+    fn crack_expectation(&self) -> CrackExpectation {
+        let simulated = self.machine.as_ref().is_some_and(|m| m.simulated);
+        let lot = self.roast.as_ref().and_then(|r| r.green_lot_id);
+        let summaries = self.archive.summaries().unwrap_or_else(|e| {
+            tracing::warn!("the roasts could not be read for first crack: {e}");
+            Vec::new()
+        });
+        let mut of_lot = Vec::new();
+        let mut all = Vec::new();
+        for s in &summaries {
+            let sim = s.get("simulated").and_then(serde_json::Value::as_bool) == Some(true);
+            let Some(bt) = s.get("first_crack_bt").and_then(serde_json::Value::as_f64) else {
+                continue;
+            };
+            if sim != simulated {
+                continue;
+            }
+            all.push(bt);
+            let same_lot = s
+                .get("lot_id")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|v| v.parse::<uuid::Uuid>().ok());
+            if lot.is_some() && same_lot == lot {
+                of_lot.push(bt);
+            }
+        }
+        CrackExpectation::from_roasts(&of_lot, &all)
     }
 
     /// A saved roast was deleted (its files are in the trash): its stock
@@ -2221,6 +2265,7 @@ impl Engine {
                 .ok_or_else(|| Fail::conflict("no recording is running", None))?;
             roast.green_lot_id = Some(lot.id);
             roast.batch.beans = Some(lot.name);
+            self.first_crack = Some(self.crack_expectation());
         }
         if let Some(plan) = meta.plan {
             let reference = plan.reference_id;
@@ -2671,6 +2716,51 @@ mod tests {
         assert!(s.preheat.is_none());
         assert!(s.safety.presence_due_in_s.unwrap() < 181.0);
         assert!(!s.safety.ai_suspended, "no AI was in control");
+    }
+
+    #[tokio::test]
+    async fn first_crack_is_expected_where_earlier_roasts_cracked() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| e.start_recording(RecordingMeta::default()))
+            .await
+            .unwrap()
+            .unwrap();
+        let fc = s.first_crack.unwrap();
+        assert_eq!(fc.basis, roast_core::CrackBasis::Typical);
+        h.call(|e| e.stop_recording()).await.unwrap().unwrap();
+
+        // An earlier simulator roast that cracked at 197 °C.
+        h.call(|e| {
+            let roast: Roast = serde_json::from_value(serde_json::json!({
+                "id": uuid::Uuid::new_v4(),
+                "title": "earlier",
+                "roasted_at": "2026-11-09T18:04:00Z",
+                "sampling_interval_s": 1.0,
+                "batch": {},
+                "origin": {"kind": "simulated"},
+                "samples": [{"t": 0.0, "bt": 180.0, "et": 200.0}],
+                "events": [
+                    {"t": 0.0, "kind": "charge", "origin": "human", "bt": 180.0},
+                    {"t": 470.0, "kind": "first_crack_start", "origin": "human", "bt": 197.0}
+                ],
+                "control_log": [],
+                "notes": []
+            }))
+            .unwrap();
+            e.archive.save(&roast).unwrap();
+        })
+        .await
+        .unwrap();
+        let s = h
+            .call(|e| e.start_recording(RecordingMeta::default()))
+            .await
+            .unwrap()
+            .unwrap();
+        let fc = s.first_crack.unwrap();
+        assert_eq!(fc.basis, roast_core::CrackBasis::Roasts);
+        assert!((fc.bt - 197.0).abs() < 1e-9);
     }
 
     #[tokio::test]

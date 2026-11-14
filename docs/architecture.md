@@ -308,12 +308,19 @@ temperature and development, heater glow from burner, airflow from air.
 
 ## First-crack detection
 
-`roast-audio` captures a microphone (`cpal`), resamples to 16 kHz mono and runs a
-detector on short windows: a baseline transient detector (spectral flux in the
-crack band against the stationary noise of fan and drum) and, where licensing
-permits, an optional ONNX classifier (`ort`). A crack is confirmed after several
-positive windows; the app shows a live "crack meter" so the signal is visible,
-not only audible. First-crack prediction uses the twin and the reference curve.
+[ADR 0021](adr/0021-hearing-first-and-second-crack.md). `roast-audio`
+captures a microphone (`cpal`) in the daemon at the device's native rate
+(48 kHz on a Mac) and computes, every 10 ms, the spectral flux in two bands:
+0.4–4 kHz for first crack and 6–16 kHz for second crack. A pop is a flux peak
+far above the band's noise of the last seconds. First crack is at least five
+pops within 20 s, placed at the first pop of the series, believed only after
+dry end and between 170 and 205 °C (narrower for a lot with three roasts);
+second crack is a dense series in the high band after first crack. A heard
+crack becomes an event with origin `detector`; a person's mark replaces it.
+The app shows the pops under the curve and a live spectrogram. Without a
+microphone the daemon still predicts first crack from the temperature it
+came at in earlier roasts of the lot (`roast-core::crack`). Sound is kept
+only in memory unless recording it is switched on.
 
 ## Desktop app
 

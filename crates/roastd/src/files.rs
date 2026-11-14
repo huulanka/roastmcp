@@ -44,6 +44,8 @@ pub struct Summary {
     lot_id: Option<uuid::Uuid>,
     /// First crack, seconds after CHARGE.
     first_crack_s: Option<f64>,
+    /// Bean temperature at first crack, °C.
+    first_crack_bt: Option<f64>,
     /// Development time ratio at the drop, percent.
     dtr_pct: Option<f64>,
     goal: Option<roast_core::RoastGoal>,
@@ -255,7 +257,7 @@ fn db(e: roast_store::Error) -> io::Error {
 
 /// Bumped whenever [`Summary`] changes: the stored summaries are then
 /// written anew on the next start.
-const SUMMARY_VERSION: u32 = 2;
+const SUMMARY_VERSION: u32 = 3;
 const SUMMARY_SETTING: &str = "summary_version";
 
 fn summary_json(roast: &Roast) -> serde_json::Value {
@@ -556,6 +558,7 @@ pub fn summary(roast: &Roast) -> Summary {
         beans: roast.batch.beans.clone(),
         lot_id: roast.green_lot_id,
         first_crack_s,
+        first_crack_bt: roast.event(EventKind::FirstCrackStart).and_then(|e| e.bt),
         dtr_pct,
         goal: roast.plan.as_ref().and_then(|p| p.goal),
         batch_no: batch_no(roast),

@@ -13,6 +13,7 @@ pub mod actuator;
 pub mod analysis;
 pub mod command;
 pub mod compare;
+pub mod crack;
 pub mod cupping;
 pub mod design;
 pub mod event;
@@ -38,6 +39,7 @@ pub use compare::{
     Alignment, Comparison, Consistency, CurveRow, FigureDeltas, RoastFigures, Spread, compare,
     consistency, figures, spread,
 };
+pub use crack::{CrackBasis, CrackExpectation, FIRST_CRACK_WINDOW_C};
 pub use cupping::{
     Cupping, CuppingError, CuppingScores, RestWindow, RestWindows, RoastLevel, rest_days_between,
     rest_window,

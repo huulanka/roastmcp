@@ -35,3 +35,4 @@
 - [0018](adr/0018-preheat-air-presence-calm-hold.md) — Preheat at the roast's start air, a presence warning, a calmer hold
 - [0019](adr/0019-handover-before-charge-and-recipe-runner.md) — The AI takes over before CHARGE, the daemon runs the recipe, filter and cooling stay free
 - [0020](adr/0020-autopilot-recipe-and-trim.md) — The autopilot runs the recipe and trims the burner, switched on in the app
+- [0021](adr/0021-hearing-first-and-second-crack.md) — The daemon hears first and second crack and marks them; the person's mark wins
