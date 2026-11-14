@@ -1,3 +1,10 @@
+# [1.26.0](https://github.com/huulanka/roastmcp/compare/v1.25.0...v1.26.0) (2026-11-14)
+
+
+### Features
+
+* hear crack pops in sound, tell first and second crack, and analyze recordings ([#49](https://github.com/huulanka/roastmcp/issues/49)) ([040e42f](https://github.com/huulanka/roastmcp/commit/040e42f140b497c79619e1c9141d9d130fc5b747)), closes [hi#band](https://github.com/hi/issues/band)
+
 # [1.25.0](https://github.com/huulanka/roastmcp/compare/v1.24.0...v1.25.0) (2026-11-14)
 
 
