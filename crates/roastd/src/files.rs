@@ -570,6 +570,39 @@ pub fn summary(roast: &Roast) -> Summary {
     }
 }
 
+/// Where first crack is expected: at the temperature it came at in the
+/// roasts of `lot` among `summaries`, else in any of them; simulator roasts
+/// only when `simulated`, real ones only when not; `exclude` left out.
+#[must_use]
+pub fn crack_expectation(
+    summaries: &[serde_json::Value],
+    lot: Option<Uuid>,
+    simulated: bool,
+    exclude: Option<Uuid>,
+) -> roast_core::CrackExpectation {
+    let id_of = |s: &serde_json::Value, key: &str| {
+        s.get(key)
+            .and_then(serde_json::Value::as_str)
+            .and_then(|v| v.parse::<Uuid>().ok())
+    };
+    let mut of_lot = Vec::new();
+    let mut all = Vec::new();
+    for s in summaries {
+        let sim = s.get("simulated").and_then(serde_json::Value::as_bool) == Some(true);
+        let Some(bt) = s.get("first_crack_bt").and_then(serde_json::Value::as_f64) else {
+            continue;
+        };
+        if sim != simulated || (exclude.is_some() && id_of(s, "id") == exclude) {
+            continue;
+        }
+        all.push(bt);
+        if lot.is_some() && id_of(s, "lot_id") == lot {
+            of_lot.push(bt);
+        }
+    }
+    roast_core::CrackExpectation::from_roasts(&of_lot, &all)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,5 +1,6 @@
 //! The `roastmcp` command line.
 
+mod audio;
 mod mcp;
 
 use std::path::PathBuf;
@@ -57,6 +58,9 @@ enum Command {
         /// The backup file (`roastmcp-<time>.sqlite`).
         file: PathBuf,
     },
+    /// Recorded roast sound and the crack detector (ADR 0021).
+    #[command(subcommand)]
+    Audio(AudioCommand),
     /// Import Artisan `.alog` files (or folders of them) into the archive.
     /// The files themselves are only read.
     Import {
@@ -64,6 +68,35 @@ enum Command {
         #[arg(required = true)]
         paths: Vec<PathBuf>,
     },
+}
+
+#[derive(Subcommand)]
+enum AudioCommand {
+    /// Play a recorded sound file (.wav, .flac) through the crack detector
+    /// and compare what it hears with the roast's marks. The roast is the
+    /// one recorded while the sound ran, unless `--roast` names one.
+    Analyze {
+        /// The sound file.
+        file: PathBuf,
+        /// A roast id from the archive, or a `.roast.json` / `.alog` file.
+        #[arg(long)]
+        roast: Option<String>,
+        /// Local start time of the sound, `YYYY-MM-DD HH:MM:SS` (default:
+        /// from a name like `2026-11-14_19-02-11.flac`).
+        #[arg(long)]
+        start: Option<String>,
+        /// low, normal or high.
+        #[arg(long, default_value = "normal", value_parser = parse_sensitivity)]
+        sensitivity: roast_audio::Sensitivity,
+        /// Print the whole analysis as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+fn parse_sensitivity(s: &str) -> Result<roast_audio::Sensitivity, String> {
+    serde_json::from_value(serde_json::Value::String(s.to_owned()))
+        .map_err(|_| format!("{s}: low, normal or high"))
 }
 
 fn find_alogs(path: &std::path::Path, out: &mut Vec<PathBuf>) {
@@ -213,6 +246,22 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Import { paths } => import(&data_dir, &paths),
+        Command::Audio(AudioCommand::Analyze {
+            file,
+            roast,
+            start,
+            sensitivity,
+            json,
+        }) => audio::analyze(
+            &data_dir,
+            &audio::AnalyzeArgs {
+                file,
+                roast,
+                start,
+                sensitivity,
+                json,
+            },
+        ),
         Command::Backup { to } => backup(&data_dir, to),
         Command::Restore { file } => restore(&data_dir, &file),
     }
