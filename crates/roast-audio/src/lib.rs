@@ -14,6 +14,7 @@ pub mod crack;
 pub mod file;
 pub mod listener;
 pub mod mix;
+pub mod model;
 pub mod offline;
 pub mod pops;
 pub mod spectrum;

@@ -822,6 +822,10 @@ export const de: Record<string, string> = {
   "no microphone was found": "kein Mikrofon gefunden",
   "the microphone stopped": "das Mikrofon hat aufgehört",
   "The fan, learned per air level": "Der Lüfter, gelernt je Luftstufe",
+  "The trained model decides first crack: {{m}} of {{n}} marks hit, the rules {{r}}.":
+    "Das trainierte Modell entscheidet den 1. Crack: {{m}} von {{n}} Markierungen getroffen, die Regeln {{r}}.",
+  "A model is trained; the rules decide until it hits your marks better.":
+    "Ein Modell ist trainiert; die Regeln entscheiden, bis es deine Markierungen besser trifft.",
   "Air {{n}} %": "Luft {{n}} %",
   "Keep the sound of each roast": "Ton jeder Röstung aufbewahren",
   "As FLAC beside the roast, about 35 MB. Stays on this computer; it makes the detector better.":

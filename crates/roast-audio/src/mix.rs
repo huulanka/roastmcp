@@ -239,7 +239,15 @@ mod tests {
             .unwrap_or_else(|| panic!("no pops"));
         assert!(!m.labels.voices.is_empty());
         let e = CrackExpectation::from_roasts(&[], &[]);
-        let a = analyze(&m.sound.samples, 48_000, Sensitivity::Normal, None, 0.0, &e);
+        let a = analyze(
+            &m.sound.samples,
+            48_000,
+            Sensitivity::Normal,
+            None,
+            0.0,
+            &e,
+            None,
+        );
         let heard = a
             .heard
             .iter()

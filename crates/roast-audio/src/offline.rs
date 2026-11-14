@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use crate::crack::{CrackLogic, HeardCrack, RoastContext};
 use crate::listener::Listener;
+use crate::model::{Model, ModelEar};
 use crate::pops::{Band, Pop, Sensitivity};
 
 /// The kinds the detector hears.
@@ -45,7 +46,7 @@ pub struct Deviation {
 /// the sound starts on the roast's recording clock; the roast gives the bean
 /// temperature, CHARGE and dry end, and its marks are what the heard cracks
 /// are compared with. Without one the temperature is taken to be inside the
-/// window throughout.
+/// window throughout. With a model, the model decides first crack start.
 #[must_use]
 pub fn analyze(
     samples: &[f32],
@@ -54,9 +55,12 @@ pub fn analyze(
     roast: Option<&Roast>,
     offset_s: f64,
     expectation: &CrackExpectation,
+    model: Option<&Model>,
 ) -> Analysis {
     let mut listener = Listener::new(rate, sensitivity);
     let mut logic = CrackLogic::new(sensitivity);
+    let mut ear = model.cloned().map(ModelEar::new);
+    logic.set_model_decides(ear.is_some());
     let mut pops = Vec::new();
     let mut heard: Vec<HeardCrack> = Vec::new();
     let chunk = (rate / 10).max(1) as usize;
@@ -65,7 +69,7 @@ pub fn analyze(
     for part in samples.chunks(chunk) {
         let out = listener.push(part);
         done += part.len();
-        for p in out.pops {
+        for &p in &out.pops {
             let p = Pop {
                 t: p.t + offset_s,
                 ..p
@@ -77,6 +81,15 @@ pub fn analyze(
             }
         }
         let now = done as f64 / f64::from(rate) + offset_s;
+        if let Some(at) = ear
+            .as_mut()
+            .and_then(|e| e.push(&out, done as f64 / f64::from(rate)))
+        {
+            let ctx = context(roast, now, &heard, expectation);
+            if let Some(h) = logic.model_heard(at + offset_s, &ctx) {
+                heard.push(h);
+            }
+        }
         if now >= next_tick {
             next_tick = now + 1.0;
             let ctx = context(roast, now, &heard, expectation);
@@ -227,7 +240,15 @@ mod tests {
         }
         sound.extend(s.take(40.0));
         let e = CrackExpectation::from_roasts(&[], &[]);
-        let a = analyze(&sound, 48_000, Sensitivity::Normal, Some(&r), 420.0, &e);
+        let a = analyze(
+            &sound,
+            48_000,
+            Sensitivity::Normal,
+            Some(&r),
+            420.0,
+            &e,
+            None,
+        );
         let fc = a
             .deviations
             .iter()

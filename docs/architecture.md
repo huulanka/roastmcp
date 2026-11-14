@@ -326,7 +326,12 @@ the roast recorded at that time and prints the pops and how far the heard
 cracks lie from the marks; `roastmcp audio eval` does so for every roast
 whose sound was kept and counts how many lie within ±10 s, and `roastmcp
 audio mix` makes labelled test sound from cut crack pops, fan noise and
-voices. The daemon listens during the preheat too, to learn the fan's
+voices. `roastmcp audio train` trains a small model (one hidden layer, in
+plain Rust, `roast-audio::model`) on the roasts whose sound was kept with
+their marked first crack and on mixed sound, and measures it against the
+rules on roasts it was not trained on; it is kept in the database and
+decides first crack start in the daemon only when it hit the marks more
+often. The daemon listens during the preheat too, to learn the fan's
 noise per air level; with "keep the sound" on, a roast's sound is written
 as FLAC to `roasts/sound/`.
 

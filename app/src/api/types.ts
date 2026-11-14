@@ -450,6 +450,13 @@ export interface AudioStatus {
   noise?: { air: number; crack_db: number; high_db?: number | null; seconds: number }[];
   /** The sound is being kept as a file. */
   recording_sound?: boolean;
+  /** The model from `roastmcp audio train`; it decides first crack start when it hit more marks than the rules. */
+  model?: {
+    trained_on: string;
+    accuracy: number;
+    evaluation: { roasts: number; rules_within: number; model_within: number };
+    decides: boolean;
+  } | null;
 }
 export interface AudioSettings {
   mode: AudioMode;
