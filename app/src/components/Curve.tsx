@@ -12,12 +12,56 @@ function Swatch({ className }: { className: string }) {
 }
 
 /** Heading of the curve with the legend; the reference can be cleared from here. */
+/** What the roast screen shows: the curve, or the microphone's sound (ADR 0021). */
+export type PanelView = "curve" | "sound";
+
+function Switch<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: readonly (readonly [T, string])[];
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      className="flex rounded-lg bg-surface-raised p-0.5 text-[13px]"
+    >
+      {options.map(([v, name]) => (
+        <button
+          key={v}
+          type="button"
+          role="radio"
+          aria-checked={value === v}
+          onClick={() => onChange(v)}
+          className={cn(
+            "rounded-md px-3 py-1 transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
+            value === v
+              ? "bg-background font-medium text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {name}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function CurveLegend({
   reference,
   projection,
   onClearReference,
   view,
   onView,
+  panel,
+  onPanel,
+  mic,
 }: {
   reference: string | null;
   projection: boolean;
@@ -25,53 +69,57 @@ export function CurveLegend({
   /** The time axis: whole roast or following; omitted, no switch. */
   view?: ChartView;
   onView?: (v: ChartView) => void;
+  /** Curve or sound; omitted, no switch. */
+  panel?: PanelView;
+  onPanel?: (v: PanelView) => void;
+  /** The microphone pill, at the end of the legend. */
+  mic?: React.ReactNode;
 }) {
   const { t } = useTranslation();
+  const sound = panel === "sound";
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1">
       <div className="flex items-center gap-4">
-        <h2 className="text-[15px] font-medium text-muted-foreground">{t("Curve")}</h2>
-        {view && onView && (
-          <div
-            role="radiogroup"
-            aria-label={t("Time axis")}
-            className="flex rounded-lg bg-surface-raised p-0.5 text-[13px]"
-          >
-            {(
-              [
-                ["whole", t("Whole roast")],
-                ["follow", t("Follow")],
-              ] as const
-            ).map(([v, name]) => (
-              <button
-                key={v}
-                type="button"
-                role="radio"
-                aria-checked={view === v}
-                onClick={() => onView(v)}
-                className={cn(
-                  "rounded-md px-3 py-1 transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
-                  view === v
-                    ? "bg-background font-medium text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {name}
-              </button>
-            ))}
-          </div>
+        {panel && onPanel ? (
+          <Switch
+            label={t("View")}
+            value={panel}
+            options={[
+              ["curve", t("Curve")],
+              ["sound", t("Sound")],
+            ]}
+            onChange={onPanel}
+          />
+        ) : (
+          <h2 className="text-[15px] font-medium text-muted-foreground">{t("Curve")}</h2>
+        )}
+        {view && onView && !sound && (
+          <Switch
+            label={t("Time axis")}
+            value={view}
+            options={[
+              ["whole", t("Whole roast")],
+              ["follow", t("Follow")],
+            ]}
+            onChange={onView}
+          />
         )}
       </div>
       <ul className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[13px] text-muted-foreground">
-        <li className="flex items-center gap-2">
-          <Swatch className="h-[3px] rounded-pill bg-brand" />
-          {t("Bean")}
-        </li>
-        <li className="flex items-center gap-2">
-          <Swatch className="h-[3px] rounded-pill bg-ror" />
-          RoR
-        </li>
-        {reference !== null && (
+        {sound && <li>{t("The last 60 s, live")}</li>}
+        {!sound && (
+          <li className="flex items-center gap-2">
+            <Swatch className="h-[3px] rounded-pill bg-brand" />
+            {t("Bean")}
+          </li>
+        )}
+        {!sound && (
+          <li className="flex items-center gap-2">
+            <Swatch className="h-[3px] rounded-pill bg-ror" />
+            RoR
+          </li>
+        )}
+        {!sound && reference !== null && (
           <li className="flex items-center gap-2">
             <Swatch className="border-t-2 border-dashed border-reference" />
             <span className="max-w-56 truncate">
@@ -87,12 +135,13 @@ export function CurveLegend({
             </button>
           </li>
         )}
-        {projection && (
+        {!sound && projection && (
           <li className="flex items-center gap-2">
             <Swatch className="border-t-2 border-dashed border-brand" />
             {t("Projection")}
           </li>
         )}
+        {mic && <li className="flex items-center">{mic}</li>}
       </ul>
     </div>
   );

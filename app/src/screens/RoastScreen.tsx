@@ -13,7 +13,15 @@ import {
 import { ActionLog } from "@/components/ActionLog.tsx";
 import { CoachCard } from "@/components/CoachCard.tsx";
 import { Controls } from "@/components/Controls.tsx";
-import { CurveLegend, PhaseLine, RoastScaleBar, type ScaleMarker } from "@/components/Curve.tsx";
+import {
+  CurveLegend,
+  PhaseLine,
+  RoastScaleBar,
+  type PanelView,
+  type ScaleMarker,
+} from "@/components/Curve.tsx";
+import { HeardBannerBar, MicDialog, MicPill } from "@/components/Hearing.tsx";
+import { SoundView } from "@/components/SoundView.tsx";
 import { SavedDialog, StopDialog } from "@/components/Dialogs.tsx";
 import { PlanCard } from "@/components/PlanCard.tsx";
 import { StartDialog } from "@/components/StartDialog.tsx";
@@ -21,7 +29,12 @@ import { EventSegments, PrimaryButton } from "@/components/EventRow.tsx";
 import { PreheatCard } from "@/components/Preheat.tsx";
 import { Readouts } from "@/components/Readouts.tsx";
 import { RecipeCue } from "@/components/RecipeCue.tsx";
-import { RoastChart, type ChartOverlay, type ChartView } from "@/components/RoastChart.tsx";
+import {
+  RoastChart,
+  type ChartOverlay,
+  type ChartPop,
+  type ChartView,
+} from "@/components/RoastChart.tsx";
 import { BeanMark } from "@/components/TopBar.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import {
@@ -33,6 +46,7 @@ import {
   developmentBand,
   mergeReference,
 } from "@/lib/chartData.ts";
+import { heardBanner } from "@/lib/hearing.ts";
 import { planPreheat, planProgress } from "@/lib/plan.ts";
 import {
   isAiHolder,
@@ -110,6 +124,15 @@ function Disconnected({
 }
 
 const CHART_VIEW_KEY = "roastmcp.chartView";
+const PANEL_KEY = "roastmcp.panel";
+
+function storedPanel(): PanelView {
+  try {
+    return localStorage.getItem(PANEL_KEY) === "sound" ? "sound" : "curve";
+  } catch {
+    return "curve";
+  }
+}
 
 function storedChartView(): ChartView {
   try {
@@ -121,7 +144,18 @@ function storedChartView(): ChartView {
 
 export function RoastScreen({ onConnect }: { onConnect: () => void }) {
   const { t } = useTranslation();
-  const { snapshot, points, notes, controlLog } = useLive();
+  const { snapshot, points, notes, controlLog, pops } = useLive();
+  const [panel, setPanel] = useState<PanelView>(storedPanel);
+  const changePanel = (v: PanelView) => {
+    setPanel(v);
+    try {
+      localStorage.setItem(PANEL_KEY, v);
+    } catch {
+      /* private window: not remembered */
+    }
+  };
+  const [micOpen, setMicOpen] = useState(false);
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
   const [startOpen, setStartOpen] = useState(false);
   const [stopOpen, setStopOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
@@ -166,6 +200,12 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
     [events, base, snapshot?.t],
   );
   const dRor = useMemo(() => rorDelta(live.x, live.ror), [live]);
+  const chartPops = useMemo<ChartPop[]>(
+    () => pops.map((p) => ({ x: p.t - (base ?? 0), high: p.band === "high" })),
+    [pops, base],
+  );
+  const banner = snapshot && recording ? heardBanner(snapshot, dismissed) : null;
+  const dismissBanner = (key: string) => setDismissed((d) => new Set(d).add(key));
   const note = useMemo(() => latestAiNote(notes), [notes]);
 
   const projection = snapshot?.projection ?? null;
@@ -268,6 +308,11 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
 
   const action = snapshot ? nextAction(snapshot.state, connected, snapshot.events) : null;
   const runPrimary = () => {
+    // Right after a heard crack, Enter marks it anew: the person's mark wins.
+    if (banner?.enter) {
+      void markEvent(banner.kind);
+      return;
+    }
     if (!action) return;
     if (action.type === "start") setStartOpen(true);
     else if (action.type === "stop") setStopOpen(true);
@@ -342,19 +387,30 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
           }
           view={chartView}
           onView={changeChartView}
+          panel={panel}
+          onPanel={changePanel}
+          mic={connected ? <MicPill snapshot={snapshot} onOpen={() => setMicOpen(true)} /> : null}
         />
-        <div className="h-[22rem] min-h-0 lg:h-auto lg:min-h-56 lg:flex-1">
-          <RoastChart
-            data={data}
-            markers={markers}
-            band={band}
-            overlay={overlay}
-            minSpanS={720}
-            actuators
-            view={chartView}
-            label={chartLabel}
-          />
+        <div className="flex h-[22rem] min-h-0 flex-col lg:h-auto lg:min-h-56 lg:flex-1">
+          {panel === "sound" ? (
+            <SoundView snapshot={snapshot} pops={pops} base={base} />
+          ) : (
+            <RoastChart
+              data={data}
+              markers={markers}
+              band={band}
+              overlay={overlay}
+              pops={chartPops}
+              minSpanS={720}
+              actuators
+              view={chartView}
+              label={chartLabel}
+            />
+          )}
         </div>
+        {banner && (
+          <HeardBannerBar banner={banner} base={base} onDismiss={() => dismissBanner(banner.key)} />
+        )}
         {base !== null && (
           <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
             <PhaseLine phases={snapshot.phases} />
@@ -416,6 +472,7 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
       <SavedDialog key={savedId ?? "none"} roastId={savedId} onClose={clearJustSaved} />
       <StartDialog open={startOpen} onOpenChange={setStartOpen} />
       <StopDialog open={stopOpen} onOpenChange={setStopOpen} />
+      <MicDialog open={micOpen} onOpenChange={setMicOpen} />
     </main>
   );
 }

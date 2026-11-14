@@ -95,7 +95,7 @@ export function EventSegments({ snapshot }: { snapshot: Snapshot }) {
             >
               <span className="truncate text-[13px] text-muted-foreground">
                 {name}
-                {auto && ` · ${t("auto")}`}
+                {auto && ` · ${ev.origin === "detector" ? t("heard") : t("auto")}`}
               </span>
               <span
                 className={cn(

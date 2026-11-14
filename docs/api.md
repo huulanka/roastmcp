@@ -148,6 +148,8 @@ interface Snapshot {
     high_10s: number;                    // high-band pops (6–16 kHz) in the last 10 s
     crack_db: number | null; high_db: number | null; // band levels now, dBFS
     simulated: boolean;                  // the simulator's synthetic roaster, not a microphone
+    heard: { kind: EventKind; t: number; bt: number | null; pops: number }[];
+                                         // cracks heard in this recording (marked or not)
   };
   preheat: null | { target_c: number; state: "heating" | "holding" };
   autopilot: null | {                    // while the autopilot is switched on (ADR 0020)

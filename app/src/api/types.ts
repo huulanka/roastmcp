@@ -374,6 +374,8 @@ export interface Snapshot {
   autopilot?: Autopilot | null;
   /** Where first crack is expected while recording; absent on older daemons. */
   first_crack?: CrackExpectation | null;
+  /** Listening for cracks; absent on older daemons. */
+  audio?: AudioStatus;
 }
 export interface Note {
   t: number;
@@ -395,6 +397,79 @@ export interface Live {
   events: RoastEvent[];
   notes: Note[];
   control_log: ControlLogEntry[];
+  /** Pops heard in this recording; absent on daemons that do not listen. */
+  pops?: SoundPop[];
+}
+/** One pop the microphone heard (ADR 0021), `t` on the recording clock. */
+export interface SoundPop {
+  t: number;
+  /** crack: 0.4–4 kHz (first crack); high: 6–16 kHz (second crack). */
+  band: "crack" | "high";
+  /** How far it rose above the band's noise, dB. */
+  db: number;
+}
+/** A crack the detector heard, as it marked it. */
+export interface HeardMark {
+  kind: EventKind;
+  t: number;
+  bt?: number | null;
+  pops: number;
+}
+/** What the microphone heard during a saved roast. */
+export interface RoastSound {
+  device?: string | null;
+  pops: SoundPop[];
+  levels: { t: number; crack_db: number; high_db?: number | null }[];
+  heard?: HeardMark[];
+}
+export type AudioMode = "mark" | "show" | "off";
+export type Sensitivity = "low" | "normal" | "high";
+/** Listening for cracks, as the snapshot shows it. */
+export interface AudioStatus {
+  mode: AudioMode;
+  /** idle: not recording; silent: only zeros (no permission for the microphone). */
+  state: "off" | "idle" | "starting" | "listening" | "silent" | "error";
+  device: string | null;
+  rate: number | null;
+  error: string | null;
+  /** Crack-band pops in the last 20 s. */
+  crack_20s: number;
+  /** High-band pops in the last 10 s. */
+  high_10s: number;
+  crack_db: number | null;
+  high_db: number | null;
+  simulated: boolean;
+  heard: HeardMark[];
+}
+export interface AudioSettings {
+  mode: AudioMode;
+  /** Input device by name; null: the system's default input. */
+  device: string | null;
+  sensitivity: Sensitivity;
+  record: boolean;
+}
+/** `GET /api/audio`. */
+export interface AudioView {
+  settings: AudioSettings;
+  devices: string[];
+  status: AudioStatus;
+}
+/** WebSocket `audio`: ten times a second while listening. */
+export interface AudioFrame {
+  type: "audio";
+  /** Recording time of the newest column. */
+  t: number;
+  columns: number;
+  bands: number;
+  /** Columns per second of roast time. */
+  per_s: number;
+  /** base64 of columns × bands bytes, 0 = −120 dBFS … 255 = −30 dBFS, 100 Hz–16 kHz log. */
+  spectrum: string;
+  pops: SoundPop[];
+  crack_db: number | null;
+  high_db: number | null;
+  crack_20s: number;
+  high_10s: number;
 }
 export interface RoastSummary {
   id: string;
@@ -454,6 +529,8 @@ export interface Roast {
   events?: RoastEvent[];
   control_log?: unknown[];
   notes?: { t: number; text: string; origin?: string }[];
+  /** What the microphone heard (ADR 0021). */
+  sound?: RoastSound | null;
 }
 /** Why a maintenance task is due. */
 export interface DueReason {
@@ -631,4 +708,4 @@ export interface Experiment {
   created_at: string;
 }
 export type WsMessage =
-  { type: "tick"; snapshot: Snapshot; point: Point | null } | { type: "reset" };
+  { type: "tick"; snapshot: Snapshot; point: Point | null } | { type: "reset" } | AudioFrame;

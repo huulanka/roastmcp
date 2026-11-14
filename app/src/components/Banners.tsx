@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/alert-dialog.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { cn } from "@/lib/utils.ts";
-import { beep } from "@/state/audio.ts";
+import { beep, gong } from "@/state/audio.ts";
 import { applySnapshot, hasToken, useLive } from "@/state/live.ts";
 import { setActuator } from "@/state/controls.ts";
 import { alarmText } from "@/lib/alarms.ts";
@@ -168,6 +168,11 @@ export function AlarmWatcher() {
       seen.current.add(a.id);
       const age = Date.now() - Date.parse(a.at);
       if (first && age > 30_000) continue;
+      // A heard crack has its own banner on the roast screen, and a gong.
+      if (a.kind === "crack_heard") {
+        gong(false);
+        continue;
+      }
       toast(
         a.severity === "critical" ? "critical" : a.severity === "warning" ? "warning" : "info",
         alarmText(a.message, i18n.t),
