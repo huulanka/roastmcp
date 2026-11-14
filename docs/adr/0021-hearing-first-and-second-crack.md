@@ -54,9 +54,11 @@ The hum of drum and burner lies below the crack band and is left out.
 
 ### 2. Finding pops
 A pop is a peak of a band's flux far above the noise of the last 3 s: above
-the median plus *k* times the median absolute deviation, *k* set by the
-sensitivity (low 6, normal 4.5, high 3.5), at least 50 ms after the previous
-pop of that band. A pop in the high band that is also strong in the crack
+the median plus *k* times the median absolute deviation and at least a few
+dB (low: 8 × MAD and 4 dB, normal: 6 × MAD and 3 dB, high: 4.5 × MAD and
+2.5 dB), at least 50 ms after the previous pop of that band, and the band
+must have lost half of its rise 30 ms later: a crack is over at once, a
+voice or a clatter is not. A pop in the high band that is also strong in the crack
 band counts as a crack-band pop. Each pop carries its time, band and
 strength in dB above the band's noise.
 

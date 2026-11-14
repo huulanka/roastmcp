@@ -2192,26 +2192,7 @@ impl Engine {
             tracing::warn!("the roasts could not be read for first crack: {e}");
             Vec::new()
         });
-        let mut of_lot = Vec::new();
-        let mut all = Vec::new();
-        for s in &summaries {
-            let sim = s.get("simulated").and_then(serde_json::Value::as_bool) == Some(true);
-            let Some(bt) = s.get("first_crack_bt").and_then(serde_json::Value::as_f64) else {
-                continue;
-            };
-            if sim != simulated {
-                continue;
-            }
-            all.push(bt);
-            let same_lot = s
-                .get("lot_id")
-                .and_then(serde_json::Value::as_str)
-                .and_then(|v| v.parse::<uuid::Uuid>().ok());
-            if lot.is_some() && same_lot == lot {
-                of_lot.push(bt);
-            }
-        }
-        CrackExpectation::from_roasts(&of_lot, &all)
+        files::crack_expectation(&summaries, lot, simulated, None)
     }
 
     /// A saved roast was deleted (its files are in the trash): its stock

@@ -14,6 +14,9 @@ uuid.workspace = true
 anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
 roast-core.workspace = true
+roast-audio.workspace = true
+roast-alog.workspace = true
+chrono.workspace = true
 roast-driver.workspace = true
 roastd.workspace = true
 roast-store.workspace = true

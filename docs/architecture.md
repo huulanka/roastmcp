@@ -320,7 +320,10 @@ crack becomes an event with origin `detector`; a person's mark replaces it.
 The app shows the pops under the curve and a live spectrogram. Without a
 microphone the daemon still predicts first crack from the temperature it
 came at in earlier roasts of the lot (`roast-core::crack`). Sound is kept
-only in memory unless recording it is switched on.
+only in memory unless recording it is switched on. `roastmcp audio analyze
+<file>` plays a recorded `.wav` or `.flac` through the same detector next to
+the roast recorded at that time and prints the pops and how far the heard
+cracks lie from the marks.
 
 ## Desktop app
 

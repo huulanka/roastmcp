@@ -10,7 +10,15 @@ authors.workspace = true
 publish.workspace = true
 
 [dependencies]
+claxon = "0.4.3"
+hound = "3.5.1"
 roast-core.workspace = true
+rustfft = "6.4.1"
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true
