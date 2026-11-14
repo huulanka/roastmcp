@@ -1,3 +1,10 @@
+# [1.22.0](https://github.com/huulanka/roastmcp/compare/v1.21.0...v1.22.0) (2026-11-14)
+
+
+### Features
+
+* the archive shows rest and tastings and compares roasts on first crack ([#45](https://github.com/huulanka/roastmcp/issues/45)) ([9fdc7a9](https://github.com/huulanka/roastmcp/commit/9fdc7a915cd3d4832ca5c939ed66df0dfa6d71e7))
+
 # [1.21.0](https://github.com/huulanka/roastmcp/compare/v1.20.0...v1.21.0) (2026-11-14)
 
 
