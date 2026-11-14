@@ -152,7 +152,7 @@ export const de: Record<string, string> = {
   "Esc in this window · ⌘⇧⎋ anywhere on the Mac": "Esc in diesem Fenster · ⌘⇧⎋ überall auf dem Mac",
   "First crack": "1. Crack",
   "First crack end": "1. Crack Ende",
-  "First crack ~ in {{eta}}": "1. Crack ~ in {{eta}}",
+  "First crack ~ in {{eta}} at ~{{bt}}°": "1. Crack ~ in {{eta}} bei ~{{bt}}°",
   "First crack ~ {{bt}}°": "1. Crack ~ {{bt}}°",
   "Increase {{name}}": "{{name}} erhöhen",
   "Is reference": "Ist Referenz",

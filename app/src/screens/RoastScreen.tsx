@@ -182,7 +182,10 @@ export function RoastScreen({ onConnect }: { onConnect: () => void }) {
           })
         : t("Drop {{bt}}°", { bt: formatNumber(next.bt, 0) })
       : next.eta_s !== null
-        ? t("First crack ~ in {{eta}}", { eta: formatClock(next.eta_s) })
+        ? t("First crack ~ in {{eta}} at ~{{bt}}°", {
+            eta: formatClock(next.eta_s),
+            bt: formatNumber(next.bt, 0),
+          })
         : t("First crack ~ {{bt}}°", { bt: formatNumber(next.bt, 0) })
     : null;
 

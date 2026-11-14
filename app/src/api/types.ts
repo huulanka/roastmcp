@@ -310,6 +310,17 @@ export interface Projection {
   bt_60s: number | null;
   next: null | { kind: "first_crack_start" | "drop"; bt: number; eta_s: number | null };
 }
+/** Where first crack is expected in the running recording (ADR 0021). */
+export interface CrackExpectation {
+  /** The bean temperature it usually starts at, °C. */
+  bt: number;
+  /** A heard first crack is only believed between `low` and `high`, °C. */
+  low: number;
+  high: number;
+  /** How many roasts `bt` comes from. */
+  roasts: number;
+  basis: "lot" | "roasts" | "typical";
+}
 export interface Preheat {
   target_c: number;
   state: "heating" | "holding";
@@ -361,6 +372,8 @@ export interface Snapshot {
   recipe?: RecipeStatus | null;
   /** The autopilot while it is on; absent on daemons without it. */
   autopilot?: Autopilot | null;
+  /** Where first crack is expected while recording; absent on older daemons. */
+  first_crack?: CrackExpectation | null;
 }
 export interface Note {
   t: number;

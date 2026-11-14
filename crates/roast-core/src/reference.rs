@@ -208,11 +208,16 @@ const TREND_WINDOW_S: f64 = 60.0;
 /// temperature follows it; the RoR does not go below zero. Returns `None`
 /// before the RoR is known or while it is not positive (before the turning
 /// point).
+///
+/// The next milestone is first crack (until it is marked), then DROP, at the
+/// reference's temperatures. Without a first crack in the reference,
+/// `first_crack_bt` (where it usually comes, ADR 0021) stands in for it.
 #[must_use]
 pub fn project(
     recent: &[(f64, f64, f64)],
     events: &[RoastEvent],
     reference: Option<&ReferenceCurve>,
+    first_crack_bt: Option<f64>,
 ) -> Option<Projection> {
     let &(t_now, bt, ror) = recent.last()?;
     if ror <= 0.0 {
@@ -230,8 +235,7 @@ pub fn project(
         bt + (ror * h + 0.5 * trend * h * h) / 60.0
     };
     // A milestone whose temperature is already passed is not shown.
-    let next = reference
-        .and_then(|r| next_milestone(events, r))
+    let next = next_milestone(events, reference, first_crack_bt)
         .filter(|&(_, target)| bt < target)
         .map(|(kind, target)| Milestone {
             kind,
@@ -267,8 +271,13 @@ fn ror_trend(recent: &[(f64, f64, f64)], t_now: f64) -> f64 {
     (cov / var).min(0.0)
 }
 
-/// First crack (until marked), then DROP, at the reference's temperatures.
-fn next_milestone(events: &[RoastEvent], reference: &ReferenceCurve) -> Option<(EventKind, f64)> {
+/// First crack (until marked), then DROP, at the reference's temperatures;
+/// first crack at `first_crack_bt` when the reference has none.
+fn next_milestone(
+    events: &[RoastEvent],
+    reference: Option<&ReferenceCurve>,
+    first_crack_bt: Option<f64>,
+) -> Option<(EventKind, f64)> {
     let has = |k: EventKind| events.iter().any(|e| e.kind == k);
     if has(EventKind::Drop) || !has(EventKind::Charge) {
         return None;
@@ -278,8 +287,14 @@ fn next_milestone(events: &[RoastEvent], reference: &ReferenceCurve) -> Option<(
     } else {
         EventKind::FirstCrackStart
     };
-    let r = reference.event(kind)?;
-    let bt = r.bt.or_else(|| reference.at(r.t).0)?;
+    let planned = reference.and_then(|reference| {
+        let r = reference.event(kind)?;
+        r.bt.or_else(|| reference.at(r.t).0)
+    });
+    let bt = match kind {
+        EventKind::FirstCrackStart => planned.or(first_crack_bt),
+        _ => planned,
+    }?;
     Some((kind, bt))
 }
 
@@ -323,7 +338,7 @@ mod tests {
         let recent: Vec<_> = (0..60)
             .map(|i| (f64::from(i), 150.0 + f64::from(i) / 6.0, 10.0))
             .collect();
-        let p = project(&recent, &[], None).unwrap();
+        let p = project(&recent, &[], None, None).unwrap();
         let last = recent.last().unwrap().1;
         assert!((p.bt_60s.unwrap() - (last + 10.0)).abs() < 1e-6);
         assert!(p.next.is_none());
@@ -338,14 +353,14 @@ mod tests {
                 (t, 190.0, 12.0 - t / 10.0)
             })
             .collect();
-        let p = project(&recent, &[], None).unwrap();
+        let p = project(&recent, &[], None, None).unwrap();
         // Area under a RoR falling from 6 to 0 over 60 s: 6/2 °C.
         assert!((p.bt_60s.unwrap() - 193.0).abs() < 1e-6);
 
         let rising: Vec<_> = (0..=60)
             .map(|i| (f64::from(i), 150.0, 5.0 + f64::from(i) / 10.0))
             .collect();
-        let p = project(&rising, &[], None).unwrap();
+        let p = project(&rising, &[], None, None).unwrap();
         // A rising RoR is held, not extrapolated: 11 °C/min for 60 s.
         assert!((p.bt_60s.unwrap() - 161.0).abs() < 1e-6);
     }
@@ -363,7 +378,7 @@ mod tests {
             .map(|i| (400.0 + f64::from(i), 190.0, 6.0))
             .collect();
         let live = [ev(EventKind::Charge, 0.0, 180.0)];
-        let p = project(&recent, &live, Some(&reference)).unwrap();
+        let p = project(&recent, &live, Some(&reference), None).unwrap();
         let next = p.next.unwrap();
         assert_eq!(next.kind, EventKind::FirstCrackStart);
         assert_eq!(next.bt, 196.0);
@@ -374,7 +389,7 @@ mod tests {
             ev(EventKind::Charge, 0.0, 180.0),
             ev(EventKind::FirstCrackStart, 420.0, 195.0),
         ];
-        let next = project(&recent, &live, Some(&reference))
+        let next = project(&recent, &live, Some(&reference), None)
             .unwrap()
             .next
             .unwrap();
@@ -383,7 +398,47 @@ mod tests {
 
         let live = [ev(EventKind::Drop, 500.0, 204.0)];
         assert!(
-            project(&recent, &live, Some(&reference))
+            project(&recent, &live, Some(&reference), None)
+                .unwrap()
+                .next
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn first_crack_is_expected_where_it_usually_comes_without_a_reference() {
+        let recent: Vec<_> = (0..=30)
+            .map(|i| (400.0 + f64::from(i), 190.0, 6.0))
+            .collect();
+        let live = [ev(EventKind::Charge, 0.0, 180.0)];
+        let next = project(&recent, &live, None, Some(193.0))
+            .unwrap()
+            .next
+            .unwrap();
+        assert_eq!(next.kind, EventKind::FirstCrackStart);
+        assert_eq!(next.bt, 193.0);
+        assert_eq!(next.eta_s, Some(30.0));
+
+        // A reference with a first crack wins.
+        let mut roast = testutil::roast();
+        roast.events = vec![
+            ev(EventKind::Charge, 0.0, 180.0),
+            ev(EventKind::FirstCrackStart, 450.0, 196.0),
+        ];
+        let reference = ReferenceCurve::from_roast(&roast, &RorConfig::default());
+        let next = project(&recent, &live, Some(&reference), Some(193.0))
+            .unwrap()
+            .next
+            .unwrap();
+        assert_eq!(next.bt, 196.0);
+
+        // After first crack there is no DROP without a reference.
+        let live = [
+            ev(EventKind::Charge, 0.0, 180.0),
+            ev(EventKind::FirstCrackStart, 420.0, 195.0),
+        ];
+        assert!(
+            project(&recent, &live, None, Some(193.0))
                 .unwrap()
                 .next
                 .is_none()
@@ -392,8 +447,8 @@ mod tests {
 
     #[test]
     fn no_projection_before_the_turning_point() {
-        assert!(project(&[(10.0, 120.0, -15.0)], &[], None).is_none());
-        assert!(project(&[], &[], None).is_none());
+        assert!(project(&[(10.0, 120.0, -15.0)], &[], None, None).is_none());
+        assert!(project(&[], &[], None, None).is_none());
     }
 
     #[test]

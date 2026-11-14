@@ -131,7 +131,14 @@ interface Snapshot {
   projection: null | {                   // between CHARGE and DROP, once the RoR is positive
     bt_60s: number | null;
     next: null | { kind: "first_crack_start" | "drop"; bt: number; eta_s: number | null };
-  };                                     // next: from the reference's event temperatures
+  };                                     // next: from the reference's event temperatures; first crack
+                                         // without one in the reference at first_crack.bt
+  first_crack: null | {                  // while recording: where first crack is expected (ADR 0021)
+    bt: number;                          // °C it usually starts at
+    low: number; high: number;           // a heard first crack is only believed in between
+    roasts: number;                      // how many roasts bt comes from
+    basis: "lot" | "roasts" | "typical"; // earlier roasts of the lot | of any coffee | 192 °C
+  };
   preheat: null | { target_c: number; state: "heating" | "holding" };
   autopilot: null | {                    // while the autopilot is switched on (ADR 0020)
     state: "armed" | "active" | "waiting"; // before CHARGE | in control | waits for a presence confirmation
