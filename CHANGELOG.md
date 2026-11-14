@@ -1,3 +1,10 @@
+# [1.21.0](https://github.com/huulanka/roastmcp/compare/v1.20.0...v1.21.0) (2026-11-14)
+
+
+### Features
+
+* a Care tab for maintenance and a check page before every roast in the app ([#44](https://github.com/huulanka/roastmcp/issues/44)) ([ddf288d](https://github.com/huulanka/roastmcp/commit/ddf288d03606a297b5dee063d0363afcad19bdbd))
+
 # [1.20.0](https://github.com/huulanka/roastmcp/compare/v1.19.0...v1.20.0) (2026-11-13)
 
 
