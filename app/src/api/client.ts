@@ -5,6 +5,8 @@ import type {
   ConsistencyResult,
   Cupping,
   CuppingInput,
+  Experiment,
+  ExperimentStatus,
   RestEntry,
   BackupStatus,
   Checklist,
@@ -299,6 +301,30 @@ export const api = {
       "GET",
       `/api/roasts/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}&align=${align}&step_s=${stepS}`,
     ),
+  experiments: () => request<Experiment[]>("GET", "/api/experiments"),
+  addExperiment: (body: {
+    hypothesis: string;
+    change: string;
+    variable?: { name: string; from: string; to: string };
+    expected_outcome?: string;
+    profile_version_id?: string;
+    roast_ids?: string[];
+  }) => request<Experiment>("POST", "/api/experiments", body),
+  /** The first roast makes it running, a conclusion done, unless `status` says otherwise. */
+  patchExperiment: (
+    id: string,
+    body: {
+      hypothesis?: string;
+      change?: string;
+      expected_outcome?: string;
+      conclusion?: string;
+      status?: ExperimentStatus;
+      add_roasts?: string[];
+      remove_roasts?: string[];
+    },
+  ) => request<Experiment>("PATCH", `/api/experiments/${encodeURIComponent(id)}`, body),
+  deleteExperiment: (id: string) =>
+    request<Record<string, never>>("DELETE", `/api/experiments/${encodeURIComponent(id)}`),
   checklist: () => request<Checklist>("GET", "/api/checklist"),
   setChecklist: (items: ChecklistItem[]) => request<Checklist>("PUT", "/api/checklist", { items }),
   /** Moves a roast to the trash folder and credits its green coffee back. */

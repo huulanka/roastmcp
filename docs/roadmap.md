@@ -36,7 +36,9 @@ Next, in order:
    statistics per lot or profile, experiments, ambient conditions, and the
    prompts `debrief_roast` and `plan_next_roast`. In the app: comparison
    lined up on first crack (with development time and the largest gap) and
-   consistency per bean or profile. Open: experiments in the app.
+   consistency per bean or profile, and experiments in the Profiles tab
+   (hypothesis, one change, the roasts that test it with their figures and
+   tastings, the result).
 4. **Store and backup**: done — SQLite database for roasts, inventory,
    profiles and settings; checked backups to a chosen folder after every
    roast and daily; `roastmcp restore`

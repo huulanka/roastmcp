@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { api, ApiError } from "@/api/client.ts";
 import type {
+  Experiment,
   ActionTrigger,
   Actuator,
   PlannedAction,
@@ -13,7 +14,13 @@ import type {
   RoastSummary,
 } from "@/api/types.ts";
 import { Field, inputCls, UnitInput } from "@/components/Dialogs.tsx";
+import {
+  ExperimentDetail,
+  ExperimentList,
+  NewExperimentDialog,
+} from "@/components/Experiments.tsx";
 import { RoastChart } from "@/components/RoastChart.tsx";
+import { Segmented } from "@/components/TopBar.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import {
   Dialog,
@@ -32,6 +39,7 @@ import {
   SelectValue,
 } from "@/components/ui/select.tsx";
 import type { ChartData, ChartMarker } from "@/lib/chartData.ts";
+import { sortExperiments } from "@/lib/experiment.ts";
 import { isComplete, parseNumber } from "@/lib/plan.ts";
 import {
   type CurvePoint,
@@ -746,6 +754,28 @@ export function ProfilesScreen() {
   const [sel, setSel] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const [newOpen, setNewOpen] = useState(false);
+  const [kind, setKind] = useState<"profiles" | "experiments">("profiles");
+  const [experiments, setExperiments] = useState<Experiment[] | null>(null);
+  const [selExp, setSelExp] = useState<string | null>(null);
+  const [newExpOpen, setNewExpOpen] = useState(false);
+
+  useEffect(() => {
+    if (kind !== "experiments") return;
+    let alive = true;
+    api
+      .experiments()
+      .then((x) => {
+        if (!alive) return;
+        const sorted = sortExperiments(x);
+        setExperiments(sorted);
+        setSelExp((s) => (s && sorted.some((e) => e.id === s) ? s : (sorted[0]?.id ?? null)));
+      })
+      .catch((e) => alive && (setExperiments([]), toast("critical", errText(e))));
+    return () => {
+      alive = false;
+    };
+  }, [kind, tick]);
+  const experiment = experiments?.find((e) => e.id === selExp) ?? null;
 
   useEffect(() => {
     let alive = true;
@@ -766,13 +796,34 @@ export function ProfilesScreen() {
     <main className="flex min-h-0 flex-1 flex-col gap-section overflow-y-auto p-gutter lg:flex-row lg:overflow-hidden">
       <section
         aria-label={t("Profiles")}
-        className="flex min-h-0 flex-col gap-3 lg:w-[20rem] lg:shrink-0"
+        className="flex min-h-0 flex-col gap-3 lg:w-[22rem] lg:shrink-0"
       >
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-[15px] font-medium text-muted-foreground">{t("Profiles")}</h2>
-          <Button onClick={() => setNewOpen(true)}>{t("New profile")}</Button>
+          <Segmented<"profiles" | "experiments">
+            label={t("Show")}
+            value={kind}
+            options={[
+              { value: "profiles", label: t("Profiles") },
+              { value: "experiments", label: t("Experiments") },
+            ]}
+            onChange={setKind}
+          />
+          {kind === "profiles" ? (
+            <Button onClick={() => setNewOpen(true)}>{t("New profile")}</Button>
+          ) : (
+            <Button variant="secondary" onClick={() => setNewExpOpen(true)}>
+              <Plus />
+              {t("Experiment")}
+            </Button>
+          )}
         </div>
-        {list === null ? (
+        {kind === "experiments" ? (
+          experiments === null ? (
+            <p className="text-[15px] text-muted-foreground">{t("Loading…")}</p>
+          ) : (
+            <ExperimentList list={experiments} sel={selExp} onSelect={setSelExp} />
+          )
+        ) : list === null ? (
           <p className="text-[15px] text-muted-foreground">{t("Loading…")}</p>
         ) : list.length === 0 ? (
           <p className="text-[15px] text-muted-foreground">
@@ -808,12 +859,44 @@ export function ProfilesScreen() {
           </ul>
         )}
       </section>
-      {sel ? (
+      {kind === "experiments" ? (
+        experiment ? (
+          <ExperimentDetail
+            key={experiment.id}
+            experiment={experiment}
+            onChanged={(e) =>
+              setExperiments((all) =>
+                sortExperiments((all ?? []).map((x) => (x.id === e.id ? e : x))),
+              )
+            }
+            onDeleted={() => {
+              setSelExp(null);
+              setTick((n) => n + 1);
+            }}
+          />
+        ) : (
+          <div className="grid flex-1 place-items-center rounded-card border border-dashed border-border-strong p-10 text-center text-[15px] text-muted-foreground">
+            {t(
+              "An experiment keeps one change and the roasts that test it, so you see what it did.",
+            )}
+          </div>
+        )
+      ) : sel ? (
         <Editor key={sel} id={sel} onChanged={() => setTick((n) => n + 1)} />
       ) : (
         <div className="grid flex-1 place-items-center rounded-card border border-dashed border-border-strong p-10 text-[15px] text-muted-foreground">
           {t("Select a profile, or start a new one from a roast.")}
         </div>
+      )}
+      {newExpOpen && (
+        <NewExperimentDialog
+          open
+          onOpenChange={setNewExpOpen}
+          onCreated={(e) => {
+            setSelExp(e.id);
+            setTick((n) => n + 1);
+          }}
+        />
       )}
       <NewProfileDialog
         open={newOpen}
