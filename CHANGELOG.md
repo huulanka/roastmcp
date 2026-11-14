@@ -1,3 +1,10 @@
+# [1.24.0](https://github.com/huulanka/roastmcp/compare/v1.23.0...v1.24.0) (2026-11-14)
+
+
+### Features
+
+* experiments in the profiles tab, with their roasts, tastings and result ([#47](https://github.com/huulanka/roastmcp/issues/47)) ([a66848b](https://github.com/huulanka/roastmcp/commit/a66848bdf34c300d5f2df0822727746d56cadf08))
+
 # [1.23.0](https://github.com/huulanka/roastmcp/compare/v1.22.0...v1.23.0) (2026-11-14)
 
 
