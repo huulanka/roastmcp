@@ -378,6 +378,41 @@ struct StepValue {
 
 /// The bean cooling goes on this long before the planned DROP, s.
 const COOL_BEFORE_DROP_S: f64 = 30.0;
+
+// A detected CHARGE is checked against what beans do (ADR 0022). Opening the
+// drum during the preheat drops the probe too, by some 30 °C; beans take it
+// to about 100 °C within a minute.
+/// This long after CHARGE the probe must have fallen …, s.
+const CHARGE_CHECK_S: f64 = 30.0;
+/// … to at most this, °C …
+const CHARGE_CHECK_BELOW_C: f64 = 150.0;
+/// … and at least this far below the CHARGE temperature, °C.
+const CHARGE_CHECK_FALL_C: f64 = 40.0;
+/// A turning point above this is no turning point of beans, °C.
+const CHARGE_CHECK_TP_MAX_C: f64 = 140.0;
+/// Without a turning point by then, the CHARGE was none, s.
+const CHARGE_CHECK_TP_BY_S: f64 = 120.0;
+
+/// The roast runs away when the bean temperature stays this far above the
+/// plan …, °C …
+const RUNAWAY_ABOVE_PLAN_C: f64 = 25.0;
+/// … for this long, s …
+const RUNAWAY_FOR_S: f64 = 10.0;
+/// … from this roast time on (the probe lags the plan right after CHARGE), s.
+const RUNAWAY_FROM_S: f64 = 20.0;
+/// Or when it heads within this of the temperature limit in a minute, °C.
+const RUNAWAY_LIMIT_MARGIN_C: f64 = 10.0;
+
+/// A detected CHARGE that has not yet shown it was one.
+#[derive(Debug, Clone, Copy)]
+struct ChargeCheck {
+    /// Curve time of CHARGE, s.
+    t: f64,
+    /// Bean temperature at CHARGE, °C.
+    bt: f64,
+    /// Lowest bean temperature since, °C.
+    lowest: f64,
+}
 /// After the safety layer refused a recipe step, the runner tries again
 /// this much later, s.
 const RECIPE_RETRY_S: f64 = 5.0;
@@ -472,6 +507,15 @@ pub struct Engine {
     stale_alarmed: bool,
     /// The bean cooling went on ahead of DROP in this roast (once per roast).
     cooled_before_drop: bool,
+    /// A detected CHARGE still being checked.
+    charge_check: Option<ChargeCheck>,
+    /// Since when (curve time) the roast is far above its plan.
+    above_plan_since: Option<f64>,
+    /// The runaway guard acted (or warned) in this roast.
+    runaway_done: bool,
+    /// The target of the last preheat that CHARGE ended, °C: a CHARGE that
+    /// was none goes back to it.
+    last_preheat_target: Option<f64>,
     last_autosave: Instant,
 
     alarms: VecDeque<Alarm>,
@@ -551,6 +595,10 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
         last_reading: None,
         stale_alarmed: false,
         cooled_before_drop: false,
+        charge_check: None,
+        above_plan_since: None,
+        runaway_done: false,
+        last_preheat_target: None,
         control_request: None,
         last_autosave: Instant::now(),
         alarms: VecDeque::new(),
@@ -1426,6 +1474,24 @@ impl Engine {
             self.safety.set_preheat_holder(None);
             return Err(Fail::conflict(reject_text(r), Some(r)));
         }
+        self.begin_preheat(target_c);
+        let air = self.preheat.as_ref().map_or(0.0, |p| p.air);
+        let every_min = self.safety.config().preheat_presence_interval_s / 60.0;
+        self.alarm(
+            "info",
+            "preheat",
+            format!(
+                "Preheating to {target_c:.0} °C at air {air:.0} %. Confirm presence every {every_min:.0} min while it runs (a gong sounds before)."
+            ),
+        );
+        self.preheat_step(now);
+        self.publish(None);
+        Ok(self.snapshot())
+    }
+
+    /// Sets up the preheat controller for `target_c` at the applied air.
+    fn begin_preheat(&mut self, target_c: f64) {
+        let now = self.now();
         let status = self.safety.status(now);
         let air = status.actuators.get(&Actuator::Air).copied().unwrap_or(0.0);
         let machine_key = self.machine.as_ref().map_or_else(String::new, |m| {
@@ -1457,17 +1523,6 @@ impl Engine {
             "ror_per_pct": plant.ror_per_pct,
             "hold_pct_200": plant.hold_pct_200,
         }));
-        let every_min = self.safety.config().preheat_presence_interval_s / 60.0;
-        self.alarm(
-            "info",
-            "preheat",
-            format!(
-                "Preheating to {target_c:.0} °C at air {air:.0} %. Confirm presence every {every_min:.0} min while it runs (a gong sounds before)."
-            ),
-        );
-        self.preheat_step(now);
-        self.publish(None);
-        Ok(self.snapshot())
     }
 
     /// Stops preheating; the burner keeps its value and you have control.
@@ -1480,6 +1535,7 @@ impl Engine {
         let Some(p) = self.preheat.take() else {
             return;
         };
+        self.last_preheat_target = Some(p.ctl.target_c());
         if self.roast.is_none() {
             self.stop_hearing();
         }
@@ -1961,6 +2017,12 @@ impl Engine {
                 EventKind::Charge if self.state == RoastState::Recording => {
                     self.state = RoastState::Charged;
                     charged = true;
+                    let bt = e.bt.unwrap_or(f64::NAN);
+                    self.charge_check = Some(ChargeCheck {
+                        t: e.t,
+                        bt,
+                        lowest: bt,
+                    });
                     self.alarm("info", "auto_event", "CHARGE detected.".to_owned());
                 }
                 EventKind::Drop => {
@@ -1979,7 +2041,10 @@ impl Engine {
         if charged {
             // A detected CHARGE does not confirm presence: nobody pressed anything.
             self.on_charge(EventOrigin::Auto);
+        } else if self.check_charge() {
+            // A CHARGE that was none is taken back; the preheat holds again.
         } else if !dropped {
+            self.guard_runaway();
             self.autopilot_lease();
             self.run_recipe();
             self.autopilot_trim();
@@ -1998,6 +2063,183 @@ impl Engine {
             if let Err(e) = self.stop_recording() {
                 tracing::warn!("saving after the detected DROP failed: {}", e.error);
             }
+        }
+    }
+
+    /// Checks a detected CHARGE against what beans do (ADR 0022): the probe
+    /// falls well below 150 °C within 30 s and turns near 100 °C. If it does
+    /// not (the drum was opened during the preheat, no beans went in), the
+    /// CHARGE is taken back. Returns whether it was.
+    fn check_charge(&mut self) -> bool {
+        let Some(mut c) = self.charge_check else {
+            return false;
+        };
+        let (Some(t), Some(bt)) = (self.last_reading_t, self.last_bt) else {
+            return false;
+        };
+        if self.state != RoastState::Charged {
+            self.charge_check = None;
+            return false;
+        }
+        c.lowest = c.lowest.min(bt);
+        let since = t - c.t;
+        let deep_enough = c.lowest <= CHARGE_CHECK_BELOW_C.min(c.bt - CHARGE_CHECK_FALL_C);
+        let turning = self
+            .roast
+            .as_ref()
+            .and_then(|r| r.event(EventKind::TurningPoint))
+            .and_then(|e| e.bt);
+        let why = match turning {
+            Some(tp) if tp > CHARGE_CHECK_TP_MAX_C => Some(format!(
+                "it turned at {tp:.0} °C after {since:.0} s - beans turn near 100 °C"
+            )),
+            Some(_) if deep_enough => {
+                self.charge_check = None;
+                return false;
+            }
+            _ if since >= CHARGE_CHECK_S && !deep_enough => Some(format!(
+                "the bean temperature fell only to {:.0} °C in {since:.0} s",
+                c.lowest
+            )),
+            None if since >= CHARGE_CHECK_TP_BY_S => {
+                Some(format!("no turning point in {since:.0} s"))
+            }
+            _ => None,
+        };
+        self.charge_check = Some(c);
+        let Some(why) = why else {
+            return false;
+        };
+        self.take_back_charge(&why);
+        true
+    }
+
+    /// Takes a detected CHARGE back: its events go, the recipe starts afresh,
+    /// an armed autopilot waits for the next CHARGE, and the preheat holds
+    /// its target again (or, if it cannot, the safe state).
+    fn take_back_charge(&mut self, why: &str) {
+        self.charge_check = None;
+        if let Some(roast) = &mut self.roast {
+            roast.events.retain(|e| {
+                let auto = matches!(
+                    e.kind,
+                    EventKind::Charge | EventKind::TurningPoint | EventKind::DryEnd
+                ) && e.origin == EventOrigin::Auto;
+                !auto && e.origin != EventOrigin::Detector
+            });
+        }
+        self.state = RoastState::Recording;
+        self.detector = EventDetector::default();
+        self.reset_recipe();
+        let now = self.now();
+        if self.safety.status(now).lease_holder.as_deref() == Some(AUTOPILOT_HOLDER) {
+            self.safety.release_lease();
+        }
+        let message =
+            format!("CHARGE taken back: {why}. No beans went in? Charge again when ready.");
+        self.audit(serde_json::json!({"type": "charge_taken_back", "why": why}));
+        if let Some(roast) = &mut self.roast {
+            let t = self.points.last().map(|p| p.t);
+            roast.notes.push(Note {
+                t,
+                text: message.clone(),
+                origin: EventOrigin::Auto,
+            });
+        }
+        self.alarm("critical", "charge_taken_back", message);
+        let target = self.last_preheat_target;
+        match target {
+            Some(target) if self.resume_preheat(target) => {}
+            _ => {
+                let r = self
+                    .safety
+                    .runaway("CHARGE taken back and the preheat cannot hold");
+                self.apply_reaction(&r);
+            }
+        }
+        self.publish(None);
+    }
+
+    /// The preheat takes up `target` again after a CHARGE that was none,
+    /// without a person's word: it needs the presence confirmed before, and
+    /// does not change the air. Returns whether it holds.
+    fn resume_preheat(&mut self, target: f64) -> bool {
+        let now = self.now();
+        let status = self.safety.status(now);
+        if status.emergency_stop || status.ai_suspended || !status.connected {
+            return false;
+        }
+        self.safety.set_preheat_holder(Some(PREHEAT_HOLDER));
+        // Under an AI's lease the preheat holds under it (ADR 0019).
+        if status.lease_holder.is_none() && self.safety.acquire_lease(PREHEAT_HOLDER, now).is_err()
+        {
+            self.safety.set_preheat_holder(None);
+            return false;
+        }
+        self.begin_preheat(target);
+        self.alarm(
+            "info",
+            "preheat",
+            format!("The preheat holds {target:.0} °C again until CHARGE."),
+        );
+        self.preheat_step(now);
+        self.preheat.is_some()
+    }
+
+    /// Watches for a roast that runs away from what beans do (ADR 0022): far
+    /// above its plan for a while, or heading for the temperature limit
+    /// within a minute. Under automation (an AI, the autopilot, a recipe it
+    /// sets) the safety layer takes the safe state; under a person's hand a
+    /// critical alarm says so (the person wins; the temperature limit itself
+    /// still cuts the burner).
+    fn guard_runaway(&mut self) {
+        if self.state != RoastState::Charged || self.runaway_done {
+            return;
+        }
+        let (Some(t), Some(bt), Some(since)) =
+            (self.last_reading_t, self.last_bt, self.since_charge())
+        else {
+            return;
+        };
+        let now = self.now();
+        let limit = self.safety.config().max_bt_c;
+        let ahead = bt + self.last_ror.unwrap_or(0.0).max(0.0);
+        let plan_bt = self
+            .reference
+            .as_ref()
+            .and_then(|r| r.at(since).0)
+            .filter(|_| since >= RUNAWAY_FROM_S);
+        let above = plan_bt.map(|p| bt - p);
+        if above.is_some_and(|a| a > RUNAWAY_ABOVE_PLAN_C) {
+            self.above_plan_since.get_or_insert(t);
+        } else {
+            self.above_plan_since = None;
+        }
+        let runs_away = self
+            .above_plan_since
+            .is_some_and(|from| t - from >= RUNAWAY_FOR_S);
+        let to_limit = ahead >= limit - RUNAWAY_LIMIT_MARGIN_C;
+        if !runs_away && !to_limit {
+            return;
+        }
+        let clock = format!("{}:{:02}", (since / 60.0) as i64, (since % 60.0) as i64);
+        let why = match above {
+            Some(a) if runs_away => format!(
+                "BT {bt:.0} °C at {clock} is {a:.0} °C above the plan (no beans, or a false CHARGE?)"
+            ),
+            _ => format!(
+                "BT {bt:.0} °C at {clock} heads for {ahead:.0} °C within a minute (limit {limit:.0} °C)"
+            ),
+        };
+        self.runaway_done = true;
+        let automated = self.safety.ai_in_control(now);
+        if automated {
+            let r = self.safety.runaway(&why);
+            self.apply_reaction(&r);
+            self.autopilot_lease();
+        } else {
+            self.alarm("critical", "runaway", format!("{why}. Check the roaster!"));
+            self.audit(serde_json::json!({"type": "runaway_warning", "why": why}));
         }
     }
 
@@ -2318,6 +2560,9 @@ impl Engine {
             self.inventory.adopt_batch_code(l.id, b);
         }
         self.cooled_before_drop = false;
+        self.charge_check = None;
+        self.above_plan_since = None;
+        self.runaway_done = false;
         let profile = self.profile.as_ref();
         self.roast = Some(Roast {
             id: uuid::Uuid::new_v4(),
@@ -3721,6 +3966,166 @@ mod tests {
         let ap = s.autopilot.unwrap();
         assert_eq!((ap.state, ap.offset, ap.corrections), ("active", 5.0, 0));
         assert_eq!(s.safety.lease_holder.as_deref(), Some(AUTOPILOT_HOLDER));
+    }
+
+    /// Feeds bean temperatures as readings 1.5 s apart (on the roast clock).
+    fn feed(e: &mut Engine, bts: &[f64]) {
+        for &bt in bts {
+            e.zero -= Duration::from_secs_f64(1.5 / e.time_scale);
+            let actuators = e.safety.status(e.now()).actuators;
+            e.on_reading(roast_driver::Reading {
+                ambient_c: None,
+                bt: Some(bt),
+                et: None,
+                actuators,
+            });
+        }
+    }
+
+    /// BR013 (2026-11-18): the drum opened during the preheat at 200 °C to
+    /// take out chaff; the probe fell to 166 °C and rose again.
+    const DRUM_OPENED: [f64; 34] = [
+        200.2, 200.1, 199.9, 199.0, 197.4, 196.4, 195.9, 193.5, 190.6, 188.1, 185.7, 183.3, 180.8,
+        178.3, 176.0, 173.8, 171.5, 169.2, 167.6, 166.3, 166.3, 166.4, 167.0, 168.1, 169.2, 170.4,
+        171.7, 173.0, 174.3, 175.5, 176.8, 178.0, 179.3, 180.7,
+    ];
+
+    #[tokio::test]
+    async fn opening_the_drum_in_the_preheat_is_no_charge_and_the_preheat_holds_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| {
+                with_profile(e);
+                e.start_preheat(200.0, Some(20.0)).unwrap();
+                e.start_autopilot().unwrap();
+                feed(e, &[200.0; 6]);
+                feed(e, &DRUM_OPENED[..8]);
+                assert_eq!(e.state, RoastState::Charged, "detected");
+                assert!(e.preheat.is_none());
+                feed(e, &DRUM_OPENED[8..]);
+                let kinds: Vec<EventKind> = e
+                    .roast
+                    .as_ref()
+                    .unwrap()
+                    .events
+                    .iter()
+                    .map(|e| e.kind)
+                    .collect();
+                assert!(!kinds.contains(&EventKind::Charge), "{kinds:?}");
+                assert_eq!(e.state, RoastState::Recording);
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert!(s.preheat.is_some(), "the preheat holds again");
+        assert_eq!(s.autopilot.as_ref().unwrap().state, "armed");
+        assert!(
+            s.alarms
+                .iter()
+                .any(|a| a.severity == "critical" && a.message.starts_with("CHARGE taken back")),
+            "{:?}",
+            s.alarms
+        );
+    }
+
+    #[tokio::test]
+    async fn beans_keep_their_charge() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let (state, events, check) = h
+            .call(|e| {
+                with_profile(e);
+                e.start_preheat(200.0, Some(20.0)).unwrap();
+                feed(e, &[200.0; 6]);
+                // BRYB-003: 126 °C after 31 s, turning at 99 °C after 70 s.
+                let mut bt = 200.0;
+                let mut curve = Vec::new();
+                for i in 0..80 {
+                    bt = if i < 47 {
+                        99.0 + (bt - 99.0) * 0.93
+                    } else {
+                        bt + 0.25
+                    };
+                    curve.push(bt);
+                }
+                feed(e, &curve);
+                let events: Vec<EventKind> = e
+                    .roast
+                    .as_ref()
+                    .unwrap()
+                    .events
+                    .iter()
+                    .map(|e| e.kind)
+                    .collect();
+                (e.state, events, e.charge_check.is_some())
+            })
+            .await
+            .unwrap();
+        assert_eq!(state, RoastState::Charged);
+        assert!(events.contains(&EventKind::Charge), "{events:?}");
+        assert!(events.contains(&EventKind::TurningPoint), "{events:?}");
+        assert!(!check, "the check is done");
+    }
+
+    #[tokio::test]
+    async fn a_roast_far_above_its_plan_under_the_autopilot_gets_the_safe_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| {
+                with_profile(e);
+                e.start_autopilot().unwrap();
+                e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+                for ev in &mut e.roast.as_mut().unwrap().events {
+                    ev.t -= 60.0;
+                }
+                // An empty drum: about 190 °C a minute in, the plan near 100.
+                feed(e, &[190.0; 9]);
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert_eq!(actuator(&s, Actuator::Burner), Some(0.0), "{:?}", s.alarms);
+        assert_eq!(actuator(&s, Actuator::Air), Some(100.0));
+        assert!(s.autopilot.is_none());
+        assert!(
+            s.alarms.iter().any(|a| a.kind == "runaway"),
+            "{:?}",
+            s.alarms
+        );
+    }
+
+    #[tokio::test]
+    async fn under_a_persons_hand_a_runaway_roast_only_raises_the_alarm() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| {
+                with_profile(e);
+                e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+                e.command(CommandRequest {
+                    actuator: Actuator::Burner,
+                    value: 70.0,
+                    source: CommandSource::Human,
+                    reason: None,
+                });
+                for ev in &mut e.roast.as_mut().unwrap().events {
+                    ev.t -= 60.0;
+                }
+                feed(e, &[190.0; 9]);
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert_eq!(actuator(&s, Actuator::Burner), Some(70.0));
+        assert!(
+            s.alarms
+                .iter()
+                .any(|a| a.kind == "runaway" && a.severity == "critical"),
+            "{:?}",
+            s.alarms
+        );
     }
 
     #[tokio::test]

@@ -41,6 +41,22 @@ describe("daemon messages in German", () => {
     expect(alarmText("DROP at 206 °C expected within 30 s: bean cooling on.", t)).toBe(
       "DROP bei 206 °C in 30 s erwartet: Bohnenkühlung an.",
     );
+    expect(
+      alarmText(
+        "CHARGE taken back: it turned at 166 °C after 25 s - beans turn near 100 °C. No beans went in? Charge again when ready.",
+        t,
+      ),
+    ).toBe(
+      "CHARGE zurückgenommen: Wendepunkt bei 166 °C nach 25 s – Bohnen wenden um 100 °C. Keine Bohnen eingefüllt? Neu chargen, wenn bereit.",
+    );
+    expect(
+      alarmText(
+        "BT 189 °C at 0:56 is 89 °C above the plan (no beans, or a false CHARGE?): burner off, air high, drum running.",
+        t,
+      ),
+    ).toBe(
+      "BT 189 °C bei 0:56 liegt 89 °C über dem Plan (keine Bohnen oder falscher CHARGE?): Brenner aus, Luft hoch, Trommel läuft.",
+    );
   });
 
   it("translates a message built from two", () => {

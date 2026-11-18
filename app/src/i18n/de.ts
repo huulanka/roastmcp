@@ -679,6 +679,24 @@ export const de: Record<string, string> = {
   "Disconnected - the autopilot is off.": "Getrennt – der Autopilot ist aus.",
   "The link is lost - the autopilot is off.": "Die Verbindung ist weg – der Autopilot ist aus.",
   "CHARGE detected.": "CHARGE erkannt.",
+  "CHARGE taken back: it turned at {{tp}} °C after {{s}} s - beans turn near 100 °C. No beans went in? Charge again when ready.":
+    "CHARGE zurückgenommen: Wendepunkt bei {{tp}} °C nach {{s}} s – Bohnen wenden um 100 °C. Keine Bohnen eingefüllt? Neu chargen, wenn bereit.",
+  "CHARGE taken back: the bean temperature fell only to {{bt}} °C in {{s}} s. No beans went in? Charge again when ready.":
+    "CHARGE zurückgenommen: Die Bohnentemperatur fiel in {{s}} s nur auf {{bt}} °C. Keine Bohnen eingefüllt? Neu chargen, wenn bereit.",
+  "CHARGE taken back: no turning point in {{s}} s. No beans went in? Charge again when ready.":
+    "CHARGE zurückgenommen: kein Wendepunkt in {{s}} s. Keine Bohnen eingefüllt? Neu chargen, wenn bereit.",
+  "CHARGE taken back and the preheat cannot hold: burner off, air high, drum running.":
+    "CHARGE zurückgenommen, und das Vorheizen kann nicht halten: Brenner aus, Luft hoch, Trommel läuft.",
+  "The preheat holds {{target}} °C again until CHARGE.":
+    "Das Vorheizen hält wieder {{target}} °C bis CHARGE.",
+  "BT {{bt}} °C at {{at}} is {{above}} °C above the plan (no beans, or a false CHARGE?): burner off, air high, drum running.":
+    "BT {{bt}} °C bei {{at}} liegt {{above}} °C über dem Plan (keine Bohnen oder falscher CHARGE?): Brenner aus, Luft hoch, Trommel läuft.",
+  "BT {{bt}} °C at {{at}} is {{above}} °C above the plan (no beans, or a false CHARGE?). Check the roaster!":
+    "BT {{bt}} °C bei {{at}} liegt {{above}} °C über dem Plan (keine Bohnen oder falscher CHARGE?). Prüf den Röster!",
+  "BT {{bt}} °C at {{at}} heads for {{to}} °C within a minute (limit {{limit}} °C): burner off, air high, drum running.":
+    "BT {{bt}} °C bei {{at}} läuft in einer Minute auf {{to}} °C zu (Grenze {{limit}} °C): Brenner aus, Luft hoch, Trommel läuft.",
+  "BT {{bt}} °C at {{at}} heads for {{to}} °C within a minute (limit {{limit}} °C). Check the roaster!":
+    "BT {{bt}} °C bei {{at}} läuft in einer Minute auf {{to}} °C zu (Grenze {{limit}} °C). Prüf den Röster!",
   "DROP detected: the roast is saved.": "DROP erkannt: Die Röstung ist gespeichert.",
   "No new readings from the roaster for 5 seconds.":
     "Seit 5 Sekunden keine neuen Werte vom Röster.",
