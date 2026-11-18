@@ -142,6 +142,9 @@ pub enum ReactionKind {
     /// The roaster (re)connected: the safe state is set, because a machine may
     /// start at its own defaults (the Cubean+ heats at 100 % on connect).
     Connected,
+    /// The roast runs away from what beans do (no beans in the drum, a false
+    /// CHARGE): safe state, automation ended. Not latched.
+    Runaway,
 }
 
 /// Something the safety layer did on its own, to be shown as an alarm and
@@ -512,6 +515,21 @@ impl Safety {
         }
     }
 
+    /// The roast runs away (far above its plan, or heading for the
+    /// temperature limit): the safe state, and automation ends until a
+    /// person allows it again. Unlike the emergency stop it does not latch.
+    pub fn runaway(&mut self, reason: &str) -> SafetyReaction {
+        if self.lease.take().is_some() {
+            self.ai_suspended = true;
+        }
+        let commands = self.safe_state_commands();
+        SafetyReaction {
+            kind: ReactionKind::Runaway,
+            message: format!("{reason}: burner off, air high, drum running."),
+            commands,
+        }
+    }
+
     /// Releases the emergency-stop latch. Only a person may call this (from
     /// the app); AI control stays suspended until resumed.
     pub fn reset_emergency_stop(&mut self) {
@@ -858,6 +876,24 @@ mod tests {
         s.acquire_lease("claude", 10.0).unwrap();
         let (o, _) = s.request(&req(Actuator::Burner, 32.0, CommandSource::Ai), 11.0);
         assert_eq!(applied(&o), Some(32.0));
+    }
+
+    #[test]
+    fn a_runaway_roast_gets_the_safe_state_and_ends_ai_control_without_latching() {
+        let mut s = with_ai(0.0);
+        let r = s.runaway("BT 189 °C, 89 °C above the plan");
+        assert_eq!(r.kind, ReactionKind::Runaway);
+        assert!(
+            r.commands
+                .iter()
+                .any(|c| c.actuator == Actuator::Burner && c.value == 0.0)
+        );
+        assert!(!s.ai_in_control(1.0));
+        assert!(s.status(1.0).ai_suspended);
+        assert!(!s.status(1.0).emergency_stop, "not latched");
+        // A person may go on at once.
+        let (o, _) = s.request(&req(Actuator::Burner, 30.0, CommandSource::Human), 2.0);
+        assert!(applied(&o).is_some());
     }
 
     #[test]

@@ -33,6 +33,27 @@ pub const SC_POPS: usize = 8;
 pub const SC_WINDOW_S: f64 = 10.0;
 /// Second crack only this far above first crack's temperature, °C.
 pub const SC_ABOVE_FC_C: f64 = 12.0;
+/// First crack is listened for this long after CHARGE at the earliest, s:
+/// right after CHARGE the probe still reads the preheat's temperature, which
+/// lies inside the window, and the pops of loading the beans are many.
+pub const FC_MIN_AFTER_CHARGE_S: f64 = 180.0;
+
+/// From when first crack may be heard (recording clock): three minutes after
+/// CHARGE, and not before the turning point or dry end when they are known.
+/// `None` before CHARGE.
+#[must_use]
+pub fn listen_from(
+    charge: Option<f64>,
+    turning_point: Option<f64>,
+    dry_end: Option<f64>,
+) -> Option<f64> {
+    let c = charge?;
+    Some(
+        (c + FC_MIN_AFTER_CHARGE_S)
+            .max(turning_point.unwrap_or(c))
+            .max(dry_end.unwrap_or(c)),
+    )
+}
 
 /// What the roast looks like when pops come in. Times are on the recording
 /// clock (seconds since the recording started), like the events'.
@@ -40,10 +61,13 @@ pub const SC_ABOVE_FC_C: f64 = 12.0;
 pub struct RoastContext {
     /// Bean temperature now, °C.
     pub bt: Option<f64>,
-    /// CHARGE has been marked.
-    pub charged: bool,
-    /// Dry end, if marked or detected.
-    pub dry_end: Option<f64>,
+    /// Rate of rise now, °C/min, if known: first crack comes while the bean
+    /// temperature rises.
+    pub ror: Option<f64>,
+    /// From when first crack may be heard (see [`listen_from`]); `None`
+    /// before CHARGE. Pops before it do not count, and a heard crack is
+    /// never placed before it.
+    pub listen_from: Option<f64>,
     /// First crack start, by anyone: `(t, bt)`.
     pub first_crack: Option<(f64, Option<f64>)>,
     /// First crack end is marked.
@@ -73,9 +97,12 @@ pub struct CrackLogic {
     /// Crack-band pops of the last minute, for reaching back.
     earlier: VecDeque<f64>,
     high: VecDeque<f64>,
-    /// Crack-band pops since first crack started, and the latest of them.
+    /// Crack-band pops since first crack started, and the latest of them …
     since_fc: usize,
     last_fc_pop: Option<f64>,
+    /// … counted from this first crack (its recording time): a mark that
+    /// moves, or goes and comes back, starts the count afresh.
+    counted_from: Option<f64>,
     /// Kinds the person undid, or already heard: not heard again in this roast.
     suppressed: Vec<EventKind>,
     /// First crack start is the model's to hear, not the rate rule's
@@ -93,6 +120,7 @@ impl CrackLogic {
             high: VecDeque::new(),
             since_fc: 0,
             last_fc_pop: None,
+            counted_from: None,
             suppressed: Vec::new(),
             model_decides: false,
         }
@@ -113,7 +141,7 @@ impl CrackLogic {
         if !self.may_hear_first_crack(ctx) {
             return None;
         }
-        let after = ctx.dry_end.unwrap_or(f64::NEG_INFINITY);
+        let after = ctx.listen_from?;
         let series: Vec<f64> = self.crack.iter().copied().filter(|&t| t >= after).collect();
         if series.len() < MODEL_MIN_POPS || series.last().is_none_or(|&last| last < at) {
             return None;
@@ -121,6 +149,7 @@ impl CrackLogic {
         let t = self.reach_back(series[0], after);
         self.since_fc = series.len();
         self.last_fc_pop = series.last().copied();
+        self.counted_from = Some(t);
         self.suppress(EventKind::FirstCrackStart);
         Some(HeardCrack {
             kind: EventKind::FirstCrackStart,
@@ -160,6 +189,7 @@ impl CrackLogic {
             Band::Crack => {
                 self.crack.push_back(pop.t);
                 self.earlier.push_back(pop.t);
+                self.sync_first_crack(ctx);
                 if let Some((fc_t, _)) = ctx.first_crack
                     && pop.t >= fc_t
                 {
@@ -178,8 +208,9 @@ impl CrackLogic {
     /// Called now and then without a pop: says whether first crack ended.
     pub fn tick(&mut self, now: f64, ctx: &RoastContext) -> Option<HeardCrack> {
         self.forget(now);
+        self.sync_first_crack(ctx);
         let last = self.last_fc_pop?;
-        if ctx.first_crack.is_none()
+        if ctx.first_crack.is_none_or(|(fc_t, _)| last < fc_t)
             || ctx.first_crack_end
             || self.suppressed.contains(&EventKind::FirstCrackEnd)
             || self.since_fc < fc_pops(self.sensitivity)
@@ -196,6 +227,26 @@ impl CrackLogic {
             t: last,
             pops,
         })
+    }
+
+    /// Keeps the count of pops since first crack on the first crack that is
+    /// marked now. In BRYB-003 a heard first crack before CHARGE was undone
+    /// but its pops stayed counted; when the person marked first crack eight
+    /// minutes later, its "end" was set at once, before the start.
+    fn sync_first_crack(&mut self, ctx: &RoastContext) {
+        let fc = ctx.first_crack.map(|(t, _)| t);
+        if fc == self.counted_from {
+            return;
+        }
+        self.counted_from = fc;
+        self.since_fc = 0;
+        self.last_fc_pop = None;
+        if let Some(fc) = fc {
+            for &p in self.earlier.iter().filter(|&&p| p >= fc) {
+                self.since_fc += 1;
+                self.last_fc_pop = Some(p);
+            }
+        }
     }
 
     fn forget(&mut self, now: f64) {
@@ -216,7 +267,8 @@ impl CrackLogic {
 
     fn may_hear_first_crack(&self, ctx: &RoastContext) -> bool {
         ctx.first_crack.is_none()
-            && ctx.charged
+            && ctx.listen_from.is_some()
+            && ctx.ror.is_none_or(|r| r > 0.0)
             && !self.suppressed.contains(&EventKind::FirstCrackStart)
             && ctx
                 .bt
@@ -244,7 +296,7 @@ impl CrackLogic {
         if self.model_decides || !self.may_hear_first_crack(ctx) {
             return None;
         }
-        let after = ctx.dry_end.unwrap_or(f64::NEG_INFINITY);
+        let after = ctx.listen_from?;
         let series: Vec<f64> = self.crack.iter().copied().filter(|&t| t >= after).collect();
         if series.len() < fc_pops(self.sensitivity) {
             return None;
@@ -252,6 +304,7 @@ impl CrackLogic {
         let t = self.reach_back(series[0], after);
         self.since_fc = series.len();
         self.last_fc_pop = series.last().copied();
+        self.counted_from = Some(t);
         self.suppress(EventKind::FirstCrackStart);
         Some(HeardCrack {
             kind: EventKind::FirstCrackStart,
@@ -290,8 +343,8 @@ mod tests {
     fn ctx(bt: f64) -> RoastContext {
         RoastContext {
             bt: Some(bt),
-            charged: true,
-            dry_end: Some(250.0),
+            ror: Some(8.0),
+            listen_from: Some(250.0),
             first_crack: None,
             first_crack_end: false,
             second_crack: false,
@@ -346,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn outside_the_window_before_charge_or_dry_end_nothing_is_heard() {
+    fn outside_the_window_before_it_may_listen_or_while_falling_nothing_is_heard() {
         let pops = [460.0, 462.0, 464.0, 466.0, 468.0, 470.0];
         let run = |c: RoastContext| {
             let mut l = CrackLogic::new(Sensitivity::Normal);
@@ -358,20 +411,99 @@ mod tests {
         assert_eq!(run(ctx(210.0)), 0, "too hot");
         assert_eq!(
             run(RoastContext {
-                charged: false,
-                ..ctx(190.0)
-            }),
-            0
-        );
-        assert_eq!(
-            run(RoastContext {
-                dry_end: Some(465.0),
+                listen_from: None,
                 ..ctx(190.0)
             }),
             0,
-            "only three pops after dry end"
+            "before CHARGE"
+        );
+        assert_eq!(
+            run(RoastContext {
+                listen_from: Some(465.0),
+                ..ctx(190.0)
+            }),
+            0,
+            "only three pops after it may listen"
+        );
+        assert_eq!(
+            run(RoastContext {
+                ror: Some(-20.0),
+                ..ctx(190.0)
+            }),
+            0,
+            "the bean temperature falls"
         );
         assert_eq!(run(ctx(190.0)), 1);
+    }
+
+    #[test]
+    fn it_listens_from_three_minutes_after_charge_and_after_turning_point_and_dry_end() {
+        assert_eq!(listen_from(None, None, None), None);
+        assert_eq!(listen_from(Some(200.0), None, None), Some(380.0));
+        assert_eq!(
+            listen_from(Some(200.0), Some(270.0), Some(400.0)),
+            Some(400.0)
+        );
+        assert_eq!(
+            listen_from(Some(200.0), Some(270.0), Some(330.0)),
+            Some(380.0)
+        );
+    }
+
+    #[test]
+    fn the_pops_of_loading_the_beans_are_not_first_crack() {
+        // BRYB-003: many pops in the preheat while the beans were weighed and
+        // loaded; CHARGE at 204 s with the probe still at 200 °C, inside the
+        // window. The rule fired at once and placed first crack 39 s before
+        // CHARGE.
+        let mut l = CrackLogic::new(Sensitivity::Normal);
+        let charge = 204.0;
+        let c = RoastContext {
+            listen_from: listen_from(Some(charge), None, None),
+            ror: None,
+            ..ctx(200.0)
+        };
+        let mut heard = Vec::new();
+        for i in 0..40 {
+            let t = 160.0 + f64::from(i) * 1.5;
+            heard.extend(l.pop(pop(t, Band::Crack), &c));
+        }
+        assert!(heard.is_empty(), "{heard:?}");
+        // Pops from before it may listen never start a later series either.
+        let later = RoastContext {
+            bt: Some(194.0),
+            ror: Some(7.0),
+            ..c
+        };
+        for t in [390.0, 392.0, 394.0, 396.0, 398.0] {
+            heard.extend(l.pop(pop(t, Band::Crack), &later));
+        }
+        assert_eq!(heard.iter().map(|h| h.t).collect::<Vec<_>>(), vec![390.0]);
+    }
+
+    #[test]
+    fn an_undone_first_crack_leaves_no_end_behind_for_the_next_mark() {
+        // BRYB-003: the heard first crack was undone, its pops stayed
+        // counted, and when the person marked first crack at 717 s the "end"
+        // was set at once at 214.5 s.
+        let mut l = CrackLogic::new(Sensitivity::Normal);
+        let mut c = ctx(194.0);
+        for i in 0..8 {
+            l.pop(pop(300.0 + f64::from(i), Band::Crack), &c);
+        }
+        // Undone: the mark is gone and not heard again.
+        l.suppress(EventKind::FirstCrackStart);
+        c.first_crack = None;
+        assert!(l.tick(400.0, &c).is_none());
+        // The person marks first crack much later.
+        c.first_crack = Some((717.0, Some(194.9)));
+        assert!(l.tick(717.5, &c).is_none(), "no end before the start");
+        for i in 0..6 {
+            l.pop(pop(720.0 + f64::from(i) * 4.0, Band::Crack), &c);
+        }
+        assert!(l.tick(760.0, &c).is_none());
+        let end = l.tick(771.0, &c).unwrap_or_else(|| panic!("no end"));
+        assert_eq!(end.t, 740.0);
     }
 
     #[test]

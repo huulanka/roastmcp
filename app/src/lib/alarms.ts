@@ -31,6 +31,18 @@ export const PATTERNS: { re: RegExp; key: string }[] = [
     key: "Autopilot: burner {{value}} % ({{delta}}), the roast heads {{c}} °C below the plan.",
   },
   {
+    re: /^Autopilot: burner (?<value>\d+) % \((?<delta>[+-]?\d+)\), the roast heads (?<c>\d+) °C above the plan \((?<pred>[+-]?\d+\.\d) °C in (?<h>\d+) s; now (?<now>[+-]?\d+\.\d) °C, median (?<med>[+-]?\d+\.\d) °C; RoR (?<ror>-?\d+\.\d) vs plan (?<pror>-?\d+\.\d)\)\.$/,
+    key: "Autopilot: burner {{value}} % ({{delta}}), the roast heads {{c}} °C above the plan ({{pred}} °C in {{h}} s; now {{now}} °C, median {{med}} °C; RoR {{ror}} vs plan {{pror}}).",
+  },
+  {
+    re: /^Autopilot: burner (?<value>\d+) % \((?<delta>[+-]?\d+)\), the roast heads (?<c>\d+) °C below the plan \((?<pred>[+-]?\d+\.\d) °C in (?<h>\d+) s; now (?<now>[+-]?\d+\.\d) °C, median (?<med>[+-]?\d+\.\d) °C; RoR (?<ror>-?\d+\.\d) vs plan (?<pror>-?\d+\.\d)\)\.$/,
+    key: "Autopilot: burner {{value}} % ({{delta}}), the roast heads {{c}} °C below the plan ({{pred}} °C in {{h}} s; now {{now}} °C, median {{med}} °C; RoR {{ror}} vs plan {{pror}}).",
+  },
+  {
+    re: /^Autopilot: back on the plan - the recipe's next burner steps move (?<shift>[+-]?\d+) points back toward the recipe\.$/,
+    key: "Autopilot: back on the plan - the recipe's next burner steps move {{shift}} points back toward the recipe.",
+  },
+  {
     re: /^Preheating to (?<target>\d+) °C at air (?<air>\d+) %\. Confirm presence every (?<every>\d+) min while it runs \(a gong sounds before\)\.$/,
     key: "Preheating to {{target}} °C at air {{air}} %. Confirm presence every {{every}} min while it runs (a gong sounds before).",
   },
@@ -104,6 +116,38 @@ export const PATTERNS: { re: RegExp; key: string }[] = [
     re: /^AI \((?<holder>.+)\) disconnected - you have control\.$/,
     key: "AI ({{holder}}) disconnected - you have control.",
   },
+  {
+    re: /^CHARGE taken back: it turned at (?<tp>\d+) °C after (?<s>\d+) s - beans turn near 100 °C\. No beans went in\? Charge again when ready\.$/,
+    key: "CHARGE taken back: it turned at {{tp}} °C after {{s}} s - beans turn near 100 °C. No beans went in? Charge again when ready.",
+  },
+  {
+    re: /^CHARGE taken back: the bean temperature fell only to (?<bt>\d+) °C in (?<s>\d+) s\. No beans went in\? Charge again when ready\.$/,
+    key: "CHARGE taken back: the bean temperature fell only to {{bt}} °C in {{s}} s. No beans went in? Charge again when ready.",
+  },
+  {
+    re: /^CHARGE taken back: no turning point in (?<s>\d+) s\. No beans went in\? Charge again when ready\.$/,
+    key: "CHARGE taken back: no turning point in {{s}} s. No beans went in? Charge again when ready.",
+  },
+  {
+    re: /^The preheat holds (?<target>\d+) °C again until CHARGE\.$/,
+    key: "The preheat holds {{target}} °C again until CHARGE.",
+  },
+  {
+    re: /^BT (?<bt>\d+) °C at (?<at>\S+) is (?<above>\d+) °C above the plan \(no beans, or a false CHARGE\?\): burner off, air high, drum running\.$/,
+    key: "BT {{bt}} °C at {{at}} is {{above}} °C above the plan (no beans, or a false CHARGE?): burner off, air high, drum running.",
+  },
+  {
+    re: /^BT (?<bt>\d+) °C at (?<at>\S+) is (?<above>\d+) °C above the plan \(no beans, or a false CHARGE\?\)\. Check the roaster!$/,
+    key: "BT {{bt}} °C at {{at}} is {{above}} °C above the plan (no beans, or a false CHARGE?). Check the roaster!",
+  },
+  {
+    re: /^BT (?<bt>\d+) °C at (?<at>\S+) heads for (?<to>\d+) °C within a minute \(limit (?<limit>\d+) °C\): burner off, air high, drum running\.$/,
+    key: "BT {{bt}} °C at {{at}} heads for {{to}} °C within a minute (limit {{limit}} °C): burner off, air high, drum running.",
+  },
+  {
+    re: /^BT (?<bt>\d+) °C at (?<at>\S+) heads for (?<to>\d+) °C within a minute \(limit (?<limit>\d+) °C\)\. Check the roaster!$/,
+    key: "BT {{bt}} °C at {{at}} heads for {{to}} °C within a minute (limit {{limit}} °C). Check the roaster!",
+  },
 ];
 
 /** Messages without variable parts; their English text is the key. */
@@ -130,6 +174,7 @@ export const STATIC_ALARMS = [
   "The recording ended - the autopilot is off.",
   "DROP: burner off, bean cooling on. The autopilot is off.",
   "DROP: burner off, bean cooling on.",
+  "CHARGE taken back and the preheat cannot hold: burner off, air high, drum running.",
   "The microphone delivers only silence: allow RoastMCP to use the microphone in the system settings (Privacy & Security).",
 ];
 

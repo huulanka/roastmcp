@@ -16,4 +16,4 @@ pub use recipe::{
     Outlook, RECIPE_GRACE_S, RecipeError, RecipeInput, RecipeRun, RunStep, StepChange, StepState,
     StepView, trigger_label,
 };
-pub use trim::{Trim, TrimDecision, TrimHold, TrimInput, TrimTuning};
+pub use trim::{Trim, TrimDecision, TrimHold, TrimInput, TrimTuning, TrimWhy};

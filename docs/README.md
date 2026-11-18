@@ -36,3 +36,4 @@
 - [0019](adr/0019-handover-before-charge-and-recipe-runner.md) — The AI takes over before CHARGE, the daemon runs the recipe, filter and cooling stay free
 - [0020](adr/0020-autopilot-recipe-and-trim.md) — The autopilot runs the recipe and trims the burner, switched on in the app
 - [0021](adr/0021-hearing-first-and-second-crack.md) — The daemon hears first and second crack and marks them; the person's mark wins
+- [0022](adr/0022-plausible-charge-and-runaway-roast.md) — A detected CHARGE must look like beans, and a roast that runs away loses its automation
