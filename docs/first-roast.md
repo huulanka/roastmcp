@@ -148,6 +148,23 @@ latched the safe state.
    at once and wins over the detection.
 4. Roast by hand with the sliders or the keys (Q/A burner, W/S air). Mark
    **FC start** when you hear first crack.
+
+   **The microphone** (ADR 0021) listens along, from 3 minutes after CHARGE.
+   What it hears depends on where it is more than on any setting:
+
+   - The built-in microphone of a laptop a metre away hears the Cubean+'s
+     first crack barely. In BRYB-003 (2026-11-18) its pops rose only 2.5–4
+     dB above the fan, the same as the noise, and the rate of pops at first
+     crack was less than twice the rate before it. Neither "normal" nor
+     "high" sensitivity can tell that apart reliably.
+   - Put a microphone close to the drum (a clip-on or USB microphone a hand's
+     width from the chaff collector, out of the hot air), and keep it in the
+     same place every roast.
+   - Mode **Markieren** while you roast by hand; **Anzeigen** while a recipe
+     or the autopilot runs until the detector has proved itself on your
+     recordings (`roastmcp audio eval`). Always mark first crack yourself.
+   - Keep the sound of a few roasts (settings) so `audio eval` and
+     `audio train` have something to learn from.
 5. DROP, marked or detected, saves the roast as `.roast.json` and `.alog`
    (open it in Artisan or upload it wherever you use `.alog`) and asks for the
    roasted weight.
