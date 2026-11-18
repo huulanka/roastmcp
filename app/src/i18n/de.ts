@@ -632,6 +632,12 @@ export const de: Record<string, string> = {
     "Autopilot: Brenner {{value}} % ({{delta}}), die Röstung läuft {{c}} °C über dem Plan.",
   "Autopilot: burner {{value}} % ({{delta}}), the roast heads {{c}} °C below the plan.":
     "Autopilot: Brenner {{value}} % ({{delta}}), die Röstung läuft {{c}} °C unter dem Plan.",
+  "Autopilot: burner {{value}} % ({{delta}}), the roast heads {{c}} °C above the plan ({{pred}} °C in {{h}} s; now {{now}} °C, median {{med}} °C; RoR {{ror}} vs plan {{pror}}).":
+    "Autopilot: Brenner {{value}} % ({{delta}}), die Röstung läuft {{c}} °C über dem Plan ({{pred}} °C in {{h}} s; jetzt {{now}} °C, Median {{med}} °C; RoR {{ror}} statt {{pror}}).",
+  "Autopilot: burner {{value}} % ({{delta}}), the roast heads {{c}} °C below the plan ({{pred}} °C in {{h}} s; now {{now}} °C, median {{med}} °C; RoR {{ror}} vs plan {{pror}}).":
+    "Autopilot: Brenner {{value}} % ({{delta}}), die Röstung läuft {{c}} °C unter dem Plan ({{pred}} °C in {{h}} s; jetzt {{now}} °C, Median {{med}} °C; RoR {{ror}} statt {{pror}}).",
+  "Autopilot: back on the plan - the recipe's next burner steps move {{shift}} points back toward the recipe.":
+    "Autopilot: wieder auf dem Plan – die nächsten Brennerstufen des Rezepts gehen {{shift}} Punkte zurück Richtung Rezept.",
   "Preheating to {{target}} °C at air {{air}} %. Confirm presence every {{every}} min while it runs (a gong sounds before).":
     "Vorheizen auf {{target}} °C bei Luft {{air}} %. Bestätige währenddessen alle {{every}} min deine Anwesenheit (vorher ertönt ein Gong).",
   "{{holder}} asks for control. Press “I'm at the roaster” in the app to allow it.":
@@ -645,6 +651,22 @@ export const de: Record<string, string> = {
     "DROP: Brenner aus, Bohnenkühlung an. Die KI ({{holder}}) hat dir die Kontrolle zurückgegeben.",
   "DROP at {{target}} °C expected within {{s}} s: bean cooling on.":
     "DROP bei {{target}} °C in {{s}} s erwartet: Bohnenkühlung an.",
+  "DROP at DTR {{dtr}} % expected within {{s}} s: bean cooling on.":
+    "DROP bei DTR {{dtr}} % in {{s}} s erwartet: Bohnenkühlung an.",
+  "Plan targets disagree: {{bt}} °C at {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % at {{dtr_at}} (about {{bt_dtr}} °C). DROP follows the earlier.":
+    "Planziele passen nicht zusammen: {{bt}} °C bei {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % bei {{dtr_at}} (etwa {{bt_dtr}} °C). DROP nach dem früheren.",
+  "Plan targets disagree: {{bt}} °C at {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % at {{dtr_at}} (about {{bt_dtr}} °C). DROP follows the later.":
+    "Planziele passen nicht zusammen: {{bt}} °C bei {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % bei {{dtr_at}} (etwa {{bt_dtr}} °C). DROP erst, wenn beide erreicht sind.",
+  "Plan targets disagree: {{bt}} °C at {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % at {{dtr_at}} (about {{bt_dtr}} °C). DROP follows the temperature.":
+    "Planziele passen nicht zusammen: {{bt}} °C bei {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % bei {{dtr_at}} (etwa {{bt_dtr}} °C). DROP nach der Temperatur.",
+  "Plan targets disagree: {{bt}} °C at {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % at {{dtr_at}} (about {{bt_dtr}} °C). DROP follows the DTR.":
+    "Planziele passen nicht zusammen: {{bt}} °C bei {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % bei {{dtr_at}} (etwa {{bt_dtr}} °C). DROP nach der DTR.",
+  "If they disagree": "Wenn sie abweichen",
+  "Which target ends the roast when they disagree":
+    "Welches Ziel beendet die Röstung, wenn sie abweichen",
+  "Whichever comes first": "Was zuerst kommt",
+  "Both reached": "Beide erreicht",
+  Temperature: "Temperatur",
   "A recording was interrupted; it was recovered to {{path}}.":
     "Eine Aufzeichnung wurde unterbrochen; sie wurde nach {{path}} gerettet.",
   "Recovery failed: {{e}}": "Wiederherstellung fehlgeschlagen: {{e}}",
@@ -673,6 +695,24 @@ export const de: Record<string, string> = {
   "Disconnected - the autopilot is off.": "Getrennt – der Autopilot ist aus.",
   "The link is lost - the autopilot is off.": "Die Verbindung ist weg – der Autopilot ist aus.",
   "CHARGE detected.": "CHARGE erkannt.",
+  "CHARGE taken back: it turned at {{tp}} °C after {{s}} s - beans turn near 100 °C. No beans went in? Charge again when ready.":
+    "CHARGE zurückgenommen: Wendepunkt bei {{tp}} °C nach {{s}} s – Bohnen wenden um 100 °C. Keine Bohnen eingefüllt? Neu chargen, wenn bereit.",
+  "CHARGE taken back: the bean temperature fell only to {{bt}} °C in {{s}} s. No beans went in? Charge again when ready.":
+    "CHARGE zurückgenommen: Die Bohnentemperatur fiel in {{s}} s nur auf {{bt}} °C. Keine Bohnen eingefüllt? Neu chargen, wenn bereit.",
+  "CHARGE taken back: no turning point in {{s}} s. No beans went in? Charge again when ready.":
+    "CHARGE zurückgenommen: kein Wendepunkt in {{s}} s. Keine Bohnen eingefüllt? Neu chargen, wenn bereit.",
+  "CHARGE taken back and the preheat cannot hold: burner off, air high, drum running.":
+    "CHARGE zurückgenommen, und das Vorheizen kann nicht halten: Brenner aus, Luft hoch, Trommel läuft.",
+  "The preheat holds {{target}} °C again until CHARGE.":
+    "Das Vorheizen hält wieder {{target}} °C bis CHARGE.",
+  "BT {{bt}} °C at {{at}} is {{above}} °C above the plan (no beans, or a false CHARGE?): burner off, air high, drum running.":
+    "BT {{bt}} °C bei {{at}} liegt {{above}} °C über dem Plan (keine Bohnen oder falscher CHARGE?): Brenner aus, Luft hoch, Trommel läuft.",
+  "BT {{bt}} °C at {{at}} is {{above}} °C above the plan (no beans, or a false CHARGE?). Check the roaster!":
+    "BT {{bt}} °C bei {{at}} liegt {{above}} °C über dem Plan (keine Bohnen oder falscher CHARGE?). Prüf den Röster!",
+  "BT {{bt}} °C at {{at}} heads for {{to}} °C within a minute (limit {{limit}} °C): burner off, air high, drum running.":
+    "BT {{bt}} °C bei {{at}} läuft in einer Minute auf {{to}} °C zu (Grenze {{limit}} °C): Brenner aus, Luft hoch, Trommel läuft.",
+  "BT {{bt}} °C at {{at}} heads for {{to}} °C within a minute (limit {{limit}} °C). Check the roaster!":
+    "BT {{bt}} °C bei {{at}} läuft in einer Minute auf {{to}} °C zu (Grenze {{limit}} °C). Prüf den Röster!",
   "No first crack marked at {{bt}} °C (expected about {{exp}} °C). Mark it; at {{at}} °C the steps tied to it start without a mark.":
     "Kein First Crack markiert bei {{bt}} °C (erwartet etwa {{exp}} °C). Markier ihn; ab {{at}} °C starten die FC-Schritte ohne Marke.",
   "No first crack marked at {{bt}} °C (expected about {{exp}} °C). Mark it when you hear it.":

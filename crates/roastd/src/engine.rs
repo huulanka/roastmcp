@@ -17,8 +17,8 @@ use crate::learned::LearnedStore;
 use crate::profiles::ProfileStore;
 use roast_control::{
     Outlook, PreheatController, PreheatInput, PreheatPhase, PreheatReason, PreheatTuning,
-    RecipeInput, RecipeRun, StepChange, StepState, StepView, Trim, TrimDecision, TrimInput,
-    TrimTuning, trigger_label,
+    RecipeInput, RecipeRun, StepChange, StepState, StepView, Trim, TrimDecision, TrimHold,
+    TrimInput, TrimTuning, TrimWhy, trigger_label,
 };
 use roast_core::{
     Actuator, ActuatorValues, BatchInfo, CommandOutcome, CommandRequest, CommandSource,
@@ -197,8 +197,13 @@ struct Preheat {
     /// Machine and air setting its learning is filed under.
     machine_key: String,
     air: f64,
-    /// Recording time of the reading it last looked at.
+    /// Its own clock (recording time plus `t_offset`) at the reading it
+    /// last looked at.
     last_seen_t: Option<f64>,
+    /// Added to the recording time so the controller's clock keeps running
+    /// when a recording starts or stops and the curve's time starts at 0
+    /// again (the controller needs a monotonic clock).
+    t_offset: f64,
     last_raise: Option<f64>,
     /// The AI that took over before CHARGE; the preheat holds under its
     /// lease until CHARGE (ADR 0019).
@@ -277,6 +282,9 @@ pub struct Snapshot {
     autopilot: Option<AutopilotStatus>,
     /// Where first crack is expected in the running recording (ADR 0021).
     first_crack: Option<CrackExpectation>,
+    /// From first crack on: when the plan's drop temperature and DTR are
+    /// reached, and which ends the roast.
+    drop: Option<roast_core::DropOutlook>,
     /// Listening for cracks (ADR 0021).
     audio: AudioStatus,
 }
@@ -288,6 +296,10 @@ struct Autopilot {
     /// Roast clock of the trim's last correction, s.
     corrected_at: Option<f64>,
     corrections: usize,
+    /// Points the recipe's later steps are moved by (the trim's carry).
+    carried: f64,
+    /// The last hold worth logging, so the log has each once.
+    logged_hold: Option<TrimHold>,
 }
 
 /// The autopilot as the app shows it.
@@ -370,6 +382,40 @@ struct StepValue {
 /// The bean cooling goes on this long before the planned DROP, s.
 const COOL_BEFORE_DROP_S: f64 = 30.0;
 
+// A detected CHARGE is checked against what beans do (ADR 0022). Opening the
+// drum during the preheat drops the probe too, by some 30 °C; beans take it
+// to about 100 °C within a minute.
+/// This long after CHARGE the probe must have fallen …, s.
+const CHARGE_CHECK_S: f64 = 30.0;
+/// … to at most this, °C …
+const CHARGE_CHECK_BELOW_C: f64 = 150.0;
+/// … and at least this far below the CHARGE temperature, °C.
+const CHARGE_CHECK_FALL_C: f64 = 40.0;
+/// A turning point above this is no turning point of beans, °C.
+const CHARGE_CHECK_TP_MAX_C: f64 = 140.0;
+/// Without a turning point by then, the CHARGE was none, s.
+const CHARGE_CHECK_TP_BY_S: f64 = 120.0;
+
+/// The roast runs away when the bean temperature stays this far above the
+/// plan …, °C …
+const RUNAWAY_ABOVE_PLAN_C: f64 = 25.0;
+/// … for this long, s …
+const RUNAWAY_FOR_S: f64 = 10.0;
+/// … from this roast time on (the probe lags the plan right after CHARGE), s.
+const RUNAWAY_FROM_S: f64 = 20.0;
+/// Or when it heads within this of the temperature limit in a minute, °C.
+const RUNAWAY_LIMIT_MARGIN_C: f64 = 10.0;
+
+/// A detected CHARGE that has not yet shown it was one.
+#[derive(Debug, Clone, Copy)]
+struct ChargeCheck {
+    /// Curve time of CHARGE, s.
+    t: f64,
+    /// Bean temperature at CHARGE, °C.
+    bt: f64,
+    /// Lowest bean temperature since, °C.
+    lowest: f64,
+}
 // Without a first-crack mark the steps tied to it would wait forever (the
 // burner stays where it was, e.g. 50 % in profile v2 of BRYB-003).
 /// This far above where first crack is expected, the person is asked to
@@ -477,6 +523,17 @@ pub struct Engine {
     stale_alarmed: bool,
     /// The bean cooling went on ahead of DROP in this roast (once per roast).
     cooled_before_drop: bool,
+    /// A detected CHARGE still being checked.
+    charge_check: Option<ChargeCheck>,
+    /// Since when (curve time) the roast is far above its plan.
+    above_plan_since: Option<f64>,
+    /// The runaway guard acted (or warned) in this roast.
+    runaway_done: bool,
+    /// The target of the last preheat that CHARGE ended, °C: a CHARGE that
+    /// was none goes back to it.
+    last_preheat_target: Option<f64>,
+    /// The plan's targets disagree, and the person was told in this roast.
+    drop_conflict_told: bool,
     /// No first crack was marked well above where it was expected: the
     /// curve time the steps tied to it run from (no event is set).
     fc_anchor: Option<f64>,
@@ -513,6 +570,8 @@ pub struct Engine {
     /// How far the autopilot's corrections moved this roast's recipe,
     /// burner points; kept when it is switched off and on again.
     trim_offset: f64,
+    /// … and how far they moved the recipe's later steps, points.
+    trim_carried: f64,
     /// Where first crack is expected in the running recording (ADR 0021).
     first_crack: Option<CrackExpectation>,
     /// Listening for cracks (ADR 0021).
@@ -563,6 +622,11 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
         last_reading: None,
         stale_alarmed: false,
         cooled_before_drop: false,
+        charge_check: None,
+        above_plan_since: None,
+        runaway_done: false,
+        last_preheat_target: None,
+        drop_conflict_told: false,
         fc_anchor: None,
         fc_missing_told: false,
         stall_since: None,
@@ -578,6 +642,7 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
         autopilot: None,
         burner_changed_at: None,
         trim_offset: 0.0,
+        trim_carried: 0.0,
         first_crack: None,
         learned,
         inventory,
@@ -699,6 +764,7 @@ impl Engine {
             alarms: self.alarms.iter().cloned().collect(),
             control_seq: self.roast.as_ref().map_or(0, |r| r.control_log.len()),
             first_crack: self.roast.as_ref().and(self.first_crack),
+            drop: self.drop_outlook(),
             audio: self.audio_status(),
         }
     }
@@ -786,9 +852,12 @@ impl Engine {
             .map(|r| RecipeRun::new(&r.actions));
         // The autopilot's corrections belonged to the old recipe.
         self.trim_offset = 0.0;
+        self.trim_carried = 0.0;
         if let Some(ap) = self.autopilot.as_mut() {
             ap.trim = Trim::new(TrimTuning::default());
             ap.corrected_at = None;
+            ap.carried = 0.0;
+            ap.logged_hold = None;
         }
     }
 
@@ -1114,6 +1183,8 @@ impl Engine {
             trim: Trim::resumed(TrimTuning::default(), self.trim_offset),
             corrected_at: None,
             corrections: 0,
+            carried: self.trim_carried,
+            logged_hold: None,
         });
         self.audit(serde_json::json!({"type": "autopilot", "on": true}));
         let message = if self.since_charge().is_some() && self.preheat.is_none() {
@@ -1230,7 +1301,8 @@ impl Engine {
             return;
         };
         let since_burner_change = self.burner_changed_at.map_or(f64::MAX, |t| roast_t - t);
-        let Some(ap) = self.autopilot.as_ref() else {
+        let first_crack = self.first_crack_roast_time(since);
+        let Some(ap) = self.autopilot.as_mut() else {
             return;
         };
         let decision = ap.trim.decide(&TrimInput {
@@ -1242,15 +1314,67 @@ impl Engine {
             burner,
             since_burner_change,
             since_correction: ap.corrected_at.map(|t| roast_t - t),
+            fc_in_s: first_crack.map(|fc| fc - since),
         });
-        let TrimDecision::Step {
-            burner: to,
-            predicted_error_c,
-            ..
-        } = decision
-        else {
-            return;
-        };
+        let why = ap.trim.why();
+        match decision {
+            TrimDecision::Hold(hold) => {
+                // Holds near a decision go to the log once each, with their
+                // numbers: why the trim did not act is as useful as why it did.
+                let worth = matches!(
+                    hold,
+                    TrimHold::SmallDeviation
+                        | TrimHold::Confirming
+                        | TrimHold::NearFirstCrack
+                        | TrimHold::AtLimit
+                );
+                let changed = ap.logged_hold != Some(hold);
+                ap.logged_hold = worth.then_some(hold);
+                if worth && changed {
+                    self.audit(serde_json::json!({
+                        "type": "trim_decision", "t": since, "hold": hold, "why": why,
+                    }));
+                }
+            }
+            TrimDecision::Ease { delta } => {
+                ap.trim.applied(delta);
+                self.trim_offset = ap.trim.offset();
+                let shift = self.carry_trim(first_crack);
+                self.audit(serde_json::json!({
+                    "type": "trim_decision", "t": since, "ease": delta, "why": why,
+                }));
+                if shift.abs() >= 1.0 {
+                    self.alarm(
+                        "info",
+                        "autopilot",
+                        format!(
+                            "Autopilot: back on the plan - the recipe's next burner steps \
+                             move {shift:+.0} points back toward the recipe."
+                        ),
+                    );
+                }
+            }
+            TrimDecision::Step {
+                burner: to,
+                predicted_error_c,
+                ..
+            } => self.trim_step(burner, to, predicted_error_c, why, first_crack, since),
+        }
+    }
+
+    /// Sends one trim correction through the safety layer and carries it to
+    /// the recipe's later steps.
+    fn trim_step(
+        &mut self,
+        burner: f64,
+        to: f64,
+        predicted_error_c: f64,
+        why: Option<TrimWhy>,
+        first_crack: Option<f64>,
+        since: f64,
+    ) {
+        let now = self.now();
+        let roast_t = self.latest_t();
         if self
             .safety
             .rate_limited(Actuator::Burner, to, CommandSource::Autopilot, now)
@@ -1262,7 +1386,18 @@ impl Engine {
         } else {
             "below"
         };
-        let why = format!(
+        let numbers = why.map_or_else(String::new, |w| {
+            format!(
+                " ({:+.1} °C in {:.0} s; now {:+.1} °C, median {:+.1} °C; RoR {:.1} vs plan {:.1})",
+                w.predicted_c,
+                TrimTuning::default().horizon_s,
+                w.deviation_c,
+                w.deviation_median_c,
+                w.ror,
+                w.plan_ror
+            )
+        });
+        let why_text = format!(
             "the roast heads {:.0} °C {side} the plan",
             predicted_error_c.abs()
         );
@@ -1270,7 +1405,7 @@ impl Engine {
             actuator: Actuator::Burner,
             value: to,
             source: CommandSource::Autopilot,
-            reason: Some(format!("autopilot: {why}")),
+            reason: Some(format!("autopilot: {why_text}{numbers}")),
         });
         let CommandOutcome::Applied { value, .. } = outcome else {
             return;
@@ -1285,14 +1420,57 @@ impl Engine {
             ap.corrections += 1;
             self.trim_offset = ap.trim.offset();
         }
-        if let Some(run) = self.recipe.as_mut() {
-            run.shift_open(Actuator::Burner, delta);
-        }
+        self.carry_trim(first_crack);
+        self.audit(serde_json::json!({
+            "type": "trim_decision", "t": since, "step": delta, "burner": value, "why": why,
+        }));
         self.alarm(
             "info",
             "autopilot",
-            format!("Autopilot: burner {value:.0} % ({delta:+.0}), {why}."),
+            format!("Autopilot: burner {value:.0} % ({delta:+.0}), {why_text}{numbers}."),
         );
+    }
+
+    /// Moves the recipe's later burner steps to the trim's carry. Steps tied
+    /// to first crack, and steps due within the last minute before it, keep
+    /// the recipe's value: the development runs as planned. Returns the
+    /// shift, points.
+    fn carry_trim(&mut self, first_crack: Option<f64>) -> f64 {
+        let Some(ap) = self.autopilot.as_mut() else {
+            return 0.0;
+        };
+        let shift = ap.trim.carried() - ap.carried;
+        ap.carried = ap.trim.carried();
+        self.trim_carried = ap.carried;
+        let before = TrimTuning::default().no_raise_before_fc_s;
+        let development_from = first_crack.map(|fc| fc - before);
+        let fc_bt = self.first_crack.map(|c| c.bt);
+        if let Some(run) = self.recipe.as_mut() {
+            run.shift_open_where(Actuator::Burner, shift, |trigger| match *trigger {
+                roast_core::ActionTrigger::Event {
+                    event: roast_core::RecipeAnchor::FirstCrackStart,
+                    ..
+                } => false,
+                roast_core::ActionTrigger::Event { .. } => true,
+                roast_core::ActionTrigger::Time { roast_time_s } => {
+                    development_from.is_none_or(|from| roast_time_s < from)
+                }
+                roast_core::ActionTrigger::Bt { bt_c } => fc_bt.is_none_or(|fc| bt_c < fc - 5.0),
+            });
+        }
+        shift
+    }
+
+    /// First crack in roast time (s since CHARGE): marked, else expected
+    /// from the projection or the plan.
+    fn first_crack_roast_time(&self, since: f64) -> Option<f64> {
+        let charge = self.roast.as_ref().and_then(Roast::charge_t)?;
+        let marked = self
+            .roast
+            .as_ref()
+            .and_then(|r| r.event(EventKind::FirstCrackStart))
+            .map(|e| e.t - charge);
+        marked.or_else(|| self.with_outlook(Some(since), |o| o.first_crack))
     }
 
     // ---------------------------------------------------------------- preheat
@@ -1336,6 +1514,24 @@ impl Engine {
             self.safety.set_preheat_holder(None);
             return Err(Fail::conflict(reject_text(r), Some(r)));
         }
+        self.begin_preheat(target_c);
+        let air = self.preheat.as_ref().map_or(0.0, |p| p.air);
+        let every_min = self.safety.config().preheat_presence_interval_s / 60.0;
+        self.alarm(
+            "info",
+            "preheat",
+            format!(
+                "Preheating to {target_c:.0} °C at air {air:.0} %. Confirm presence every {every_min:.0} min while it runs (a gong sounds before)."
+            ),
+        );
+        self.preheat_step(now);
+        self.publish(None);
+        Ok(self.snapshot())
+    }
+
+    /// Sets up the preheat controller for `target_c` at the applied air.
+    fn begin_preheat(&mut self, target_c: f64) {
+        let now = self.now();
         let status = self.safety.status(now);
         let air = status.actuators.get(&Actuator::Air).copied().unwrap_or(0.0);
         let machine_key = self.machine.as_ref().map_or_else(String::new, |m| {
@@ -1356,6 +1552,7 @@ impl Engine {
             machine_key,
             air,
             last_seen_t: None,
+            t_offset: 0.0,
             last_raise: None,
             ai_holder: None,
         });
@@ -1366,17 +1563,6 @@ impl Engine {
             "ror_per_pct": plant.ror_per_pct,
             "hold_pct_200": plant.hold_pct_200,
         }));
-        let every_min = self.safety.config().preheat_presence_interval_s / 60.0;
-        self.alarm(
-            "info",
-            "preheat",
-            format!(
-                "Preheating to {target_c:.0} °C at air {air:.0} %. Confirm presence every {every_min:.0} min while it runs (a gong sounds before)."
-            ),
-        );
-        self.preheat_step(now);
-        self.publish(None);
-        Ok(self.snapshot())
     }
 
     /// Stops preheating; the burner keeps its value and you have control.
@@ -1389,6 +1575,7 @@ impl Engine {
         let Some(p) = self.preheat.take() else {
             return;
         };
+        self.last_preheat_target = Some(p.ctl.target_c());
         if self.roast.is_none() {
             self.stop_hearing();
         }
@@ -1431,8 +1618,11 @@ impl Engine {
                 }
             }
             None if status.ai_suspended => {
-                // A person took over (or presence was missed). Without an AI
-                // in control, do not report the AI as paused.
+                // A person took over (or presence was missed). An armed
+                // autopilot ends with it: the takeover rule (ADR 0020 §4)
+                // must not depend on whether a tick or a reading comes first.
+                self.end_autopilot("Autopilot off - you have control.");
+                // Without an AI in control, do not report the AI as paused.
                 if ai_before.is_none() {
                     self.safety.resume_ai();
                 }
@@ -1469,6 +1659,7 @@ impl Engine {
         let Some(p) = self.preheat.as_ref() else {
             return;
         };
+        let t = t + p.t_offset;
         if p.last_seen_t.is_some_and(|seen| seen >= t) {
             return;
         }
@@ -1866,6 +2057,12 @@ impl Engine {
                 EventKind::Charge if self.state == RoastState::Recording => {
                     self.state = RoastState::Charged;
                     charged = true;
+                    let bt = e.bt.unwrap_or(f64::NAN);
+                    self.charge_check = Some(ChargeCheck {
+                        t: e.t,
+                        bt,
+                        lowest: bt,
+                    });
                     self.alarm("info", "auto_event", "CHARGE detected.".to_owned());
                 }
                 EventKind::Drop => {
@@ -1884,7 +2081,10 @@ impl Engine {
         if charged {
             // A detected CHARGE does not confirm presence: nobody pressed anything.
             self.on_charge(EventOrigin::Auto);
+        } else if self.check_charge() {
+            // A CHARGE that was none is taken back; the preheat holds again.
         } else if !dropped {
+            self.guard_runaway();
             self.watch_first_crack();
             self.autopilot_lease();
             self.run_recipe();
@@ -1904,6 +2104,183 @@ impl Engine {
             if let Err(e) = self.stop_recording() {
                 tracing::warn!("saving after the detected DROP failed: {}", e.error);
             }
+        }
+    }
+
+    /// Checks a detected CHARGE against what beans do (ADR 0022): the probe
+    /// falls well below 150 °C within 30 s and turns near 100 °C. If it does
+    /// not (the drum was opened during the preheat, no beans went in), the
+    /// CHARGE is taken back. Returns whether it was.
+    fn check_charge(&mut self) -> bool {
+        let Some(mut c) = self.charge_check else {
+            return false;
+        };
+        let (Some(t), Some(bt)) = (self.last_reading_t, self.last_bt) else {
+            return false;
+        };
+        if self.state != RoastState::Charged {
+            self.charge_check = None;
+            return false;
+        }
+        c.lowest = c.lowest.min(bt);
+        let since = t - c.t;
+        let deep_enough = c.lowest <= CHARGE_CHECK_BELOW_C.min(c.bt - CHARGE_CHECK_FALL_C);
+        let turning = self
+            .roast
+            .as_ref()
+            .and_then(|r| r.event(EventKind::TurningPoint))
+            .and_then(|e| e.bt);
+        let why = match turning {
+            Some(tp) if tp > CHARGE_CHECK_TP_MAX_C => Some(format!(
+                "it turned at {tp:.0} °C after {since:.0} s - beans turn near 100 °C"
+            )),
+            Some(_) if deep_enough => {
+                self.charge_check = None;
+                return false;
+            }
+            _ if since >= CHARGE_CHECK_S && !deep_enough => Some(format!(
+                "the bean temperature fell only to {:.0} °C in {since:.0} s",
+                c.lowest
+            )),
+            None if since >= CHARGE_CHECK_TP_BY_S => {
+                Some(format!("no turning point in {since:.0} s"))
+            }
+            _ => None,
+        };
+        self.charge_check = Some(c);
+        let Some(why) = why else {
+            return false;
+        };
+        self.take_back_charge(&why);
+        true
+    }
+
+    /// Takes a detected CHARGE back: its events go, the recipe starts afresh,
+    /// an armed autopilot waits for the next CHARGE, and the preheat holds
+    /// its target again (or, if it cannot, the safe state).
+    fn take_back_charge(&mut self, why: &str) {
+        self.charge_check = None;
+        if let Some(roast) = &mut self.roast {
+            roast.events.retain(|e| {
+                let auto = matches!(
+                    e.kind,
+                    EventKind::Charge | EventKind::TurningPoint | EventKind::DryEnd
+                ) && e.origin == EventOrigin::Auto;
+                !auto && e.origin != EventOrigin::Detector
+            });
+        }
+        self.state = RoastState::Recording;
+        self.detector = EventDetector::default();
+        self.reset_recipe();
+        let now = self.now();
+        if self.safety.status(now).lease_holder.as_deref() == Some(AUTOPILOT_HOLDER) {
+            self.safety.release_lease();
+        }
+        let message =
+            format!("CHARGE taken back: {why}. No beans went in? Charge again when ready.");
+        self.audit(serde_json::json!({"type": "charge_taken_back", "why": why}));
+        if let Some(roast) = &mut self.roast {
+            let t = self.points.last().map(|p| p.t);
+            roast.notes.push(Note {
+                t,
+                text: message.clone(),
+                origin: EventOrigin::Auto,
+            });
+        }
+        self.alarm("critical", "charge_taken_back", message);
+        let target = self.last_preheat_target;
+        match target {
+            Some(target) if self.resume_preheat(target) => {}
+            _ => {
+                let r = self
+                    .safety
+                    .runaway("CHARGE taken back and the preheat cannot hold");
+                self.apply_reaction(&r);
+            }
+        }
+        self.publish(None);
+    }
+
+    /// The preheat takes up `target` again after a CHARGE that was none,
+    /// without a person's word: it needs the presence confirmed before, and
+    /// does not change the air. Returns whether it holds.
+    fn resume_preheat(&mut self, target: f64) -> bool {
+        let now = self.now();
+        let status = self.safety.status(now);
+        if status.emergency_stop || status.ai_suspended || !status.connected {
+            return false;
+        }
+        self.safety.set_preheat_holder(Some(PREHEAT_HOLDER));
+        // Under an AI's lease the preheat holds under it (ADR 0019).
+        if status.lease_holder.is_none() && self.safety.acquire_lease(PREHEAT_HOLDER, now).is_err()
+        {
+            self.safety.set_preheat_holder(None);
+            return false;
+        }
+        self.begin_preheat(target);
+        self.alarm(
+            "info",
+            "preheat",
+            format!("The preheat holds {target:.0} °C again until CHARGE."),
+        );
+        self.preheat_step(now);
+        self.preheat.is_some()
+    }
+
+    /// Watches for a roast that runs away from what beans do (ADR 0022): far
+    /// above its plan for a while, or heading for the temperature limit
+    /// within a minute. Under automation (an AI, the autopilot, a recipe it
+    /// sets) the safety layer takes the safe state; under a person's hand a
+    /// critical alarm says so (the person wins; the temperature limit itself
+    /// still cuts the burner).
+    fn guard_runaway(&mut self) {
+        if self.state != RoastState::Charged || self.runaway_done {
+            return;
+        }
+        let (Some(t), Some(bt), Some(since)) =
+            (self.last_reading_t, self.last_bt, self.since_charge())
+        else {
+            return;
+        };
+        let now = self.now();
+        let limit = self.safety.config().max_bt_c;
+        let ahead = bt + self.last_ror.unwrap_or(0.0).max(0.0);
+        let plan_bt = self
+            .reference
+            .as_ref()
+            .and_then(|r| r.at(since).0)
+            .filter(|_| since >= RUNAWAY_FROM_S);
+        let above = plan_bt.map(|p| bt - p);
+        if above.is_some_and(|a| a > RUNAWAY_ABOVE_PLAN_C) {
+            self.above_plan_since.get_or_insert(t);
+        } else {
+            self.above_plan_since = None;
+        }
+        let runs_away = self
+            .above_plan_since
+            .is_some_and(|from| t - from >= RUNAWAY_FOR_S);
+        let to_limit = ahead >= limit - RUNAWAY_LIMIT_MARGIN_C;
+        if !runs_away && !to_limit {
+            return;
+        }
+        let clock = format!("{}:{:02}", (since / 60.0) as i64, (since % 60.0) as i64);
+        let why = match above {
+            Some(a) if runs_away => format!(
+                "BT {bt:.0} °C at {clock} is {a:.0} °C above the plan (no beans, or a false CHARGE?)"
+            ),
+            _ => format!(
+                "BT {bt:.0} °C at {clock} heads for {ahead:.0} °C within a minute (limit {limit:.0} °C)"
+            ),
+        };
+        self.runaway_done = true;
+        let automated = self.safety.ai_in_control(now);
+        if automated {
+            let r = self.safety.runaway(&why);
+            self.apply_reaction(&r);
+            self.autopilot_lease();
+        } else {
+            self.alarm("critical", "runaway", format!("{why}. Check the roaster!"));
+            self.audit(serde_json::json!({"type": "runaway_warning", "why": why}));
         }
     }
 
@@ -2101,11 +2478,16 @@ impl Engine {
         }
         if let Some(roast) = &mut self.roast {
             let t = self.points.last().map(|p| p.t);
-            roast.notes.push(Note {
-                t,
-                text: format!("Safety: {}", r.message),
-                origin: EventOrigin::Auto,
-            });
+            let text = format!("Safety: {}", r.message);
+            // The roast's notes are for people: the same safety message again
+            // (a lease that keeps running out) is in the log, not noted twice.
+            if !roast.notes.iter().any(|n| n.text == text) {
+                roast.notes.push(Note {
+                    t,
+                    text,
+                    origin: EventOrigin::Auto,
+                });
+            }
         }
         self.audit(serde_json::json!({"type": "reaction", "reaction": r}));
         self.alarm(severity, &kind, r.message.clone());
@@ -2292,6 +2674,15 @@ impl Engine {
     // -------------------------------------------------------------- recording
 
     fn reset_curve(&mut self) {
+        // A running preheat keeps its clock: without this its "one decision
+        // per reading" guard saw every new reading as old, so it neither
+        // decided nor renewed its lease until the new recording time caught
+        // up (the lease ran out every minute).
+        let old_t = self.t();
+        if let Some(p) = self.preheat.as_mut() {
+            p.t_offset += old_t;
+        }
+        self.last_reading_t = None;
         self.zero = Instant::now();
         self.points.clear();
         self.ror.reset();
@@ -2335,6 +2726,10 @@ impl Engine {
             self.inventory.adopt_batch_code(l.id, b);
         }
         self.cooled_before_drop = false;
+        self.charge_check = None;
+        self.above_plan_since = None;
+        self.runaway_done = false;
+        self.drop_conflict_told = false;
         self.fc_anchor = None;
         self.fc_missing_told = false;
         self.stall_since = None;
@@ -2556,6 +2951,15 @@ impl Engine {
                 .map(|e| (e.t, e.origin == EventOrigin::Detector));
             replaced = detected.zip(roast.charge_t());
             roast.events.retain(|e| e.kind != kind);
+            // A heard first crack end before a marked start belongs to no
+            // first crack (BRYB-003: one was left from an undone start).
+            if kind == EventKind::FirstCrackStart {
+                roast.events.retain(|e| {
+                    !(e.kind == EventKind::FirstCrackEnd
+                        && e.origin == EventOrigin::Detector
+                        && e.t < t)
+                });
+            }
             roast.events.push(event.clone());
             roast.events.sort_by(|a, b| a.t.total_cmp(&b.t));
         }
@@ -2656,28 +3060,95 @@ impl Engine {
     /// planned DROP within 30 s, so the tray is turning when the beans
     /// arrive. Once per roast: if the person switches it off again, it stays
     /// off until DROP.
+    /// From first crack on, where the plan's drop temperature and DTR lie
+    /// (ADR 0014, amended 2026-11-18): when they disagree by more than 20 s
+    /// the person hears so once, and the plan's rule (the earlier one by
+    /// default) decides when the cooling starts.
+    fn drop_outlook(&self) -> Option<roast_core::DropOutlook> {
+        let roast = self.roast.as_ref()?;
+        if self.state != RoastState::Charged {
+            return None;
+        }
+        let plan = roast.plan.as_ref()?;
+        if plan.drop_bt_c.is_none() && plan.dtr_pct.is_none() {
+            return None;
+        }
+        let charge = roast.charge_t()?;
+        let fc = roast.event(EventKind::FirstCrackStart)?.t - charge;
+        let since = self.since_charge()?;
+        let end = self.points.last()?.t;
+        let mut recent: Vec<(f64, f64, f64)> = self
+            .points
+            .iter()
+            .rev()
+            .take_while(|p| p.t >= end - 60.0 && p.t >= charge)
+            .filter_map(|p| Some((p.t, p.bt?, p.ror?)))
+            .collect();
+        recent.reverse();
+        let projector = roast_core::Projector::new(&recent);
+        let bt_now = self.last_bt?;
+        Some(roast_core::drop_outlook(
+            &roast_core::DropInput {
+                since,
+                first_crack_s: fc,
+                drop_bt_c: plan.drop_bt_c,
+                dtr_pct: plan.dtr_pct,
+                by: plan.drop_by.unwrap_or_default(),
+            },
+            |h| projector.map_or(bt_now, |p| p.bt_at(h)),
+            |target| match projector {
+                Some(p) => p.reaches(target, 900.0),
+                None => (bt_now >= target).then_some(0.0),
+            },
+        ))
+    }
+
     fn cool_before_drop(&mut self) {
-        if self.state != RoastState::Charged
-            || self.cooled_before_drop
-            || !self.has_switch(Actuator::Cooling)
+        if self.state != RoastState::Charged {
+            return;
+        }
+        let outlook = self.drop_outlook();
+        if let Some(o) = outlook.filter(|o| o.conflict)
+            && !self.drop_conflict_told
         {
+            self.drop_conflict_told = true;
+            self.tell_drop_conflict(&o);
+        }
+        if self.cooled_before_drop || !self.has_switch(Actuator::Cooling) {
             return;
         }
         let Some(roast) = &self.roast else {
             return;
         };
-        let target = roast.plan.as_ref().and_then(|p| p.drop_bt_c).or_else(|| {
-            self.reference
-                .as_ref()
-                .and_then(|r| r.event(EventKind::Drop))
-                .and_then(|e| e.bt)
-        });
-        let (Some(target), Some(bt), Some(ror)) = (target, self.last_bt, self.last_ror) else {
+        let since = self.since_charge();
+        let due = match (outlook.and_then(|o| o.drop_at_s), since) {
+            // From first crack on, the plan's rule says when.
+            (Some(at), Some(since)) => (at - since <= COOL_BEFORE_DROP_S).then(|| {
+                let by_dtr = outlook.is_some_and(|o| o.dtr_at_s == Some(at));
+                let plan = roast.plan.as_ref();
+                match (by_dtr, plan.and_then(|p| p.dtr_pct)) {
+                    (true, Some(dtr)) => format!("DTR {dtr:.0} %"),
+                    _ => format!("{:.0} °C", plan.and_then(|p| p.drop_bt_c).unwrap_or(0.0)),
+                }
+            }),
+            _ => {
+                let target = roast.plan.as_ref().and_then(|p| p.drop_bt_c).or_else(|| {
+                    self.reference
+                        .as_ref()
+                        .and_then(|r| r.event(EventKind::Drop))
+                        .and_then(|e| e.bt)
+                });
+                let (Some(target), Some(bt), Some(ror)) = (target, self.last_bt, self.last_ror)
+                else {
+                    return;
+                };
+                (bt + ror.max(0.0) * COOL_BEFORE_DROP_S / 60.0 >= target)
+                    .then(|| format!("{target:.0} °C"))
+            }
+        };
+        let Some(what) = due else {
             return;
         };
-        if bt + ror.max(0.0) * COOL_BEFORE_DROP_S / 60.0 < target {
-            return;
-        }
         self.cooled_before_drop = true;
         let now = self.now();
         let on = self
@@ -2698,9 +3169,46 @@ impl Engine {
             self.alarm(
                 "info",
                 "cooling",
-                format!("DROP at {target:.0} °C expected within {COOL_BEFORE_DROP_S:.0} s: bean cooling on."),
+                format!(
+                    "DROP at {what} expected within {COOL_BEFORE_DROP_S:.0} s: bean cooling on."
+                ),
             );
         }
+    }
+
+    /// Tells the person once that the plan's drop temperature and DTR
+    /// disagree, with where each lies and which one decides.
+    fn tell_drop_conflict(&mut self, o: &roast_core::DropOutlook) {
+        let clock = |t: f64| format!("{}:{:02}", (t / 60.0) as i64, (t % 60.0) as i64);
+        let (Some(b), Some(dtr_b), Some(d), Some(bt_d)) =
+            (o.bt_at_s, o.dtr_at_bt_pct, o.dtr_at_s, o.bt_at_dtr_c)
+        else {
+            return;
+        };
+        let target = self
+            .roast
+            .as_ref()
+            .and_then(|r| r.plan.as_ref())
+            .map_or((0.0, 0.0), |p| {
+                (p.drop_bt_c.unwrap_or(0.0), p.dtr_pct.unwrap_or(0.0))
+            });
+        let rule = match o.by {
+            roast_core::DropBy::Earlier => "the earlier",
+            roast_core::DropBy::Later => "the later",
+            roast_core::DropBy::Bt => "the temperature",
+            roast_core::DropBy::Dtr => "the DTR",
+        };
+        self.alarm(
+            "warning",
+            "drop_conflict",
+            format!(
+                "Plan targets disagree: {:.0} °C at {} (DTR {dtr_b:.0} %), DTR {:.0} % at {} (about {bt_d:.0} °C). DROP follows {rule}.",
+                target.0,
+                clock(b),
+                target.1,
+                clock(d),
+            ),
+        );
     }
 
     fn has_switch(&self, a: Actuator) -> bool {
@@ -2985,6 +3493,11 @@ mod tests {
         h.call(|e| {
             e.start_recording(RecordingMeta::default()).unwrap();
             e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+            // Five minutes in: first crack may be heard (from 3 min after CHARGE).
+            for ev in &mut e.roast.as_mut().unwrap().events {
+                ev.t -= 300.0;
+            }
+            e.last_ror = Some(8.0);
         })
         .await
         .unwrap();
@@ -3013,6 +3526,7 @@ mod tests {
         let s = h
             .call(|e| {
                 e.last_bt = Some(193.0);
+                e.last_ror = Some(8.0);
                 e.on_audio(chunk(&[0.8], 0.9));
                 e.snapshot()
             })
@@ -3097,6 +3611,11 @@ mod tests {
                 .unwrap();
             e.start_recording(RecordingMeta::default()).unwrap();
             e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+            // Five minutes in: first crack may be heard (from 3 min after CHARGE).
+            for ev in &mut e.roast.as_mut().unwrap().events {
+                ev.t -= 300.0;
+            }
+            e.last_ror = Some(8.0);
         })
         .await
         .unwrap();
@@ -3124,6 +3643,7 @@ mod tests {
                 e.stop_hearing();
                 e.hearing.zero = None;
                 e.last_bt = Some(193.0);
+                e.last_ror = Some(8.0);
                 for i in 0..10 {
                     e.on_audio(frame(i));
                 }
@@ -3426,6 +3946,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_preheat_keeps_deciding_and_its_lease_after_a_recording_starts() {
+        // BRYB-003: the recording started after an 8.5 min preheat. The curve's
+        // time began at 0 again, the preheat took every new reading for an
+        // old one, stopped deciding and let its lease run out every minute.
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let (before, after, holder, notes) = h
+            .call(|e| {
+                e.start_preheat(200.0, Some(20.0)).unwrap();
+                // The preheat has been running for a while.
+                e.zero = Instant::now() - Duration::from_secs(60);
+                e.last_reading_t = Some(e.t());
+                e.preheat_step(e.now());
+                let before = e.preheat.as_ref().unwrap().last_seen_t.unwrap();
+                e.start_recording(RecordingMeta::default()).unwrap();
+                // The first reading of the new recording.
+                e.last_reading_t = Some(1.5);
+                e.preheat_step(e.now());
+                let after = e.preheat.as_ref().unwrap().last_seen_t.unwrap();
+                let holder = e.safety.status(e.now()).lease_holder;
+                let notes = e.roast.as_ref().unwrap().notes.len();
+                (before, after, holder, notes)
+            })
+            .await
+            .unwrap();
+        assert!(before > 100.0, "{before}");
+        assert!(
+            after > before,
+            "the reading counts as new: {before} -> {after}"
+        );
+        assert_eq!(holder.as_deref(), Some(PREHEAT_HOLDER));
+        assert_eq!(notes, 0);
+    }
+
+    #[tokio::test]
+    async fn a_hand_on_the_burner_during_the_preheat_ends_an_armed_autopilot() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| {
+                with_profile(e);
+                e.start_preheat(200.0, Some(20.0)).unwrap();
+                e.start_autopilot().unwrap();
+                assert!(e.autopilot.is_some(), "armed");
+                e.command(CommandRequest {
+                    actuator: Actuator::Burner,
+                    value: 40.0,
+                    source: CommandSource::Human,
+                    reason: None,
+                });
+                // The tick comes before the next reading.
+                e.on_tick();
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert!(s.preheat.is_none());
+        assert!(
+            s.autopilot.is_none(),
+            "a person's burner ends the armed autopilot"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_repeated_safety_message_is_noted_once_per_roast() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let notes = h
+            .call(|e| {
+                e.start_recording(RecordingMeta::default()).unwrap();
+                let r = SafetyReaction {
+                    kind: roast_safety::ReactionKind::LeaseExpired,
+                    message: "AI (mcp:x) disconnected - you have control.".to_owned(),
+                    commands: Vec::new(),
+                };
+                e.apply_reaction(&r);
+                e.apply_reaction(&r);
+                e.roast.as_ref().unwrap().notes.len()
+            })
+            .await
+            .unwrap();
+        assert_eq!(notes, 1);
+    }
+
+    #[tokio::test]
     async fn an_ai_takes_over_during_the_preheat_which_holds_until_charge() {
         let dir = tempfile::tempdir().unwrap();
         let h = simulator(dir.path()).await;
@@ -3587,8 +4192,9 @@ mod tests {
         assert!(s.recipe.as_ref().unwrap().automatic);
         assert_eq!(actuator(&s, Actuator::Burner), Some(85.0));
 
-        // Five minutes in, 8 °C below the plan and no faster than it: one
-        // correction of five points, which the recipe's later step keeps.
+        // Five minutes in, 8 °C below the plan and no faster than it, for
+        // three readings: one correction of five points. The recipe's later
+        // step is tied to first crack and keeps its value.
         let s = h
             .call(|e| {
                 let roast = e.roast.as_mut().unwrap();
@@ -3605,6 +4211,9 @@ mod tests {
                 // The safety layer paces automatic raises.
                 e.safety.allow_charge_jump(e.now());
                 e.autopilot_trim();
+                e.autopilot_trim();
+                assert_eq!(e.snapshot().autopilot.unwrap().corrections, 0);
+                e.autopilot_trim();
                 let first = e.snapshot();
                 // Until the correction shows, it leaves the burner alone.
                 e.burner_changed_at = Some(e.latest_t() - 100.0);
@@ -3618,7 +4227,17 @@ mod tests {
         let ap = s.autopilot.as_ref().unwrap();
         assert_eq!((ap.offset, ap.corrections), (5.0, 1));
         let later = &s.recipe.as_ref().unwrap().steps[1];
-        assert!((later.value - 65.0).abs() < 1e-9, "{later:?}");
+        assert!((later.value - 60.0).abs() < 1e-9, "{later:?}");
+        let log = h
+            .call(|e| std::fs::read_to_string(&e.opts.audit_path).unwrap())
+            .await
+            .unwrap();
+        assert!(log.contains(r#""type":"trim_decision""#), "{log}");
+        assert!(
+            s.alarms.iter().any(|a| a.message.contains("median")),
+            "{:?}",
+            s.alarms
+        );
 
         // A hand on the burner ends it.
         let s = h
@@ -3645,6 +4264,346 @@ mod tests {
         let ap = s.autopilot.unwrap();
         assert_eq!((ap.state, ap.offset, ap.corrections), ("active", 5.0, 0));
         assert_eq!(s.safety.lease_holder.as_deref(), Some(AUTOPILOT_HOLDER));
+    }
+
+    /// Feeds bean temperatures as readings 1.5 s apart (on the roast clock).
+    fn feed(e: &mut Engine, bts: &[f64]) {
+        for &bt in bts {
+            e.zero -= Duration::from_secs_f64(1.5 / e.time_scale);
+            let actuators = e.safety.status(e.now()).actuators;
+            e.on_reading(roast_driver::Reading {
+                ambient_c: None,
+                bt: Some(bt),
+                et: None,
+                actuators,
+            });
+        }
+    }
+
+    /// BR013 (2026-11-18): the drum opened during the preheat at 200 °C to
+    /// take out chaff; the probe fell to 166 °C and rose again.
+    const DRUM_OPENED: [f64; 34] = [
+        200.2, 200.1, 199.9, 199.0, 197.4, 196.4, 195.9, 193.5, 190.6, 188.1, 185.7, 183.3, 180.8,
+        178.3, 176.0, 173.8, 171.5, 169.2, 167.6, 166.3, 166.3, 166.4, 167.0, 168.1, 169.2, 170.4,
+        171.7, 173.0, 174.3, 175.5, 176.8, 178.0, 179.3, 180.7,
+    ];
+
+    #[tokio::test]
+    async fn opening_the_drum_in_the_preheat_is_no_charge_and_the_preheat_holds_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| {
+                with_profile(e);
+                e.start_preheat(200.0, Some(20.0)).unwrap();
+                e.start_autopilot().unwrap();
+                feed(e, &[200.0; 6]);
+                feed(e, &DRUM_OPENED[..8]);
+                assert_eq!(e.state, RoastState::Charged, "detected");
+                assert!(e.preheat.is_none());
+                feed(e, &DRUM_OPENED[8..]);
+                let kinds: Vec<EventKind> = e
+                    .roast
+                    .as_ref()
+                    .unwrap()
+                    .events
+                    .iter()
+                    .map(|e| e.kind)
+                    .collect();
+                assert!(!kinds.contains(&EventKind::Charge), "{kinds:?}");
+                assert_eq!(e.state, RoastState::Recording);
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert!(s.preheat.is_some(), "the preheat holds again");
+        assert_eq!(s.autopilot.as_ref().unwrap().state, "armed");
+        assert!(
+            s.alarms
+                .iter()
+                .any(|a| a.severity == "critical" && a.message.starts_with("CHARGE taken back")),
+            "{:?}",
+            s.alarms
+        );
+    }
+
+    #[tokio::test]
+    async fn beans_keep_their_charge() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let (state, events, check) = h
+            .call(|e| {
+                with_profile(e);
+                e.start_preheat(200.0, Some(20.0)).unwrap();
+                feed(e, &[200.0; 6]);
+                // BRYB-003: 126 °C after 31 s, turning at 99 °C after 70 s.
+                let mut bt = 200.0;
+                let mut curve = Vec::new();
+                for i in 0..80 {
+                    bt = if i < 47 {
+                        99.0 + (bt - 99.0) * 0.93
+                    } else {
+                        bt + 0.25
+                    };
+                    curve.push(bt);
+                }
+                feed(e, &curve);
+                let events: Vec<EventKind> = e
+                    .roast
+                    .as_ref()
+                    .unwrap()
+                    .events
+                    .iter()
+                    .map(|e| e.kind)
+                    .collect();
+                (e.state, events, e.charge_check.is_some())
+            })
+            .await
+            .unwrap();
+        assert_eq!(state, RoastState::Charged);
+        assert!(events.contains(&EventKind::Charge), "{events:?}");
+        assert!(events.contains(&EventKind::TurningPoint), "{events:?}");
+        assert!(!check, "the check is done");
+    }
+
+    #[tokio::test]
+    async fn a_roast_far_above_its_plan_under_the_autopilot_gets_the_safe_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| {
+                with_profile(e);
+                e.start_autopilot().unwrap();
+                e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+                for ev in &mut e.roast.as_mut().unwrap().events {
+                    ev.t -= 60.0;
+                }
+                // An empty drum: about 190 °C a minute in, the plan near 100.
+                feed(e, &[190.0; 9]);
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert_eq!(actuator(&s, Actuator::Burner), Some(0.0), "{:?}", s.alarms);
+        assert_eq!(actuator(&s, Actuator::Air), Some(100.0));
+        assert!(s.autopilot.is_none());
+        assert!(
+            s.alarms.iter().any(|a| a.kind == "runaway"),
+            "{:?}",
+            s.alarms
+        );
+    }
+
+    #[tokio::test]
+    async fn under_a_persons_hand_a_runaway_roast_only_raises_the_alarm() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| {
+                with_profile(e);
+                e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+                e.command(CommandRequest {
+                    actuator: Actuator::Burner,
+                    value: 70.0,
+                    source: CommandSource::Human,
+                    reason: None,
+                });
+                for ev in &mut e.roast.as_mut().unwrap().events {
+                    ev.t -= 60.0;
+                }
+                feed(e, &[190.0; 9]);
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert_eq!(actuator(&s, Actuator::Burner), Some(70.0));
+        assert!(
+            s.alarms
+                .iter()
+                .any(|a| a.kind == "runaway" && a.severity == "critical"),
+            "{:?}",
+            s.alarms
+        );
+    }
+
+    #[tokio::test]
+    async fn a_marked_first_crack_drops_a_heard_end_before_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let kinds = h
+            .call(|e| {
+                e.start_recording(RecordingMeta::default()).unwrap();
+                e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+                let roast = e.roast.as_mut().unwrap();
+                roast.events.push(RoastEvent {
+                    t: roast.charge_t().unwrap() + 10.0,
+                    kind: EventKind::FirstCrackEnd,
+                    origin: EventOrigin::Detector,
+                    bt: Some(185.9),
+                });
+                e.zero -= Duration::from_secs(60);
+                e.mark_event(EventKind::FirstCrackStart, EventOrigin::Human)
+                    .unwrap();
+                e.roast
+                    .as_ref()
+                    .unwrap()
+                    .events
+                    .iter()
+                    .map(|e| (e.kind, e.origin))
+                    .collect::<Vec<_>>()
+            })
+            .await
+            .unwrap();
+        assert!(
+            !kinds.contains(&(EventKind::FirstCrackEnd, EventOrigin::Detector)),
+            "{kinds:?}"
+        );
+        assert!(kinds.contains(&(EventKind::FirstCrackStart, EventOrigin::Human)));
+    }
+
+    /// Pushes readings 1.5 s apart (on the roast clock), from `bt` rising at
+    /// `ror` °C/min.
+    fn push_readings(e: &mut Engine, n: usize, bt: f64, ror: f64) {
+        for i in 0..n {
+            e.zero -= Duration::from_secs_f64(1.5 / e.time_scale);
+            let actuators = e.safety.status(e.now()).actuators;
+            e.on_reading(roast_driver::Reading {
+                ambient_c: None,
+                bt: Some(bt + ror * 1.5 * i as f64 / 60.0),
+                et: None,
+                actuators,
+            });
+        }
+    }
+
+    /// BRYB-003 at 8:33: first crack marked, 194.9 °C rising 6.8 °C/min,
+    /// planned DROP at 203 °C and DTR 19 %.
+    fn at_first_crack_of_bryb003(e: &mut Engine, by: Option<roast_core::DropBy>) {
+        e.start_recording(RecordingMeta {
+            plan: Some(RoastPlan {
+                drop_bt_c: Some(203.0),
+                dtr_pct: Some(19.0),
+                drop_by: by,
+                ..RoastPlan::default()
+            }),
+            ..RecordingMeta::default()
+        })
+        .unwrap();
+        e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+        e.mark_event(EventKind::FirstCrackStart, EventOrigin::Human)
+            .unwrap();
+        for ev in &mut e.roast.as_mut().unwrap().events {
+            ev.t -= if ev.kind == EventKind::Charge {
+                513.0
+            } else {
+                0.0
+            };
+        }
+    }
+
+    fn told(s: &Snapshot, kind: &str) -> usize {
+        s.alarms.iter().filter(|a| a.kind == kind).count()
+    }
+
+    #[tokio::test]
+    async fn disagreeing_drop_targets_are_told_once_and_the_earlier_one_starts_the_cooling() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| {
+                at_first_crack_of_bryb003(e, None);
+                push_readings(e, 30, 194.9, 6.8);
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        let o = s.drop.unwrap();
+        assert!(o.conflict, "{o:?}");
+        assert_eq!(told(&s, "drop_conflict"), 1, "{:?}", s.alarms);
+        let msg = &s
+            .alarms
+            .iter()
+            .find(|a| a.kind == "drop_conflict")
+            .unwrap()
+            .message;
+        assert!(
+            msg.starts_with("Plan targets disagree: 203 °C at "),
+            "{msg}"
+        );
+        assert!(msg.ends_with("DROP follows the earlier."), "{msg}");
+        // 45 s after first crack the temperature is about 30 s away.
+        let s = h
+            .call(|e| {
+                push_readings(e, 30, 194.9 + 6.8 * 45.0 / 60.0, 6.8);
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert_eq!(told(&s, "drop_conflict"), 1);
+        assert_eq!(
+            actuator(&s, Actuator::Cooling),
+            Some(100.0),
+            "{:?}",
+            s.alarms
+        );
+        assert!(
+            s.alarms
+                .iter()
+                .any(|a| a.message == "DROP at 203 °C expected within 30 s: bean cooling on."),
+            "{:?}",
+            s.alarms
+        );
+    }
+
+    #[tokio::test]
+    async fn with_the_dtr_deciding_the_cooling_waits_for_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| {
+                at_first_crack_of_bryb003(e, Some(roast_core::DropBy::Dtr));
+                push_readings(e, 60, 194.9, 6.8);
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert_ne!(
+            actuator(&s, Actuator::Cooling),
+            Some(100.0),
+            "{:?}",
+            s.alarms
+        );
+        assert!(
+            s.alarms
+                .iter()
+                .any(|a| a.message.ends_with("DROP follows the DTR."))
+        );
+        // 19 % DTR after first crack at 8:33 is 10:33; 30 s before it.
+        let s = h
+            .call(|e| {
+                push_readings(e, 4, 203.0, 2.0);
+                for ev in &mut e.roast.as_mut().unwrap().events {
+                    ev.t -= 40.0;
+                }
+                push_readings(e, 2, 203.5, 2.0);
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        let since = s.drop.unwrap();
+        assert_eq!(
+            actuator(&s, Actuator::Cooling),
+            Some(100.0),
+            "{since:?} {:?}",
+            s.alarms
+        );
+        assert!(
+            s.alarms
+                .iter()
+                .any(|a| a.message == "DROP at DTR 19 % expected within 30 s: bean cooling on."),
+            "{:?}",
+            s.alarms
+        );
     }
 
     /// Readings 1.5 s apart (on the roast clock), from `bt` at `ror` °C/min.

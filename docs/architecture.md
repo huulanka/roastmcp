@@ -279,10 +279,12 @@ holds the lease as `autopilot` and does two things on every reading:
 - The **recipe runner** sets the profile's steps at their triggers.
 - The **trim** (`roast-control`'s `Trim`) keeps the bean temperature on the
   profile's curve between the steps, by step and wait: it predicts the
-  deviation 90 s ahead, leaves a ±3 °C band alone, corrects the burner by at
-  most 5 points, waits 90 s for the machine to answer, and stays within ±10
-  points of the recipe. A correction carries over to the recipe's later
-  burner steps.
+  deviation 90 s ahead from the median deviation of the last 15 s, leaves a
+  ±3 °C band alone (out for three readings, back in below ±2 °C), corrects
+  the burner by at most 5 points, waits 90 s for the machine to answer, and
+  stays within ±10 points of the recipe. Up to 5 points carry over to the
+  recipe's later burner steps, not into the development, and go back to the
+  recipe once the roast is on the plan again.
 
 Both send their commands through the safety layer with source `Autopilot`.
 A person's command on burner, air or drum, DROP, an emergency stop, a lost

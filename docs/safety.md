@@ -41,6 +41,8 @@ or drum movement the beans can ignite.
 | DROP (detected or marked) | Burner 0 and bean cooling on, as safety-layer commands; an AI's lease ends ("handed control back"), which is not a takeover and suspends nothing |
 | The bean temperature will reach the planned DROP (the plan's drop temperature, else the reference's) within 30 s | Bean cooling on, once per roast, so the tray turns when the beans arrive; switched off by the person, it stays off until DROP |
 | Bean temperature above the machine's limit, or implausible rise | Burner cut by the safety layer, alarm |
+| A detected CHARGE that was none: the probe has not fallen below 150 °C (and 40 °C below CHARGE) 30 s later, turns above 140 °C, or does not turn within 2 min (the drum was opened in the preheat, ADR 0022) | CHARGE, turning point, dry end and heard marks taken back, the recipe starts afresh, an armed autopilot waits for the next CHARGE, the preheat holds its target again (if presence is fresh; else the safe state); critical alarm |
+| The roast runs away (ADR 0022): from 20 s after CHARGE more than 25 °C above the plan for 10 s, or heading within 10 °C of the limit within a minute | Under an AI or the autopilot: safe state (not latched), automation ends, critical alarm. Under a person's hand: critical alarm only |
 | Roaster link lost / stale data | Alarm with the machine's tested advice; reconnect attempts for as long as the connection is wanted; AI control suspended |
 | Roaster connects or reconnects | Safe state set at once (a machine may start at its own defaults: the Cubean+ heats at 100 %); the person sets the heat again |
 | Emergency stop (button, Escape in the app, global shortcut ⌘⇧⎋ / Ctrl+Alt+Esc, MCP tool) | Safe state, latched: AI and autopilot locked out until a human resets |
@@ -128,6 +130,8 @@ plan.
 - Its commands have source `Autopilot` and pass the safety layer under the
   limits below. A trim correction is at most 5 burner points, at most one
   per 90 s, and all of them together stay within 10 points of the recipe.
+  It adds no heat from one minute before first crack, and its corrections
+  do not carry into the development (ADR 0020 §2).
 - It ends when the person switches it off (the actuators hold), on a
   person's command on burner, air or drum, at DROP, when the recording ends,
   and with the safe state on an emergency stop, a lost link or a missed

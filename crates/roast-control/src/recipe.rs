@@ -328,8 +328,23 @@ impl RecipeRun {
     /// `delta` points: the autopilot's correction stays when the recipe's
     /// next step comes (ADR 0020).
     pub fn shift_open(&mut self, actuator: Actuator, delta: f64) {
+        self.shift_open_where(actuator, delta, |_| true);
+    }
+
+    /// As [`RecipeRun::shift_open`], but only the steps whose trigger `keep`
+    /// accepts: the autopilot's corrections stay out of the development
+    /// (steps tied to first crack, or due close to it).
+    pub fn shift_open_where(
+        &mut self,
+        actuator: Actuator,
+        delta: f64,
+        keep: impl Fn(&ActionTrigger) -> bool,
+    ) {
         for s in &mut self.steps {
-            if s.state == StepState::Waiting && s.action.actuator == actuator {
+            if s.state == StepState::Waiting
+                && s.action.actuator == actuator
+                && keep(&s.action.trigger)
+            {
                 s.action.value = (s.action.value + delta).clamp(0.0, 100.0);
             }
         }
@@ -651,6 +666,27 @@ mod tests {
         assert_eq!(state(&run, 0), StepState::Replaced);
         assert_eq!(state(&run, 2), StepState::Passed);
         assert!(run.to_apply(130.0).is_empty());
+    }
+
+    #[test]
+    fn a_correction_moves_only_the_steps_it_is_asked_to() {
+        let mut run = RecipeRun::new(&[
+            at(200.0, Actuator::Burner, 80.0),
+            at(480.0, Actuator::Burner, 55.0),
+            after_fc(0.0, 45.0),
+            at(300.0, Actuator::Air, 30.0),
+        ]);
+        // As the autopilot does: not the development (from 445 s, or tied
+        // to first crack).
+        run.shift_open_where(Actuator::Burner, 5.0, |t| match *t {
+            ActionTrigger::Time { roast_time_s } => roast_time_s < 445.0,
+            _ => false,
+        });
+        let v: Vec<f64> = run.steps().iter().map(|s| s.action.value).collect();
+        assert_eq!(v, vec![85.0, 55.0, 45.0, 30.0]);
+        run.shift_open(Actuator::Burner, -5.0);
+        let v: Vec<f64> = run.steps().iter().map(|s| s.action.value).collect();
+        assert_eq!(v, vec![80.0, 50.0, 40.0, 30.0]);
     }
 
     #[test]

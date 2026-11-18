@@ -69,19 +69,29 @@ A single pop says little; the rate says a lot.
   sensitivity, 6 at low). It is placed at the **first pop of that series**,
   not at the moment the rule fires, reaching back to single pops just
   before it (at most 15 s apart, at most 30 s back): a first crack often
-  starts with a few lone pops. It is only believed after CHARGE, after
-  dry end when dry end is marked, and while the bean temperature is inside
-  the window of §4.
+  starts with a few lone pops. It is only believed from **3 min after
+  CHARGE**, and not before the turning point or dry end when they are
+  known; pops before that do not count and the crack is never placed
+  before it. The bean temperature must be inside the window of §4 and
+  rising. (Amended 2026-11-18: in BRYB-003 and the false start before it,
+  the probe still read the preheat's 200 °C right after CHARGE, inside the
+  window, and the rule placed first crack on the pops of loading the beans,
+  39 s before CHARGE.)
 - **First crack end**: after first crack, the last pop before 30 s without
-  a crack-band pop; marked once the 30 s have passed.
+  a crack-band pop; marked once the 30 s have passed. The pops are counted
+  from the first crack that is marked now: an undone or moved start leaves
+  no count behind, and a person's first crack mark removes a heard end that
+  lies before it.
 - **Second crack start**: at least 8 high-band pops within 10 s, after first
   crack, with the bean temperature at least 12 °C above first crack's.
 - Nothing is heard outside a recording.
 
 ### 4. The temperature window
 First crack is believed between **170 and 205 °C**. Once a green coffee lot
-has three roasts with a marked first crack, the window narrows to the lot's
-mean ± 12 °C, never outside 170–205. The same numbers give the prediction
+has a first crack a person marked, the window narrows around the lot's
+**median**: ± 10 °C from one such mark, ± 8 °C from two or more, never
+outside 170–205 (amended 2026-11-18; before, the mean of three roasts ± 12 °C,
+detector marks included). The same numbers give the prediction
 (§7). They live in `roast-core::crack`.
 
 ### 5. The heard crack is marked; the person's mark wins

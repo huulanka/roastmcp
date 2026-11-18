@@ -647,6 +647,7 @@ fn tools() -> Value {
             "profile": {"type": "string", "description": "A profile to follow instead of a roast: profile id or exact name (its newest version; see list_profiles). Its curve becomes the plan line and its recipe is announced to the person."},
             "drop_bt_c": num("Bean temperature to drop at, °C."),
             "dtr_pct": num("Development time ratio to drop at, percent."),
+            "drop_by": {"type": "string", "enum": ["earlier", "later", "bt", "dtr"], "description": "With both targets: which one ends the roast when they disagree from first crack on (default earlier: never darker than planned)."},
             "batch_no": {"type": "string", "description": "Batch number for the bag's label, the lot's code and its next running number, e.g. BRYB-002 (list_roasts shows the numbers used). Ignored in the simulator."},
             "title": {"type": "string", "description": "Default: the lot's name."}}}},
         {"name": "set_reference", "description": "Shows a saved roast (id from list_roasts) or a profile (its newest version) as the reference behind the live roast, or clears it (both omitted). A profile brings its recipe: get_status then names the next step. The person sees it in the app.",
@@ -1049,6 +1050,7 @@ fn call_tool(d: &mut Daemon, name: &str, args: &Value) -> anyhow::Result<Value> 
                 "profile_version_id": profile_version,
                 "drop_bt_c": arg_f("drop_bt_c"),
                 "dtr_pct": arg_f("dtr_pct"),
+                "drop_by": arg_s("drop_by"),
             });
             d.call(
                 "POST",
