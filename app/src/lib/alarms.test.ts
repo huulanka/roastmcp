@@ -22,6 +22,14 @@ describe("daemon messages in German", () => {
     expect(alarmText("Autopilot: burner 42 % (-3), the roast heads 4 °C above the plan.", t)).toBe(
       "Autopilot: Brenner 42 % (-3), die Röstung läuft 4 °C über dem Plan.",
     );
+    expect(
+      alarmText(
+        "First crack not marked: the steps tied to it run from 8:40, when the beans passed 194 °C. Your mark moves the steps still to come.",
+        t,
+      ),
+    ).toBe(
+      "First Crack nicht markiert: Die FC-Schritte laufen ab 8:40, als die Bohnen 194 °C erreichten. Deine Marke verschiebt die noch offenen Schritte.",
+    );
     expect(alarmText("DROP at 206 °C expected within 30 s: bean cooling on.", t)).toBe(
       "DROP bei 206 °C in 30 s erwartet: Bohnenkühlung an.",
     );

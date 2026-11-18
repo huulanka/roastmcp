@@ -84,6 +84,22 @@ export const PATTERNS: { re: RegExp; key: string }[] = [
     re: /^AI \((?<holder>.+)\) disconnected - you have control\.$/,
     key: "AI ({{holder}}) disconnected - you have control.",
   },
+  {
+    re: /^No first crack marked at (?<bt>\d+) °C \(expected about (?<exp>\d+) °C\)\. Mark it; at (?<at>\d+) °C the steps tied to it start without a mark\.$/,
+    key: "No first crack marked at {{bt}} °C (expected about {{exp}} °C). Mark it; at {{at}} °C the steps tied to it start without a mark.",
+  },
+  {
+    re: /^No first crack marked at (?<bt>\d+) °C \(expected about (?<exp>\d+) °C\)\. Mark it when you hear it\.$/,
+    key: "No first crack marked at {{bt}} °C (expected about {{exp}} °C). Mark it when you hear it.",
+  },
+  {
+    re: /^First crack not marked: the steps tied to it run from (?<at>\S+), when the beans passed (?<exp>\d+) °C\. Your mark moves the steps still to come\.$/,
+    key: "First crack not marked: the steps tied to it run from {{at}}, when the beans passed {{exp}} °C. Your mark moves the steps still to come.",
+  },
+  {
+    re: /^Rate of rise (?<ror>-?\d+\.\d) °C\/min after first crack: the roast may stall\. More heat, or drop soon\?$/,
+    key: "Rate of rise {{ror}} °C/min after first crack: the roast may stall. More heat, or drop soon?",
+  },
 ];
 
 /** Messages without variable parts; their English text is the key. */

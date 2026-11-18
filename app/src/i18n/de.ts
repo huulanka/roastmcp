@@ -673,6 +673,14 @@ export const de: Record<string, string> = {
   "Disconnected - the autopilot is off.": "Getrennt – der Autopilot ist aus.",
   "The link is lost - the autopilot is off.": "Die Verbindung ist weg – der Autopilot ist aus.",
   "CHARGE detected.": "CHARGE erkannt.",
+  "No first crack marked at {{bt}} °C (expected about {{exp}} °C). Mark it; at {{at}} °C the steps tied to it start without a mark.":
+    "Kein First Crack markiert bei {{bt}} °C (erwartet etwa {{exp}} °C). Markier ihn; ab {{at}} °C starten die FC-Schritte ohne Marke.",
+  "No first crack marked at {{bt}} °C (expected about {{exp}} °C). Mark it when you hear it.":
+    "Kein First Crack markiert bei {{bt}} °C (erwartet etwa {{exp}} °C). Markier ihn, sobald du ihn hörst.",
+  "First crack not marked: the steps tied to it run from {{at}}, when the beans passed {{exp}} °C. Your mark moves the steps still to come.":
+    "First Crack nicht markiert: Die FC-Schritte laufen ab {{at}}, als die Bohnen {{exp}} °C erreichten. Deine Marke verschiebt die noch offenen Schritte.",
+  "Rate of rise {{ror}} °C/min after first crack: the roast may stall. More heat, or drop soon?":
+    "RoR {{ror}} °C/min nach dem First Crack: Die Röstung droht stehen zu bleiben. Mehr Hitze oder bald droppen?",
   "DROP detected: the roast is saved.": "DROP erkannt: Die Röstung ist gespeichert.",
   "No new readings from the roaster for 5 seconds.":
     "Seit 5 Sekunden keine neuen Werte vom Röster.",

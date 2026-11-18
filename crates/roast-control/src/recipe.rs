@@ -75,6 +75,13 @@ pub struct RunStep {
     /// refusal, s since CHARGE.
     #[serde(skip)]
     retry_after: Option<f64>,
+    /// Roast time the runner saw it due, s since CHARGE: the grace time
+    /// counts from here. A step tied to an event that is marked after the
+    /// fact (a heard first crack placed at its first pop, or the anchor
+    /// without a mark) is often already late when it becomes due; it is
+    /// still set, not passed at once.
+    #[serde(skip)]
+    grace_from: Option<f64>,
 }
 
 impl RunStep {
@@ -180,6 +187,7 @@ impl RecipeRun {
                     due_at: None,
                     sent: false,
                     retry_after: None,
+                    grace_from: None,
                 })
                 .collect(),
         }
@@ -229,6 +237,10 @@ impl RecipeRun {
             if let Some(at) = due_at {
                 s.state = StepState::Due;
                 s.due_at = Some(at);
+                s.grace_from = Some(match s.action.trigger {
+                    ActionTrigger::Event { .. } => since,
+                    _ => at,
+                });
             }
         }
         // A due step the machine has is done, whoever set it.
@@ -258,7 +270,11 @@ impl RecipeRun {
             }
             if latest.get(&s.action.actuator).map(|l| l.1) != Some(s.step) {
                 s.state = StepState::Replaced;
-            } else if !s.sent && s.due_at.is_some_and(|at| since - at > RECIPE_GRACE_S) {
+            } else if !s.sent
+                && s.grace_from
+                    .or(s.due_at)
+                    .is_some_and(|at| since - at > RECIPE_GRACE_S)
+            {
                 s.state = StepState::Passed;
             }
         }
@@ -390,6 +406,7 @@ impl RecipeRun {
             if matches!(s.state, StepState::Due | StepState::Passed) {
                 s.state = StepState::Waiting;
                 s.due_at = None;
+                s.grace_from = None;
                 s.sent = false;
                 s.retry_after = None;
             }
@@ -634,6 +651,45 @@ mod tests {
         assert_eq!(state(&run, 0), StepState::Replaced);
         assert_eq!(state(&run, 2), StepState::Passed);
         assert!(run.to_apply(130.0).is_empty());
+    }
+
+    #[test]
+    fn a_step_tied_to_a_mark_set_after_the_fact_is_still_set() {
+        // A heard first crack is placed at its first pop, up to half a minute
+        // back; without a mark the steps run from where the beans passed the
+        // expected temperature, which lies well back too.
+        let mut run = RecipeRun::new(&[after_fc(0.0, 45.0), after_fc(30.0, 40.0)]);
+        let cur = values(50.0, 40.0);
+        update(&mut run, 500.0, 192.0, &[], &cur);
+        assert_eq!(state(&run, 0), StepState::Waiting);
+        // First crack becomes known at 540 s, dated 45 s back.
+        update(
+            &mut run,
+            540.0,
+            196.0,
+            &[(EventKind::FirstCrackStart, 495.0)],
+            &cur,
+        );
+        assert_eq!(state(&run, 0), StepState::Replaced, "the later step counts");
+        assert_eq!(state(&run, 1), StepState::Due);
+        assert_eq!(run.to_apply(540.0).len(), 1);
+        // Not passed before the grace time from when it became due.
+        update(
+            &mut run,
+            565.0,
+            197.0,
+            &[(EventKind::FirstCrackStart, 495.0)],
+            &cur,
+        );
+        assert_eq!(state(&run, 1), StepState::Due);
+        update(
+            &mut run,
+            575.0,
+            198.0,
+            &[(EventKind::FirstCrackStart, 495.0)],
+            &cur,
+        );
+        assert_eq!(state(&run, 1), StepState::Passed);
     }
 
     #[test]

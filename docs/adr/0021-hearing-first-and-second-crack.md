@@ -106,6 +106,19 @@ touches burner, air, drum, filter or cooling itself: it only sets marks, and
 everything that follows from a mark goes the usual way through the safety
 layer.
 
+**Without a mark** (amended 2026-11-18): steps tied to first crack used to
+wait for ever when nobody marked it; in profile v2 of BRYB-003 the burner
+would have stayed at 50 %. Now, once the beans are 3 °C past where first
+crack is expected (the plan's first crack, else the lot's), a warning asks
+for the mark. At 5 °C past it the steps run from the moment the beans passed
+the expected temperature (an anchor, not an event: phases and DTR wait for a
+person's mark). A step that is already late when its mark or anchor comes —
+the anchor lies (5 °C ÷ rate of rise) back, a heard crack up to 30 s — is
+still set: the recipe's grace time counts from when it became due, not from
+its planned time. A later mark moves only the steps still to come. After
+first crack a rate of rise below 3.5 °C/min for 15 s is told once ("the
+roast may stall"); the daemon does not add heat for it.
+
 ### 7. Prediction without a microphone
 While recording, the daemon expects first crack at the bean temperature
 where it came in earlier roasts: of the same lot, else of all roasts on the
