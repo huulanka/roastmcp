@@ -7,6 +7,7 @@ import { Check, CircleCheck, NotebookPen, Wrench, X } from "lucide-react";
 import { api, ApiError } from "@/api/client.ts";
 import type {
   Checklist,
+  DropBy,
   Lot,
   MaintenanceTask,
   ProfileSummary,
@@ -99,6 +100,8 @@ interface Form {
   profileVersionId: string;
   drop: string;
   dtr: string;
+  /** Which target ends the roast when both are set and disagree. */
+  dropBy: DropBy;
 }
 
 /** Goal, plan and targets suggested by a reference roast. */
@@ -145,6 +148,7 @@ export function StartDialog({
     refId: "",
     drop: "",
     dtr: "",
+    dropBy: "earlier",
   });
   const [busy, setBusy] = useState(false);
   const [checklist, setChecklist] = useState<Checklist | null>(null);
@@ -213,6 +217,7 @@ export function StartDialog({
           lotId,
           weight: grams ? String(grams) : "",
           batchNo: chosen && !sim ? nextBatchNo(chosen, r) : "",
+          dropBy: "earlier",
           ...fromReference(planRoastOfLot(r, lotId, rank, sim)),
         });
       })
@@ -250,6 +255,7 @@ export function StartDialog({
             : {}),
         ...(drop !== null ? { drop_bt_c: drop } : {}),
         ...(dtr !== null ? { dtr_pct: dtr } : {}),
+        ...(drop !== null && dtr !== null ? { drop_by: form.dropBy } : {}),
       };
       applySnapshot(
         await api.startRecording({
@@ -581,7 +587,7 @@ export function StartDialog({
                 </Select>
               </Field>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <Field label={t("Drop at")}>
                   <UnitInput
                     unit="°C"
@@ -597,6 +603,19 @@ export function StartDialog({
                     value={form.dtr}
                     onChange={(e) => set({ dtr: e.target.value })}
                   />
+                </Field>
+                <Field label={t("If they disagree")}>
+                  <Select value={form.dropBy} onValueChange={(v) => set({ dropBy: v as DropBy })}>
+                    <SelectTrigger aria-label={t("Which target ends the roast when they disagree")}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="earlier">{t("Whichever comes first")}</SelectItem>
+                      <SelectItem value="later">{t("Both reached")}</SelectItem>
+                      <SelectItem value="bt">{t("Temperature")}</SelectItem>
+                      <SelectItem value="dtr">DTR</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </Field>
               </div>
             </>

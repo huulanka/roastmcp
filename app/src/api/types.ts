@@ -112,11 +112,26 @@ export interface Recording {
 }
 export type RoastGoal = "espresso" | "filter" | "omni" | "other";
 /** What a roast aims for (ADR 0014); guidance only, never read by the safety layer. */
+/** Which plan target ends the roast when drop temperature and DTR disagree. */
+export type DropBy = "earlier" | "later" | "bt" | "dtr";
+
+/** From first crack on: where the plan's two targets lie (seconds since CHARGE). */
+export interface DropOutlook {
+  bt_at_s: number | null;
+  dtr_at_bt_pct: number | null;
+  dtr_at_s: number | null;
+  bt_at_dtr_c: number | null;
+  drop_at_s: number | null;
+  by: DropBy;
+  conflict: boolean;
+}
+
 export interface RoastPlan {
   goal?: RoastGoal;
   reference_id?: string;
   drop_bt_c?: number;
   dtr_pct?: number;
+  drop_by?: DropBy;
   /** A profile version as the plan; wins over reference_id. */
   profile_version_id?: string;
 }
@@ -320,6 +335,8 @@ export interface CrackExpectation {
   /** How many roasts `bt` comes from. */
   roasts: number;
   basis: "lot" | "roasts" | "typical";
+  /** Highest minus lowest of those first cracks, °C; absent on older daemons. */
+  spread_c?: number;
 }
 export interface Preheat {
   target_c: number;
@@ -374,6 +391,8 @@ export interface Snapshot {
   autopilot?: Autopilot | null;
   /** Where first crack is expected while recording; absent on older daemons. */
   first_crack?: CrackExpectation | null;
+  /** From first crack on: when the plan's drop temperature and DTR are reached. */
+  drop?: DropOutlook | null;
   /** Listening for cracks; absent on older daemons. */
   audio?: AudioStatus;
 }

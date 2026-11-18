@@ -8,11 +8,10 @@ use serde::Serialize;
 pub const FIRST_CRACK_WINDOW_C: (f64, f64) = (170.0, 205.0);
 /// The typical first-crack temperature when there are no roasts to learn from, °C.
 pub const FIRST_CRACK_TYPICAL_C: f64 = 192.0;
-/// From this many roasts of a lot on, the window narrows to the lot's mean
-/// ± [`LOT_MARGIN_C`].
-pub const LOT_ROASTS_FOR_WINDOW: usize = 3;
-/// Half width of a lot's window, °C.
-pub const LOT_MARGIN_C: f64 = 12.0;
+/// Half width of a lot's window from one first crack a person marked, °C …
+pub const LOT_MARGIN_ONE_C: f64 = 10.0;
+/// … and from two or more (around their median), °C.
+pub const LOT_MARGIN_C: f64 = 8.0;
 
 /// What the expectation is based on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -38,45 +37,97 @@ pub struct CrackExpectation {
     /// How many roasts `bt` comes from.
     pub roasts: usize,
     pub basis: CrackBasis,
+    /// Highest minus lowest of those first cracks, °C (0 with one).
+    #[serde(default)]
+    pub spread_c: f64,
+}
+
+/// One earlier roast's first crack: its bean temperature, and whether a
+/// person (or an AI) marked it rather than only the microphone.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CrackMark {
+    pub bt: f64,
+    pub by_person: bool,
 }
 
 impl CrackExpectation {
     /// The expectation from the first-crack temperatures of earlier roasts
     /// of the same lot and of all earlier roasts (implausible values are
-    /// left out).
+    /// left out), all taken as marked by a person.
     #[must_use]
     pub fn from_roasts(lot: &[f64], all: &[f64]) -> Self {
-        let (lo, hi) = FIRST_CRACK_WINDOW_C;
-        let plausible = |v: &[f64]| -> Vec<f64> {
+        let marks = |v: &[f64]| -> Vec<CrackMark> {
             v.iter()
-                .copied()
-                .filter(|b| b.is_finite() && (lo..=hi).contains(b))
+                .map(|&bt| CrackMark {
+                    bt,
+                    by_person: true,
+                })
                 .collect()
         };
-        let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
-        let lot = plausible(lot);
-        let all = plausible(all);
-        let (bt, roasts, basis) = if !lot.is_empty() {
-            (mean(&lot), lot.len(), CrackBasis::Lot)
+        Self::from_marks(&marks(lot), &marks(all))
+    }
+
+    /// The expectation from earlier first cracks: the **median** of the
+    /// lot's, else of all roasts', else a typical value. First cracks a
+    /// person marked count; those only the microphone heard count only when
+    /// there are no others (a heard mark may be off, and one early mark
+    /// moved the mean of a small lot by degrees). The window narrows around
+    /// a lot's median: ± 10 °C from one person's mark, ± 8 °C from two or
+    /// more, never outside 170–205 °C.
+    #[must_use]
+    pub fn from_marks(lot: &[CrackMark], all: &[CrackMark]) -> Self {
+        let (lo, hi) = FIRST_CRACK_WINDOW_C;
+        let pick = |v: &[CrackMark]| -> (Vec<f64>, bool) {
+            let plausible: Vec<CrackMark> = v
+                .iter()
+                .copied()
+                .filter(|m| m.bt.is_finite() && (lo..=hi).contains(&m.bt))
+                .collect();
+            let by_person: Vec<f64> = plausible
+                .iter()
+                .filter(|m| m.by_person)
+                .map(|m| m.bt)
+                .collect();
+            if by_person.is_empty() {
+                (plausible.iter().map(|m| m.bt).collect(), false)
+            } else {
+                (by_person, true)
+            }
+        };
+        let (lot, lot_by_person) = pick(lot);
+        let (all, _) = pick(all);
+        let (values, basis) = if !lot.is_empty() {
+            (lot, CrackBasis::Lot)
         } else if !all.is_empty() {
-            (mean(&all), all.len(), CrackBasis::Roasts)
+            (all, CrackBasis::Roasts)
         } else {
-            (FIRST_CRACK_TYPICAL_C, 0, CrackBasis::Typical)
+            return CrackExpectation {
+                bt: FIRST_CRACK_TYPICAL_C,
+                low: lo,
+                high: hi,
+                roasts: 0,
+                basis: CrackBasis::Typical,
+                spread_c: 0.0,
+            };
         };
-        let (low, high) = if basis == CrackBasis::Lot && roasts >= LOT_ROASTS_FOR_WINDOW {
-            (
-                (bt - LOT_MARGIN_C).clamp(lo, hi),
-                (bt + LOT_MARGIN_C).clamp(lo, hi),
-            )
-        } else {
-            (lo, hi)
+        let bt = median(&values);
+        let spread_c = values.iter().copied().fold(f64::MIN, f64::max)
+            - values.iter().copied().fold(f64::MAX, f64::min);
+        let margin = match values.len() {
+            _ if basis != CrackBasis::Lot || !lot_by_person => None,
+            1 => Some(LOT_MARGIN_ONE_C),
+            _ => Some(LOT_MARGIN_C),
         };
+        let (low, high) = margin.map_or((lo, hi), |m| {
+            ((bt - m).clamp(lo, hi), (bt + m).clamp(lo, hi))
+        });
         CrackExpectation {
             bt,
             low,
             high,
-            roasts,
+            roasts: values.len(),
             basis,
+            spread_c,
         }
     }
 
@@ -84,6 +135,18 @@ impl CrackExpectation {
     #[must_use]
     pub fn believable(&self, bt: f64) -> bool {
         (self.low..=self.high).contains(&bt)
+    }
+}
+
+/// The median of `v` (not empty).
+fn median(v: &[f64]) -> f64 {
+    let mut v = v.to_vec();
+    v.sort_by(f64::total_cmp);
+    let n = v.len();
+    if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        f64::midpoint(v[n / 2 - 1], v[n / 2])
     }
 }
 
@@ -104,25 +167,50 @@ mod tests {
     }
 
     #[test]
-    fn all_roasts_give_the_mean_but_keep_the_wide_window() {
-        let e = CrackExpectation::from_roasts(&[], &[190.0, 194.0, 120.0]);
+    fn all_roasts_give_the_median_but_keep_the_wide_window() {
+        let e = CrackExpectation::from_roasts(&[], &[190.0, 194.0, 120.0, 201.0]);
         assert_eq!(e.basis, CrackBasis::Roasts);
-        assert_eq!(e.bt, 192.0);
-        assert_eq!(e.roasts, 2, "the implausible 120 °C is left out");
+        assert_eq!(e.bt, 194.0);
+        assert_eq!(e.roasts, 3, "the implausible 120 °C is left out");
+        assert_eq!(e.spread_c, 11.0);
         assert_eq!((e.low, e.high), FIRST_CRACK_WINDOW_C);
     }
 
     #[test]
-    fn a_lot_with_three_roasts_narrows_the_window() {
-        let two = CrackExpectation::from_roasts(&[196.0, 198.0], &[185.0]);
+    fn a_lots_marks_narrow_the_window_around_their_median() {
+        // BR012 and BRYB-003: 190.9 and 194.9 °C.
+        let two = CrackExpectation::from_roasts(&[190.9, 194.9], &[185.0]);
         assert_eq!(two.basis, CrackBasis::Lot);
-        assert_eq!(two.bt, 197.0);
-        assert_eq!((two.low, two.high), FIRST_CRACK_WINDOW_C);
+        assert!((two.bt - 192.9).abs() < 1e-9);
+        assert!((two.low - 184.9).abs() < 1e-9 && (two.high - 200.9).abs() < 1e-9);
+        assert!(
+            !two.believable(179.8),
+            "BRYB-003's false heard crack at 6:48"
+        );
 
-        let three = CrackExpectation::from_roasts(&[196.0, 198.0, 200.0], &[185.0]);
-        assert_eq!(three.bt, 198.0);
-        assert_eq!(three.low, 186.0);
-        assert_eq!(three.high, 205.0, "never outside the wide window");
-        assert!(!three.believable(180.0));
+        let one = CrackExpectation::from_roasts(&[190.9], &[]);
+        assert!((one.low - 180.9).abs() < 1e-9 && (one.high - 200.9).abs() < 1e-9);
+
+        let high = CrackExpectation::from_roasts(&[198.0, 200.0, 201.0], &[]);
+        assert_eq!(high.bt, 200.0);
+        assert_eq!(high.high, 205.0, "never outside the wide window");
+    }
+
+    #[test]
+    fn a_crack_only_the_microphone_heard_counts_only_without_others() {
+        let person = |bt| CrackMark {
+            bt,
+            by_person: true,
+        };
+        let heard = |bt| CrackMark {
+            bt,
+            by_person: false,
+        };
+        let e = CrackExpectation::from_marks(&[person(194.0), heard(180.0)], &[]);
+        assert_eq!((e.bt, e.roasts), (194.0, 1));
+        // Only heard ones: used, but they do not narrow the window.
+        let e = CrackExpectation::from_marks(&[heard(193.0)], &[]);
+        assert_eq!((e.bt, e.basis), (193.0, CrackBasis::Lot));
+        assert_eq!((e.low, e.high), FIRST_CRACK_WINDOW_C);
     }
 }

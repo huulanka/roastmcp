@@ -64,3 +64,27 @@ first, then one page per group, no scrolling); MCP takes the same fields.
 - Imported Artisan roasts keep their free-text bean and debit nothing.
 - A purchase recorded by the AI shows up in the app at once, and the other way
   round.
+
+## Amendment (2026-11-18): when the two targets disagree
+In BRYB-003 the plan asked for 203 °C and a DTR of 19 %. With too much energy
+after first crack the bean temperature reached 203 °C at a DTR of about 14 %;
+19 % would have come only at about 208 °C. The daemon did not use the DTR at
+all; the cooling followed the temperature alone.
+
+From first crack on the daemon now works out both: when the bean temperature
+reaches the drop temperature (projected from the rate of rise and its trend)
+and when the DTR reaches its target (`first crack / (1 − DTR)`). When they lie
+more than 20 s apart it warns once ("Plan targets disagree: 203 °C at 9:45
+(DTR 12 %), DTR 19 % at 10:33 (about 208 °C). DROP follows the earlier.").
+The plan's `drop_by` says which ends the roast: `earlier` (the default: never
+darker than planned), `later`, `bt` or `dtr`. The bean cooling starts 30 s
+before that moment. The start dialog and the MCP tool `start_recording` offer
+the choice; the snapshot's `drop` carries both times.
+
+The first-crack expectation (ADR 0021 §7) changed the same day: it is the
+**median** of the first cracks a person (or an AI) marked in earlier roasts of
+the lot (marks only the microphone set count only when there are no others),
+and the window narrows to ± 10 °C around one such mark and ± 8 °C around two
+or more. Statistics over several roasts (consistency) leave out first crack,
+development and DTR of roasts whose first crack only the microphone marked.
+

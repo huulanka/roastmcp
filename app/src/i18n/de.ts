@@ -645,6 +645,22 @@ export const de: Record<string, string> = {
     "DROP: Brenner aus, Bohnenkühlung an. Die KI ({{holder}}) hat dir die Kontrolle zurückgegeben.",
   "DROP at {{target}} °C expected within {{s}} s: bean cooling on.":
     "DROP bei {{target}} °C in {{s}} s erwartet: Bohnenkühlung an.",
+  "DROP at DTR {{dtr}} % expected within {{s}} s: bean cooling on.":
+    "DROP bei DTR {{dtr}} % in {{s}} s erwartet: Bohnenkühlung an.",
+  "Plan targets disagree: {{bt}} °C at {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % at {{dtr_at}} (about {{bt_dtr}} °C). DROP follows the earlier.":
+    "Planziele passen nicht zusammen: {{bt}} °C bei {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % bei {{dtr_at}} (etwa {{bt_dtr}} °C). DROP nach dem früheren.",
+  "Plan targets disagree: {{bt}} °C at {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % at {{dtr_at}} (about {{bt_dtr}} °C). DROP follows the later.":
+    "Planziele passen nicht zusammen: {{bt}} °C bei {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % bei {{dtr_at}} (etwa {{bt_dtr}} °C). DROP erst, wenn beide erreicht sind.",
+  "Plan targets disagree: {{bt}} °C at {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % at {{dtr_at}} (about {{bt_dtr}} °C). DROP follows the temperature.":
+    "Planziele passen nicht zusammen: {{bt}} °C bei {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % bei {{dtr_at}} (etwa {{bt_dtr}} °C). DROP nach der Temperatur.",
+  "Plan targets disagree: {{bt}} °C at {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % at {{dtr_at}} (about {{bt_dtr}} °C). DROP follows the DTR.":
+    "Planziele passen nicht zusammen: {{bt}} °C bei {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % bei {{dtr_at}} (etwa {{bt_dtr}} °C). DROP nach der DTR.",
+  "If they disagree": "Wenn sie abweichen",
+  "Which target ends the roast when they disagree":
+    "Welches Ziel beendet die Röstung, wenn sie abweichen",
+  "Whichever comes first": "Was zuerst kommt",
+  "Both reached": "Beide erreicht",
+  Temperature: "Temperatur",
   "A recording was interrupted; it was recovered to {{path}}.":
     "Eine Aufzeichnung wurde unterbrochen; sie wurde nach {{path}} gerettet.",
   "Recovery failed: {{e}}": "Wiederherstellung fehlgeschlagen: {{e}}",

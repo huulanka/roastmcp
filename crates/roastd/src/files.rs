@@ -46,6 +46,10 @@ pub struct Summary {
     first_crack_s: Option<f64>,
     /// Bean temperature at first crack, °C.
     first_crack_bt: Option<f64>,
+    /// Only the microphone marked first crack (ADR 0021); a person's (or an
+    /// AI's) mark is worth more for what later roasts expect. Missing in
+    /// summaries saved before 2026-11-18: those count as marked by a person.
+    first_crack_heard_only: bool,
     /// Development time ratio at the drop, percent.
     dtr_pct: Option<f64>,
     goal: Option<roast_core::RoastGoal>,
@@ -559,6 +563,9 @@ pub fn summary(roast: &Roast) -> Summary {
         lot_id: roast.green_lot_id,
         first_crack_s,
         first_crack_bt: roast.event(EventKind::FirstCrackStart).and_then(|e| e.bt),
+        first_crack_heard_only: roast
+            .event(EventKind::FirstCrackStart)
+            .is_some_and(|e| e.origin == roast_core::EventOrigin::Detector),
         dtr_pct,
         goal: roast.plan.as_ref().and_then(|p| p.goal),
         batch_no: batch_no(roast),
@@ -595,12 +602,20 @@ pub fn crack_expectation(
         if sim != simulated || (exclude.is_some() && id_of(s, "id") == exclude) {
             continue;
         }
-        all.push(bt);
+        let heard_only = s
+            .get("first_crack_heard_only")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true);
+        let mark = roast_core::CrackMark {
+            bt,
+            by_person: !heard_only,
+        };
+        all.push(mark);
         if lot.is_some() && id_of(s, "lot_id") == lot {
-            of_lot.push(bt);
+            of_lot.push(mark);
         }
     }
-    roast_core::CrackExpectation::from_roasts(&of_lot, &all)
+    roast_core::CrackExpectation::from_marks(&of_lot, &all)
 }
 
 #[cfg(test)]

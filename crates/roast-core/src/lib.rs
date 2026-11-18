@@ -16,6 +16,7 @@ pub mod compare;
 pub mod crack;
 pub mod cupping;
 pub mod design;
+pub mod drop_rule;
 pub mod event;
 pub mod experiment;
 pub mod inventory;
@@ -40,11 +41,12 @@ pub use compare::{
     Alignment, Comparison, Consistency, CurveRow, FigureDeltas, RoastFigures, Spread, compare,
     consistency, figures, spread,
 };
-pub use crack::{CrackBasis, CrackExpectation, FIRST_CRACK_WINDOW_C};
+pub use crack::{CrackBasis, CrackExpectation, CrackMark, FIRST_CRACK_WINDOW_C};
 pub use cupping::{
     Cupping, CuppingError, CuppingScores, RestWindow, RestWindows, RoastLevel, rest_days_between,
     rest_window,
 };
+pub use drop_rule::{DropBy, DropInput, DropOutlook, drop_outlook};
 pub use event::{EventKind, EventOrigin, Note, RoastEvent};
 pub use experiment::{ChangedVariable, Experiment, ExperimentStatus, VariableChange};
 pub use inventory::{
@@ -57,7 +59,9 @@ pub use profile::{
     ActionTrigger, DropRule, EventTarget, EventTargets, MAX_EVENT_OFFSET_S, PlannedAction, Profile,
     ProfileTarget, ProfileVersion, RecipeAnchor, TargetPoint, ToleranceBand,
 };
-pub use reference::{Milestone, Projection, RefPoint, ReferenceCurve, ReferenceKind, project};
+pub use reference::{
+    Milestone, Projection, Projector, RefPoint, ReferenceCurve, ReferenceKind, project,
+};
 pub use roast::{
     Ambient, BatchInfo, ColorScale, ROAST_FILE_SCHEMA_VERSION, Roast, RoastDegree, RoastGoal,
     RoastOrigin, RoastPlan,

@@ -277,6 +277,9 @@ pub struct Snapshot {
     autopilot: Option<AutopilotStatus>,
     /// Where first crack is expected in the running recording (ADR 0021).
     first_crack: Option<CrackExpectation>,
+    /// From first crack on: when the plan's drop temperature and DTR are
+    /// reached, and which ends the roast.
+    drop: Option<roast_core::DropOutlook>,
     /// Listening for cracks (ADR 0021).
     audio: AudioStatus,
 }
@@ -463,6 +466,8 @@ pub struct Engine {
     stale_alarmed: bool,
     /// The bean cooling went on ahead of DROP in this roast (once per roast).
     cooled_before_drop: bool,
+    /// The plan's targets disagree, and the person was told in this roast.
+    drop_conflict_told: bool,
     last_autosave: Instant,
 
     alarms: VecDeque<Alarm>,
@@ -540,6 +545,7 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
         last_reading: None,
         stale_alarmed: false,
         cooled_before_drop: false,
+        drop_conflict_told: false,
         control_request: None,
         last_autosave: Instant::now(),
         alarms: VecDeque::new(),
@@ -672,6 +678,7 @@ impl Engine {
             alarms: self.alarms.iter().cloned().collect(),
             control_seq: self.roast.as_ref().map_or(0, |r| r.control_log.len()),
             first_crack: self.roast.as_ref().and(self.first_crack),
+            drop: self.drop_outlook(),
             audio: self.audio_status(),
         }
     }
@@ -2175,6 +2182,7 @@ impl Engine {
             self.inventory.adopt_batch_code(l.id, b);
         }
         self.cooled_before_drop = false;
+        self.drop_conflict_told = false;
         let profile = self.profile.as_ref();
         self.roast = Some(Roast {
             id: uuid::Uuid::new_v4(),
@@ -2492,28 +2500,95 @@ impl Engine {
     /// planned DROP within 30 s, so the tray is turning when the beans
     /// arrive. Once per roast: if the person switches it off again, it stays
     /// off until DROP.
+    /// From first crack on, where the plan's drop temperature and DTR lie
+    /// (ADR 0014, amended 2026-11-18): when they disagree by more than 20 s
+    /// the person hears so once, and the plan's rule (the earlier one by
+    /// default) decides when the cooling starts.
+    fn drop_outlook(&self) -> Option<roast_core::DropOutlook> {
+        let roast = self.roast.as_ref()?;
+        if self.state != RoastState::Charged {
+            return None;
+        }
+        let plan = roast.plan.as_ref()?;
+        if plan.drop_bt_c.is_none() && plan.dtr_pct.is_none() {
+            return None;
+        }
+        let charge = roast.charge_t()?;
+        let fc = roast.event(EventKind::FirstCrackStart)?.t - charge;
+        let since = self.since_charge()?;
+        let end = self.points.last()?.t;
+        let mut recent: Vec<(f64, f64, f64)> = self
+            .points
+            .iter()
+            .rev()
+            .take_while(|p| p.t >= end - 60.0 && p.t >= charge)
+            .filter_map(|p| Some((p.t, p.bt?, p.ror?)))
+            .collect();
+        recent.reverse();
+        let projector = roast_core::Projector::new(&recent);
+        let bt_now = self.last_bt?;
+        Some(roast_core::drop_outlook(
+            &roast_core::DropInput {
+                since,
+                first_crack_s: fc,
+                drop_bt_c: plan.drop_bt_c,
+                dtr_pct: plan.dtr_pct,
+                by: plan.drop_by.unwrap_or_default(),
+            },
+            |h| projector.map_or(bt_now, |p| p.bt_at(h)),
+            |target| match projector {
+                Some(p) => p.reaches(target, 900.0),
+                None => (bt_now >= target).then_some(0.0),
+            },
+        ))
+    }
+
     fn cool_before_drop(&mut self) {
-        if self.state != RoastState::Charged
-            || self.cooled_before_drop
-            || !self.has_switch(Actuator::Cooling)
+        if self.state != RoastState::Charged {
+            return;
+        }
+        let outlook = self.drop_outlook();
+        if let Some(o) = outlook.filter(|o| o.conflict)
+            && !self.drop_conflict_told
         {
+            self.drop_conflict_told = true;
+            self.tell_drop_conflict(&o);
+        }
+        if self.cooled_before_drop || !self.has_switch(Actuator::Cooling) {
             return;
         }
         let Some(roast) = &self.roast else {
             return;
         };
-        let target = roast.plan.as_ref().and_then(|p| p.drop_bt_c).or_else(|| {
-            self.reference
-                .as_ref()
-                .and_then(|r| r.event(EventKind::Drop))
-                .and_then(|e| e.bt)
-        });
-        let (Some(target), Some(bt), Some(ror)) = (target, self.last_bt, self.last_ror) else {
+        let since = self.since_charge();
+        let due = match (outlook.and_then(|o| o.drop_at_s), since) {
+            // From first crack on, the plan's rule says when.
+            (Some(at), Some(since)) => (at - since <= COOL_BEFORE_DROP_S).then(|| {
+                let by_dtr = outlook.is_some_and(|o| o.dtr_at_s == Some(at));
+                let plan = roast.plan.as_ref();
+                match (by_dtr, plan.and_then(|p| p.dtr_pct)) {
+                    (true, Some(dtr)) => format!("DTR {dtr:.0} %"),
+                    _ => format!("{:.0} °C", plan.and_then(|p| p.drop_bt_c).unwrap_or(0.0)),
+                }
+            }),
+            _ => {
+                let target = roast.plan.as_ref().and_then(|p| p.drop_bt_c).or_else(|| {
+                    self.reference
+                        .as_ref()
+                        .and_then(|r| r.event(EventKind::Drop))
+                        .and_then(|e| e.bt)
+                });
+                let (Some(target), Some(bt), Some(ror)) = (target, self.last_bt, self.last_ror)
+                else {
+                    return;
+                };
+                (bt + ror.max(0.0) * COOL_BEFORE_DROP_S / 60.0 >= target)
+                    .then(|| format!("{target:.0} °C"))
+            }
+        };
+        let Some(what) = due else {
             return;
         };
-        if bt + ror.max(0.0) * COOL_BEFORE_DROP_S / 60.0 < target {
-            return;
-        }
         self.cooled_before_drop = true;
         let now = self.now();
         let on = self
@@ -2534,9 +2609,46 @@ impl Engine {
             self.alarm(
                 "info",
                 "cooling",
-                format!("DROP at {target:.0} °C expected within {COOL_BEFORE_DROP_S:.0} s: bean cooling on."),
+                format!(
+                    "DROP at {what} expected within {COOL_BEFORE_DROP_S:.0} s: bean cooling on."
+                ),
             );
         }
+    }
+
+    /// Tells the person once that the plan's drop temperature and DTR
+    /// disagree, with where each lies and which one decides.
+    fn tell_drop_conflict(&mut self, o: &roast_core::DropOutlook) {
+        let clock = |t: f64| format!("{}:{:02}", (t / 60.0) as i64, (t % 60.0) as i64);
+        let (Some(b), Some(dtr_b), Some(d), Some(bt_d)) =
+            (o.bt_at_s, o.dtr_at_bt_pct, o.dtr_at_s, o.bt_at_dtr_c)
+        else {
+            return;
+        };
+        let target = self
+            .roast
+            .as_ref()
+            .and_then(|r| r.plan.as_ref())
+            .map_or((0.0, 0.0), |p| {
+                (p.drop_bt_c.unwrap_or(0.0), p.dtr_pct.unwrap_or(0.0))
+            });
+        let rule = match o.by {
+            roast_core::DropBy::Earlier => "the earlier",
+            roast_core::DropBy::Later => "the later",
+            roast_core::DropBy::Bt => "the temperature",
+            roast_core::DropBy::Dtr => "the DTR",
+        };
+        self.alarm(
+            "warning",
+            "drop_conflict",
+            format!(
+                "Plan targets disagree: {:.0} °C at {} (DTR {dtr_b:.0} %), DTR {:.0} % at {} (about {bt_d:.0} °C). DROP follows {rule}.",
+                target.0,
+                clock(b),
+                target.1,
+                clock(d),
+            ),
+        );
     }
 
     fn has_switch(&self, a: Actuator) -> bool {
@@ -3479,6 +3591,151 @@ mod tests {
         let ap = s.autopilot.unwrap();
         assert_eq!((ap.state, ap.offset, ap.corrections), ("active", 5.0, 0));
         assert_eq!(s.safety.lease_holder.as_deref(), Some(AUTOPILOT_HOLDER));
+    }
+
+    /// Pushes readings 1.5 s apart (on the roast clock), from `bt` rising at
+    /// `ror` °C/min.
+    fn push_readings(e: &mut Engine, n: usize, bt: f64, ror: f64) {
+        for i in 0..n {
+            e.zero -= Duration::from_secs_f64(1.5 / e.time_scale);
+            let actuators = e.safety.status(e.now()).actuators;
+            e.on_reading(roast_driver::Reading {
+                ambient_c: None,
+                bt: Some(bt + ror * 1.5 * i as f64 / 60.0),
+                et: None,
+                actuators,
+            });
+        }
+    }
+
+    /// BRYB-003 at 8:33: first crack marked, 194.9 °C rising 6.8 °C/min,
+    /// planned DROP at 203 °C and DTR 19 %.
+    fn at_first_crack_of_bryb003(e: &mut Engine, by: Option<roast_core::DropBy>) {
+        e.start_recording(RecordingMeta {
+            plan: Some(RoastPlan {
+                drop_bt_c: Some(203.0),
+                dtr_pct: Some(19.0),
+                drop_by: by,
+                ..RoastPlan::default()
+            }),
+            ..RecordingMeta::default()
+        })
+        .unwrap();
+        e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+        e.mark_event(EventKind::FirstCrackStart, EventOrigin::Human)
+            .unwrap();
+        for ev in &mut e.roast.as_mut().unwrap().events {
+            ev.t -= if ev.kind == EventKind::Charge {
+                513.0
+            } else {
+                0.0
+            };
+        }
+    }
+
+    fn told(s: &Snapshot, kind: &str) -> usize {
+        s.alarms.iter().filter(|a| a.kind == kind).count()
+    }
+
+    #[tokio::test]
+    async fn disagreeing_drop_targets_are_told_once_and_the_earlier_one_starts_the_cooling() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| {
+                at_first_crack_of_bryb003(e, None);
+                push_readings(e, 30, 194.9, 6.8);
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        let o = s.drop.unwrap();
+        assert!(o.conflict, "{o:?}");
+        assert_eq!(told(&s, "drop_conflict"), 1, "{:?}", s.alarms);
+        let msg = &s
+            .alarms
+            .iter()
+            .find(|a| a.kind == "drop_conflict")
+            .unwrap()
+            .message;
+        assert!(
+            msg.starts_with("Plan targets disagree: 203 °C at "),
+            "{msg}"
+        );
+        assert!(msg.ends_with("DROP follows the earlier."), "{msg}");
+        // 45 s after first crack the temperature is about 30 s away.
+        let s = h
+            .call(|e| {
+                push_readings(e, 30, 194.9 + 6.8 * 45.0 / 60.0, 6.8);
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert_eq!(told(&s, "drop_conflict"), 1);
+        assert_eq!(
+            actuator(&s, Actuator::Cooling),
+            Some(100.0),
+            "{:?}",
+            s.alarms
+        );
+        assert!(
+            s.alarms
+                .iter()
+                .any(|a| a.message == "DROP at 203 °C expected within 30 s: bean cooling on."),
+            "{:?}",
+            s.alarms
+        );
+    }
+
+    #[tokio::test]
+    async fn with_the_dtr_deciding_the_cooling_waits_for_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| {
+                at_first_crack_of_bryb003(e, Some(roast_core::DropBy::Dtr));
+                push_readings(e, 60, 194.9, 6.8);
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert_ne!(
+            actuator(&s, Actuator::Cooling),
+            Some(100.0),
+            "{:?}",
+            s.alarms
+        );
+        assert!(
+            s.alarms
+                .iter()
+                .any(|a| a.message.ends_with("DROP follows the DTR."))
+        );
+        // 19 % DTR after first crack at 8:33 is 10:33; 30 s before it.
+        let s = h
+            .call(|e| {
+                push_readings(e, 4, 203.0, 2.0);
+                for ev in &mut e.roast.as_mut().unwrap().events {
+                    ev.t -= 40.0;
+                }
+                push_readings(e, 2, 203.5, 2.0);
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        let since = s.drop.unwrap();
+        assert_eq!(
+            actuator(&s, Actuator::Cooling),
+            Some(100.0),
+            "{since:?} {:?}",
+            s.alarms
+        );
+        assert!(
+            s.alarms
+                .iter()
+                .any(|a| a.message == "DROP at DTR 19 % expected within 30 s: bean cooling on."),
+            "{:?}",
+            s.alarms
+        );
     }
 
     #[tokio::test]

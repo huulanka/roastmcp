@@ -219,21 +219,9 @@ pub fn project(
     reference: Option<&ReferenceCurve>,
     first_crack_bt: Option<f64>,
 ) -> Option<Projection> {
-    let &(t_now, bt, ror) = recent.last()?;
-    if ror <= 0.0 {
-        return None;
-    }
-    let trend = ror_trend(recent, t_now);
-    let bt_at = |h: f64| -> f64 {
-        // RoR (°C/min) falls linearly at `trend` (°C/min per s) until zero.
-        let h_zero = if trend < 0.0 {
-            -ror / trend
-        } else {
-            f64::INFINITY
-        };
-        let h = h.min(h_zero);
-        bt + (ror * h + 0.5 * trend * h * h) / 60.0
-    };
+    let p = Projector::new(recent)?;
+    let bt = p.bt;
+    let bt_at = |h: f64| p.bt_at(h);
     // A milestone whose temperature is already passed is not shown.
     let next = next_milestone(events, reference, first_crack_bt)
         .filter(|&(_, target)| bt < target)
@@ -248,6 +236,57 @@ pub fn project(
         bt_60s: Some(bt_at(60.0)),
         next,
     })
+}
+
+/// The bean temperature ahead, as [`project`] sees it: the rate of rise keeps
+/// changing at its recent rate (never rising) and stops at zero.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Projector {
+    /// Bean temperature now, °C.
+    pub bt: f64,
+    ror: f64,
+    trend: f64,
+}
+
+impl Projector {
+    /// From the recent curve, `(t, bt, ror)` in time order; `None` before the
+    /// rate of rise is known or while it is not positive.
+    #[must_use]
+    pub fn new(recent: &[(f64, f64, f64)]) -> Option<Self> {
+        let &(t_now, bt, ror) = recent.last()?;
+        if ror <= 0.0 {
+            return None;
+        }
+        Some(Projector {
+            bt,
+            ror,
+            trend: ror_trend(recent, t_now),
+        })
+    }
+
+    /// The bean temperature `h` seconds ahead, °C.
+    #[must_use]
+    pub fn bt_at(&self, h: f64) -> f64 {
+        // RoR (°C/min) falls linearly at `trend` (°C/min per s) until zero.
+        let h_zero = if self.trend < 0.0 {
+            -self.ror / self.trend
+        } else {
+            f64::INFINITY
+        };
+        let h = h.min(h_zero);
+        self.bt + (self.ror * h + 0.5 * self.trend * h * h) / 60.0
+    }
+
+    /// Seconds until the bean temperature reaches `target`, within `max_s`.
+    #[must_use]
+    pub fn reaches(&self, target: f64, max_s: f64) -> Option<f64> {
+        if self.bt >= target {
+            return Some(0.0);
+        }
+        (1..=max_s as u32)
+            .map(f64::from)
+            .find(|&h| self.bt_at(h) >= target)
+    }
 }
 
 /// Least-squares slope of the RoR over the last minute, clamped to ≤ 0.
