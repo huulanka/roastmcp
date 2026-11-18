@@ -31,6 +31,18 @@ export const PATTERNS: { re: RegExp; key: string }[] = [
     key: "Autopilot: burner {{value}} % ({{delta}}), the roast heads {{c}} °C below the plan.",
   },
   {
+    re: /^Autopilot: burner (?<value>\d+) % \((?<delta>[+-]?\d+)\), the roast heads (?<c>\d+) °C above the plan \((?<pred>[+-]?\d+\.\d) °C in (?<h>\d+) s; now (?<now>[+-]?\d+\.\d) °C, median (?<med>[+-]?\d+\.\d) °C; RoR (?<ror>-?\d+\.\d) vs plan (?<pror>-?\d+\.\d)\)\.$/,
+    key: "Autopilot: burner {{value}} % ({{delta}}), the roast heads {{c}} °C above the plan ({{pred}} °C in {{h}} s; now {{now}} °C, median {{med}} °C; RoR {{ror}} vs plan {{pror}}).",
+  },
+  {
+    re: /^Autopilot: burner (?<value>\d+) % \((?<delta>[+-]?\d+)\), the roast heads (?<c>\d+) °C below the plan \((?<pred>[+-]?\d+\.\d) °C in (?<h>\d+) s; now (?<now>[+-]?\d+\.\d) °C, median (?<med>[+-]?\d+\.\d) °C; RoR (?<ror>-?\d+\.\d) vs plan (?<pror>-?\d+\.\d)\)\.$/,
+    key: "Autopilot: burner {{value}} % ({{delta}}), the roast heads {{c}} °C below the plan ({{pred}} °C in {{h}} s; now {{now}} °C, median {{med}} °C; RoR {{ror}} vs plan {{pror}}).",
+  },
+  {
+    re: /^Autopilot: back on the plan - the recipe's next burner steps move (?<shift>[+-]?\d+) points back toward the recipe\.$/,
+    key: "Autopilot: back on the plan - the recipe's next burner steps move {{shift}} points back toward the recipe.",
+  },
+  {
     re: /^Preheating to (?<target>\d+) °C at air (?<air>\d+) %\. Confirm presence every (?<every>\d+) min while it runs \(a gong sounds before\)\.$/,
     key: "Preheating to {{target}} °C at air {{air}} %. Confirm presence every {{every}} min while it runs (a gong sounds before).",
   },

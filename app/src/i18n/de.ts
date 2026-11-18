@@ -632,6 +632,12 @@ export const de: Record<string, string> = {
     "Autopilot: Brenner {{value}} % ({{delta}}), die Röstung läuft {{c}} °C über dem Plan.",
   "Autopilot: burner {{value}} % ({{delta}}), the roast heads {{c}} °C below the plan.":
     "Autopilot: Brenner {{value}} % ({{delta}}), die Röstung läuft {{c}} °C unter dem Plan.",
+  "Autopilot: burner {{value}} % ({{delta}}), the roast heads {{c}} °C above the plan ({{pred}} °C in {{h}} s; now {{now}} °C, median {{med}} °C; RoR {{ror}} vs plan {{pror}}).":
+    "Autopilot: Brenner {{value}} % ({{delta}}), die Röstung läuft {{c}} °C über dem Plan ({{pred}} °C in {{h}} s; jetzt {{now}} °C, Median {{med}} °C; RoR {{ror}} statt {{pror}}).",
+  "Autopilot: burner {{value}} % ({{delta}}), the roast heads {{c}} °C below the plan ({{pred}} °C in {{h}} s; now {{now}} °C, median {{med}} °C; RoR {{ror}} vs plan {{pror}}).":
+    "Autopilot: Brenner {{value}} % ({{delta}}), die Röstung läuft {{c}} °C unter dem Plan ({{pred}} °C in {{h}} s; jetzt {{now}} °C, Median {{med}} °C; RoR {{ror}} statt {{pror}}).",
+  "Autopilot: back on the plan - the recipe's next burner steps move {{shift}} points back toward the recipe.":
+    "Autopilot: wieder auf dem Plan – die nächsten Brennerstufen des Rezepts gehen {{shift}} Punkte zurück Richtung Rezept.",
   "Preheating to {{target}} °C at air {{air}} %. Confirm presence every {{every}} min while it runs (a gong sounds before).":
     "Vorheizen auf {{target}} °C bei Luft {{air}} %. Bestätige währenddessen alle {{every}} min deine Anwesenheit (vorher ertönt ein Gong).",
   "{{holder}} asks for control. Press “I'm at the roaster” in the app to allow it.":

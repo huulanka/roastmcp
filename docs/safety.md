@@ -128,6 +128,8 @@ plan.
 - Its commands have source `Autopilot` and pass the safety layer under the
   limits below. A trim correction is at most 5 burner points, at most one
   per 90 s, and all of them together stay within 10 points of the recipe.
+  It adds no heat from one minute before first crack, and its corrections
+  do not carry into the development (ADR 0020 §2).
 - It ends when the person switches it off (the actuators hold), on a
   person's command on burner, air or drum, at DROP, when the recording ends,
   and with the safe state on an emergency stop, a lost link or a missed
