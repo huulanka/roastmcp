@@ -416,6 +416,19 @@ struct ChargeCheck {
     /// Lowest bean temperature since, °C.
     lowest: f64,
 }
+// Without a first-crack mark the steps tied to it would wait forever (the
+// burner stays where it was, e.g. 50 % in profile v2 of BRYB-003).
+/// This far above where first crack is expected, the person is asked to
+/// mark it, °C …
+const FC_MISSING_ASK_C: f64 = 3.0;
+/// … and this far above, the steps tied to it run from where the beans
+/// passed the expected temperature, °C.
+const FC_MISSING_ANCHOR_C: f64 = 5.0;
+/// After first crack a rate of rise below this for a while risks a stall,
+/// °C/min …
+const STALL_ROR: f64 = 3.5;
+/// … for this long, s.
+const STALL_FOR_S: f64 = 15.0;
 /// After the safety layer refused a recipe step, the runner tries again
 /// this much later, s.
 const RECIPE_RETRY_S: f64 = 5.0;
@@ -521,6 +534,15 @@ pub struct Engine {
     last_preheat_target: Option<f64>,
     /// The plan's targets disagree, and the person was told in this roast.
     drop_conflict_told: bool,
+    /// No first crack was marked well above where it was expected: the
+    /// curve time the steps tied to it run from (no event is set).
+    fc_anchor: Option<f64>,
+    /// The person was asked to mark first crack in this roast.
+    fc_missing_told: bool,
+    /// Since when (curve time) the rate of rise after first crack is low,
+    /// and whether the person was told.
+    stall_since: Option<f64>,
+    stall_told: bool,
     last_autosave: Instant,
 
     alarms: VecDeque<Alarm>,
@@ -605,6 +627,10 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
         runaway_done: false,
         last_preheat_target: None,
         drop_conflict_told: false,
+        fc_anchor: None,
+        fc_missing_told: false,
+        stall_since: None,
+        stall_told: false,
         control_request: None,
         last_autosave: Instant::now(),
         alarms: VecDeque::new(),
@@ -802,11 +828,18 @@ impl Engine {
         let Some(charge) = roast.charge_t() else {
             return Vec::new();
         };
-        roast
+        let mut events: Vec<(EventKind, f64)> = roast
             .events
             .iter()
             .map(|e| (e.kind, e.t - charge))
-            .collect()
+            .collect();
+        // Without a mark, the steps tied to first crack run from the anchor.
+        if let Some(anchor) = self.fc_anchor
+            && roast.event(EventKind::FirstCrackStart).is_none()
+        {
+            events.push((EventKind::FirstCrackStart, anchor - charge));
+        }
+        events
     }
 
     /// The recipe of a profile plan, fresh for a new roast; none for a roast
@@ -2052,6 +2085,7 @@ impl Engine {
             // A CHARGE that was none is taken back; the preheat holds again.
         } else if !dropped {
             self.guard_runaway();
+            self.watch_first_crack();
             self.autopilot_lease();
             self.run_recipe();
             self.autopilot_trim();
@@ -2248,6 +2282,131 @@ impl Engine {
             self.alarm("critical", "runaway", format!("{why}. Check the roaster!"));
             self.audit(serde_json::json!({"type": "runaway_warning", "why": why}));
         }
+    }
+
+    /// Where first crack is expected, °C: the plan's (a profile's milestone,
+    /// a reference roast's mark), else where the lot usually cracks.
+    fn expected_first_crack_bt(&self) -> Option<f64> {
+        self.reference
+            .as_ref()
+            .and_then(|r| r.event(EventKind::FirstCrackStart))
+            .and_then(|e| e.bt)
+            .or_else(|| self.first_crack.map(|c| c.bt))
+    }
+
+    /// Whether the recipe still has steps tied to first crack.
+    fn recipe_waits_for_first_crack(&self) -> bool {
+        self.recipe.as_ref().is_some_and(|r| {
+            r.steps().iter().any(|s| {
+                s.state.open()
+                    && matches!(
+                        s.action.trigger,
+                        roast_core::ActionTrigger::Event {
+                            event: roast_core::RecipeAnchor::FirstCrackStart,
+                            ..
+                        }
+                    )
+            })
+        })
+    }
+
+    /// Asks for a first-crack mark when the beans run well past where it was
+    /// expected, then lets the steps tied to it run from where they passed
+    /// that temperature; and after first crack, warns once of a rate of rise
+    /// that heads for a stall.
+    fn watch_first_crack(&mut self) {
+        if self.state != RoastState::Charged {
+            return;
+        }
+        let (Some(t), Some(bt), Some(since)) =
+            (self.last_reading_t, self.last_bt, self.since_charge())
+        else {
+            return;
+        };
+        let Some(charge) = self.roast.as_ref().and_then(Roast::charge_t) else {
+            return;
+        };
+        let marked = self
+            .roast
+            .as_ref()
+            .and_then(|r| r.event(EventKind::FirstCrackStart))
+            .map(|e| e.t);
+        if let Some(fc) = marked.or(self.fc_anchor) {
+            self.watch_stall(t, fc);
+            return;
+        }
+        let rising = self.last_ror.is_some_and(|r| r > 0.0);
+        let Some(expected) = self.expected_first_crack_bt() else {
+            return;
+        };
+        if since < 180.0 || !rising {
+            return;
+        }
+        let steps = self.recipe_waits_for_first_crack();
+        if bt >= expected + FC_MISSING_ASK_C && !self.fc_missing_told {
+            self.fc_missing_told = true;
+            let message = if steps {
+                format!(
+                    "No first crack marked at {bt:.0} °C (expected about {expected:.0} °C). Mark it; at {:.0} °C the steps tied to it start without a mark.",
+                    expected + FC_MISSING_ANCHOR_C
+                )
+            } else {
+                format!(
+                    "No first crack marked at {bt:.0} °C (expected about {expected:.0} °C). Mark it when you hear it."
+                )
+            };
+            self.alarm("warning", "first_crack_missing", message);
+        }
+        if bt >= expected + FC_MISSING_ANCHOR_C && steps {
+            // Where the beans passed the expected temperature, after the
+            // first three minutes.
+            let anchor = self
+                .points
+                .iter()
+                .find(|p| p.t >= charge + 180.0 && p.bt.is_some_and(|b| b >= expected))
+                .map_or(t, |p| p.t);
+            self.fc_anchor = Some(anchor);
+            let at = anchor - charge;
+            self.audit(serde_json::json!({
+                "type": "first_crack_anchor", "t": anchor, "expected_bt": expected,
+            }));
+            self.alarm(
+                "warning",
+                "first_crack_anchor",
+                format!(
+                    "First crack not marked: the steps tied to it run from {}:{:02}, when the beans passed {expected:.0} °C. Your mark moves the steps still to come.",
+                    (at / 60.0) as i64,
+                    (at % 60.0) as i64
+                ),
+            );
+        }
+    }
+
+    /// After first crack (curve time `fc`), a rate of rise below
+    /// [`STALL_ROR`] for [`STALL_FOR_S`] is told once. It does not add heat.
+    fn watch_stall(&mut self, t: f64, fc: f64) {
+        if self.stall_told || t - fc < 20.0 {
+            return;
+        }
+        let Some(ror) = self.last_ror else {
+            return;
+        };
+        if ror >= STALL_ROR {
+            self.stall_since = None;
+            return;
+        }
+        let from = *self.stall_since.get_or_insert(t);
+        if t - from < STALL_FOR_S {
+            return;
+        }
+        self.stall_told = true;
+        self.alarm(
+            "warning",
+            "stall",
+            format!(
+                "Rate of rise {ror:.1} °C/min after first crack: the roast may stall. More heat, or drop soon?"
+            ),
+        );
     }
 
     fn on_tick(&mut self) {
@@ -2571,6 +2730,10 @@ impl Engine {
         self.above_plan_since = None;
         self.runaway_done = false;
         self.drop_conflict_told = false;
+        self.fc_anchor = None;
+        self.fc_missing_told = false;
+        self.stall_since = None;
+        self.stall_told = false;
         let profile = self.profile.as_ref();
         self.roast = Some(Roast {
             id: uuid::Uuid::new_v4(),
@@ -3078,6 +3241,8 @@ impl Engine {
             self.heard_mark_undone(kind);
         }
         self.audit(serde_json::json!({"type": "event_removed", "kind": kind}));
+        // Steps tied to the removed event wait again; others may be due.
+        self.run_recipe();
         self.publish(None);
         Ok(self.snapshot())
     }
@@ -4439,6 +4604,145 @@ mod tests {
             "{:?}",
             s.alarms
         );
+    }
+
+    /// Readings 1.5 s apart (on the roast clock), from `bt` at `ror` °C/min.
+    fn readings_rising(e: &mut Engine, n: usize, bt: f64, ror: f64) {
+        for i in 0..n {
+            e.zero -= Duration::from_secs_f64(1.5 / e.time_scale);
+            let actuators = e.safety.status(e.now()).actuators;
+            e.on_reading(roast_driver::Reading {
+                ambient_c: None,
+                bt: Some(bt + ror * 1.5 * i as f64 / 60.0),
+                et: None,
+                actuators,
+            });
+        }
+    }
+
+    /// The test profile run by an AI (the recipe without the autopilot's
+    /// trim), seven minutes after CHARGE. Returns where first crack is
+    /// expected.
+    fn near_first_crack(e: &mut Engine) -> f64 {
+        with_profile(e);
+        e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+        e.acquire_lease("mcp:test").unwrap();
+        for ev in &mut e.roast.as_mut().unwrap().events {
+            ev.t -= 420.0;
+        }
+        e.expected_first_crack_bt().unwrap()
+    }
+
+    fn step_tied_to_first_crack(s: &Snapshot) -> StepView {
+        s.recipe
+            .as_ref()
+            .unwrap()
+            .steps
+            .iter()
+            .find(|st| st.label.starts_with("FC"))
+            .cloned()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn without_a_first_crack_mark_it_asks_and_then_runs_the_steps_tied_to_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let (s, expected, anchor) = h
+            .call(|e| {
+                let expected = near_first_crack(e);
+                // 6 °C/min: expected after 20 s, +3 °C after 50 s, +5 after 70 s.
+                readings_rising(e, 40, expected - 2.0, 6.0);
+                assert!(e.fc_anchor.is_none());
+                readings_rising(e, 40, expected + 2.0, 6.0);
+                let anchor = e
+                    .fc_anchor
+                    .map(|a| a - e.roast.as_ref().unwrap().charge_t().unwrap());
+                (e.snapshot(), expected, anchor)
+            })
+            .await
+            .unwrap();
+        let ask = s
+            .alarms
+            .iter()
+            .filter(|a| a.kind == "first_crack_missing")
+            .count();
+        assert_eq!(ask, 1, "{:?}", s.alarms);
+        assert!(s.alarms.iter().any(|a| a.kind == "first_crack_anchor"));
+        // Anchored where the beans passed the expected temperature.
+        let anchor = anchor.unwrap();
+        assert!(
+            (anchor - 440.0).abs() < 3.0,
+            "{anchor} (expected {expected})"
+        );
+        assert!(
+            s.events
+                .iter()
+                .all(|ev| ev.kind != EventKind::FirstCrackStart)
+        );
+        // FC +0:30 came 90 s into the block: set.
+        let step = step_tied_to_first_crack(&s);
+        assert!(!step.state.open(), "{step:?}");
+        assert_eq!(
+            actuator(&s, Actuator::Burner),
+            Some(step.value),
+            "{step:?} {:?}",
+            s.alarms
+        );
+    }
+
+    #[tokio::test]
+    async fn a_mark_after_the_anchor_moves_the_steps_still_to_come() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| {
+                let expected = near_first_crack(e);
+                // Fast, up to +5.5 °C: anchored 20 s after the beans passed
+                // the expected temperature, the step 30 s after it not yet due.
+                readings_rising(e, 21, expected - 2.0, 15.0);
+                assert!(e.fc_anchor.is_some());
+                e.mark_event(EventKind::FirstCrackStart, EventOrigin::Human)
+                    .unwrap();
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        let step = step_tied_to_first_crack(&s);
+        let charge = s.charge_t.unwrap();
+        let mark = s
+            .events
+            .iter()
+            .find(|ev| ev.kind == EventKind::FirstCrackStart)
+            .unwrap()
+            .t
+            - charge;
+        assert_eq!(step.state, StepState::Waiting, "{step:?}");
+        assert!(
+            (step.at_s.unwrap() - (mark + 30.0)).abs() < 1e-6,
+            "{step:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rate_of_rise_heading_for_a_stall_after_first_crack_is_told_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| {
+                let expected = near_first_crack(e);
+                readings_rising(e, 10, expected, 6.0);
+                e.mark_event(EventKind::FirstCrackStart, EventOrigin::Human)
+                    .unwrap();
+                readings_rising(e, 20, expected + 1.5, 6.0);
+                // Then flat: 0 °C/min.
+                readings_rising(e, 40, expected + 4.5, 0.0);
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        let told = s.alarms.iter().filter(|a| a.kind == "stall").count();
+        assert_eq!(told, 1, "{:?}", s.alarms);
     }
 
     #[tokio::test]
