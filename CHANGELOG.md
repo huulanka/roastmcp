@@ -1,3 +1,19 @@
+# [1.31.0](https://github.com/huulanka/roastmcp/compare/v1.30.0...v1.31.0) (2026-11-18)
+
+
+### Bug Fixes
+
+* the microphone hears first crack only from three minutes after CHARGE, and no stale end ([#60](https://github.com/huulanka/roastmcp/issues/60)) ([8bc6403](https://github.com/huulanka/roastmcp/commit/8bc64039bdf46b379e652e9f945e633812b70413))
+* the preheat keeps holding after a recording starts, and a hand ends an armed autopilot ([#57](https://github.com/huulanka/roastmcp/issues/57)) ([1b01c54](https://github.com/huulanka/roastmcp/commit/1b01c544b306b108e2436e2eae7fc259acf28e4a))
+
+
+### Features
+
+* a detected CHARGE must look like beans, and a runaway roast loses its automation ([#59](https://github.com/huulanka/roastmcp/issues/59)) ([2910417](https://github.com/huulanka/roastmcp/commit/2910417e8f179f69ce7e5dc5951e2cf697c1b300))
+* first crack is expected from marked cracks, and the plan says which drop target wins ([#61](https://github.com/huulanka/roastmcp/issues/61)) ([316e594](https://github.com/huulanka/roastmcp/commit/316e594967bdc335fb15e810c53a687a2299f439))
+* the trim ignores stray readings, keeps out of the development and gives corrections back ([#58](https://github.com/huulanka/roastmcp/issues/58)) ([e0d8534](https://github.com/huulanka/roastmcp/commit/e0d8534b3a8877c4780b01bf113b52fa869e1f07))
+* without a first crack mark the recipe asks, then runs from where it was expected ([#62](https://github.com/huulanka/roastmcp/issues/62)) ([92769e9](https://github.com/huulanka/roastmcp/commit/92769e9f6b7cfe7e19a7c48904c136d0e4a49f81))
+
 # [1.30.0](https://github.com/huulanka/roastmcp/compare/v1.29.0...v1.30.0) (2026-11-14)
 
 
