@@ -50,31 +50,60 @@ autopilot ends, as after any roast.
 
 ### 2. The trim
 The trim (`roast-control::trim`) looks at each reading and decides by the
-rules a careful roaster uses:
+rules a careful roaster uses (amended 2026-11-18 after BRYB-003, see below):
 
 - **Look ahead.** It predicts where the bean temperature will be relative to
   the plan in 90 s: the deviation now, plus the difference between the
-  measured and the planned rate of rise over that time.
-- **Dead band.** Inside ±3 °C it leaves the burner alone. A roast that runs
-  as planned gets no correction at all.
-- **One step.** Outside the band it moves the burner once, by the amount
-  that makes up the deviation over two minutes (0.25 °C/min per burner
-  point with beans), at most **5 points**.
+  measured and the planned rate of rise over that time. The rate-of-rise
+  part adds at most **2 °C**: a noisy rate of rise alone does not push a
+  roast out of the band.
+- **The deviation now is a median.** It is the median of the last **15 s**
+  of readings, so one stray reading does not count twice (in the deviation
+  and in the rate of rise).
+- **Dead band, with hysteresis.** Inside ±3 °C it leaves the burner alone.
+  Out of the band, the prediction must stay out for **3 readings in a row**
+  on one side; it counts as back in below ±2 °C. A roast that runs as
+  planned gets no correction at all.
+- **Really off the plan.** Before it adds heat the roast must be at least
+  **1.5 °C** below the plan now (the median); before it takes heat away,
+  **1 °C** above. Taking heat away is the cheaper mistake.
+- **One step.** Then it moves the burner once, by the amount that makes up
+  the deviation over two minutes (0.25 °C/min per burner point with beans),
+  at most **5 points**.
 - **Wait.** After its own correction it waits **90 s** before it looks
   again. After anyone else's burner change (a recipe step, a command) it
   waits 20 s; the plan's curve already expects the recipe's steps.
 - **Stay near the recipe.** All corrections together stay within **±10
-  points** of the recipe. A correction carries over to the recipe's later
-  burner steps: if the trim added 5 points, the next step lands 5 points
-  above its planned value. If the roast is further off than 10 points can
-  mend, the trim stops there and the person decides.
+  points** of the recipe. Up to **5 points** of them carry over to the
+  recipe's later burner steps, but **not into the development**: steps tied
+  to first crack, and steps due within the last minute before the expected
+  (or marked) first crack, keep the recipe's value. If the roast is further
+  off than 10 points can mend, the trim stops there and the person decides.
+- **No heat near first crack.** From one minute before the expected first
+  crack on it only takes heat away.
+- **Give it back.** When the roast has been on the plan (within 0.5 °C and
+  1 °C/min) for a minute, half the correction goes back to the recipe's
+  later steps, without a command; again after the next minute, until none
+  is left.
 - **Not too early.** No correction in the first 2:30, while the probe cools
   into the beans and turns. Never below 10 % burner.
 
 Each correction goes through the safety layer with source `Autopilot`, under
 the same limits as every automatic command, and is logged with its reason
-("autopilot: the roast heads 5 °C below the plan"). The app shows it as a
-message and in the history.
+and numbers ("autopilot: the roast heads 4 °C below the plan (-4.0 °C in
+90 s; now -1.9 °C, median -1.1 °C; RoR 15.4 vs plan 16.8)"). The audit log
+gets a `trim_decision` entry for each correction, each return to the
+recipe, and each hold near a decision (too small, confirming, near first
+crack, at the limit). The app shows corrections as a message and in the
+history.
+
+**Why amended.** In BRYB-003 (2026-11-18) the roast ran a steady 1 °C below
+the plan. One reading at 3:18 fell to 1.9 °C below and pulled the rate of
+rise down with it; the prediction said 4 °C below and the trim added 5
+points. The correction rode on every later step, the development included,
+and never went away: the rate of rise after first crack was about 6 °C/min
+instead of 4.5 and the development time ratio 14.5 % instead of about 18 %.
+The recorded readings of that roast are unit tests now.
 
 ### 3. Who switches it on
 - **A person, in the app.** `POST /api/autopilot` is the switch. It needs a

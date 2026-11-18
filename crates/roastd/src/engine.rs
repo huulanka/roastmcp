@@ -17,8 +17,8 @@ use crate::learned::LearnedStore;
 use crate::profiles::ProfileStore;
 use roast_control::{
     Outlook, PreheatController, PreheatInput, PreheatPhase, PreheatReason, PreheatTuning,
-    RecipeInput, RecipeRun, StepChange, StepState, StepView, Trim, TrimDecision, TrimInput,
-    TrimTuning, trigger_label,
+    RecipeInput, RecipeRun, StepChange, StepState, StepView, Trim, TrimDecision, TrimHold,
+    TrimInput, TrimTuning, TrimWhy, trigger_label,
 };
 use roast_core::{
     Actuator, ActuatorValues, BatchInfo, CommandOutcome, CommandRequest, CommandSource,
@@ -288,6 +288,10 @@ struct Autopilot {
     /// Roast clock of the trim's last correction, s.
     corrected_at: Option<f64>,
     corrections: usize,
+    /// Points the recipe's later steps are moved by (the trim's carry).
+    carried: f64,
+    /// The last hold worth logging, so the log has each once.
+    logged_hold: Option<TrimHold>,
 }
 
 /// The autopilot as the app shows it.
@@ -490,6 +494,8 @@ pub struct Engine {
     /// How far the autopilot's corrections moved this roast's recipe,
     /// burner points; kept when it is switched off and on again.
     trim_offset: f64,
+    /// … and how far they moved the recipe's later steps, points.
+    trim_carried: f64,
     /// Where first crack is expected in the running recording (ADR 0021).
     first_crack: Option<CrackExpectation>,
     /// Listening for cracks (ADR 0021).
@@ -551,6 +557,7 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
         autopilot: None,
         burner_changed_at: None,
         trim_offset: 0.0,
+        trim_carried: 0.0,
         first_crack: None,
         learned,
         inventory,
@@ -752,9 +759,12 @@ impl Engine {
             .map(|r| RecipeRun::new(&r.actions));
         // The autopilot's corrections belonged to the old recipe.
         self.trim_offset = 0.0;
+        self.trim_carried = 0.0;
         if let Some(ap) = self.autopilot.as_mut() {
             ap.trim = Trim::new(TrimTuning::default());
             ap.corrected_at = None;
+            ap.carried = 0.0;
+            ap.logged_hold = None;
         }
     }
 
@@ -1080,6 +1090,8 @@ impl Engine {
             trim: Trim::resumed(TrimTuning::default(), self.trim_offset),
             corrected_at: None,
             corrections: 0,
+            carried: self.trim_carried,
+            logged_hold: None,
         });
         self.audit(serde_json::json!({"type": "autopilot", "on": true}));
         let message = if self.since_charge().is_some() && self.preheat.is_none() {
@@ -1196,7 +1208,8 @@ impl Engine {
             return;
         };
         let since_burner_change = self.burner_changed_at.map_or(f64::MAX, |t| roast_t - t);
-        let Some(ap) = self.autopilot.as_ref() else {
+        let first_crack = self.first_crack_roast_time(since);
+        let Some(ap) = self.autopilot.as_mut() else {
             return;
         };
         let decision = ap.trim.decide(&TrimInput {
@@ -1208,15 +1221,67 @@ impl Engine {
             burner,
             since_burner_change,
             since_correction: ap.corrected_at.map(|t| roast_t - t),
+            fc_in_s: first_crack.map(|fc| fc - since),
         });
-        let TrimDecision::Step {
-            burner: to,
-            predicted_error_c,
-            ..
-        } = decision
-        else {
-            return;
-        };
+        let why = ap.trim.why();
+        match decision {
+            TrimDecision::Hold(hold) => {
+                // Holds near a decision go to the log once each, with their
+                // numbers: why the trim did not act is as useful as why it did.
+                let worth = matches!(
+                    hold,
+                    TrimHold::SmallDeviation
+                        | TrimHold::Confirming
+                        | TrimHold::NearFirstCrack
+                        | TrimHold::AtLimit
+                );
+                let changed = ap.logged_hold != Some(hold);
+                ap.logged_hold = worth.then_some(hold);
+                if worth && changed {
+                    self.audit(serde_json::json!({
+                        "type": "trim_decision", "t": since, "hold": hold, "why": why,
+                    }));
+                }
+            }
+            TrimDecision::Ease { delta } => {
+                ap.trim.applied(delta);
+                self.trim_offset = ap.trim.offset();
+                let shift = self.carry_trim(first_crack);
+                self.audit(serde_json::json!({
+                    "type": "trim_decision", "t": since, "ease": delta, "why": why,
+                }));
+                if shift.abs() >= 1.0 {
+                    self.alarm(
+                        "info",
+                        "autopilot",
+                        format!(
+                            "Autopilot: back on the plan - the recipe's next burner steps \
+                             move {shift:+.0} points back toward the recipe."
+                        ),
+                    );
+                }
+            }
+            TrimDecision::Step {
+                burner: to,
+                predicted_error_c,
+                ..
+            } => self.trim_step(burner, to, predicted_error_c, why, first_crack, since),
+        }
+    }
+
+    /// Sends one trim correction through the safety layer and carries it to
+    /// the recipe's later steps.
+    fn trim_step(
+        &mut self,
+        burner: f64,
+        to: f64,
+        predicted_error_c: f64,
+        why: Option<TrimWhy>,
+        first_crack: Option<f64>,
+        since: f64,
+    ) {
+        let now = self.now();
+        let roast_t = self.latest_t();
         if self
             .safety
             .rate_limited(Actuator::Burner, to, CommandSource::Autopilot, now)
@@ -1228,7 +1293,18 @@ impl Engine {
         } else {
             "below"
         };
-        let why = format!(
+        let numbers = why.map_or_else(String::new, |w| {
+            format!(
+                " ({:+.1} °C in {:.0} s; now {:+.1} °C, median {:+.1} °C; RoR {:.1} vs plan {:.1})",
+                w.predicted_c,
+                TrimTuning::default().horizon_s,
+                w.deviation_c,
+                w.deviation_median_c,
+                w.ror,
+                w.plan_ror
+            )
+        });
+        let why_text = format!(
             "the roast heads {:.0} °C {side} the plan",
             predicted_error_c.abs()
         );
@@ -1236,7 +1312,7 @@ impl Engine {
             actuator: Actuator::Burner,
             value: to,
             source: CommandSource::Autopilot,
-            reason: Some(format!("autopilot: {why}")),
+            reason: Some(format!("autopilot: {why_text}{numbers}")),
         });
         let CommandOutcome::Applied { value, .. } = outcome else {
             return;
@@ -1251,14 +1327,57 @@ impl Engine {
             ap.corrections += 1;
             self.trim_offset = ap.trim.offset();
         }
-        if let Some(run) = self.recipe.as_mut() {
-            run.shift_open(Actuator::Burner, delta);
-        }
+        self.carry_trim(first_crack);
+        self.audit(serde_json::json!({
+            "type": "trim_decision", "t": since, "step": delta, "burner": value, "why": why,
+        }));
         self.alarm(
             "info",
             "autopilot",
-            format!("Autopilot: burner {value:.0} % ({delta:+.0}), {why}."),
+            format!("Autopilot: burner {value:.0} % ({delta:+.0}), {why_text}{numbers}."),
         );
+    }
+
+    /// Moves the recipe's later burner steps to the trim's carry. Steps tied
+    /// to first crack, and steps due within the last minute before it, keep
+    /// the recipe's value: the development runs as planned. Returns the
+    /// shift, points.
+    fn carry_trim(&mut self, first_crack: Option<f64>) -> f64 {
+        let Some(ap) = self.autopilot.as_mut() else {
+            return 0.0;
+        };
+        let shift = ap.trim.carried() - ap.carried;
+        ap.carried = ap.trim.carried();
+        self.trim_carried = ap.carried;
+        let before = TrimTuning::default().no_raise_before_fc_s;
+        let development_from = first_crack.map(|fc| fc - before);
+        let fc_bt = self.first_crack.map(|c| c.bt);
+        if let Some(run) = self.recipe.as_mut() {
+            run.shift_open_where(Actuator::Burner, shift, |trigger| match *trigger {
+                roast_core::ActionTrigger::Event {
+                    event: roast_core::RecipeAnchor::FirstCrackStart,
+                    ..
+                } => false,
+                roast_core::ActionTrigger::Event { .. } => true,
+                roast_core::ActionTrigger::Time { roast_time_s } => {
+                    development_from.is_none_or(|from| roast_time_s < from)
+                }
+                roast_core::ActionTrigger::Bt { bt_c } => fc_bt.is_none_or(|fc| bt_c < fc - 5.0),
+            });
+        }
+        shift
+    }
+
+    /// First crack in roast time (s since CHARGE): marked, else expected
+    /// from the projection or the plan.
+    fn first_crack_roast_time(&self, since: f64) -> Option<f64> {
+        let charge = self.roast.as_ref().and_then(Roast::charge_t)?;
+        let marked = self
+            .roast
+            .as_ref()
+            .and_then(|r| r.event(EventKind::FirstCrackStart))
+            .map(|e| e.t - charge);
+        marked.or_else(|| self.with_outlook(Some(since), |o| o.first_crack))
     }
 
     // ---------------------------------------------------------------- preheat
@@ -3421,8 +3540,9 @@ mod tests {
         assert!(s.recipe.as_ref().unwrap().automatic);
         assert_eq!(actuator(&s, Actuator::Burner), Some(85.0));
 
-        // Five minutes in, 8 °C below the plan and no faster than it: one
-        // correction of five points, which the recipe's later step keeps.
+        // Five minutes in, 8 °C below the plan and no faster than it, for
+        // three readings: one correction of five points. The recipe's later
+        // step is tied to first crack and keeps its value.
         let s = h
             .call(|e| {
                 let roast = e.roast.as_mut().unwrap();
@@ -3439,6 +3559,9 @@ mod tests {
                 // The safety layer paces automatic raises.
                 e.safety.allow_charge_jump(e.now());
                 e.autopilot_trim();
+                e.autopilot_trim();
+                assert_eq!(e.snapshot().autopilot.unwrap().corrections, 0);
+                e.autopilot_trim();
                 let first = e.snapshot();
                 // Until the correction shows, it leaves the burner alone.
                 e.burner_changed_at = Some(e.latest_t() - 100.0);
@@ -3452,7 +3575,17 @@ mod tests {
         let ap = s.autopilot.as_ref().unwrap();
         assert_eq!((ap.offset, ap.corrections), (5.0, 1));
         let later = &s.recipe.as_ref().unwrap().steps[1];
-        assert!((later.value - 65.0).abs() < 1e-9, "{later:?}");
+        assert!((later.value - 60.0).abs() < 1e-9, "{later:?}");
+        let log = h
+            .call(|e| std::fs::read_to_string(&e.opts.audit_path).unwrap())
+            .await
+            .unwrap();
+        assert!(log.contains(r#""type":"trim_decision""#), "{log}");
+        assert!(
+            s.alarms.iter().any(|a| a.message.contains("median")),
+            "{:?}",
+            s.alarms
+        );
 
         // A hand on the burner ends it.
         let s = h
