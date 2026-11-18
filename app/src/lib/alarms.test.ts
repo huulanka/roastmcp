@@ -22,6 +22,22 @@ describe("daemon messages in German", () => {
     expect(alarmText("Autopilot: burner 42 % (-3), the roast heads 4 °C above the plan.", t)).toBe(
       "Autopilot: Brenner 42 % (-3), die Röstung läuft 4 °C über dem Plan.",
     );
+    expect(
+      alarmText(
+        "Autopilot: burner 90 % (+5), the roast heads 4 °C below the plan (-4.0 °C in 90 s; now -1.9 °C, median -1.1 °C; RoR 15.4 vs plan 16.8).",
+        t,
+      ),
+    ).toBe(
+      "Autopilot: Brenner 90 % (+5), die Röstung läuft 4 °C unter dem Plan (-4.0 °C in 90 s; jetzt -1.9 °C, Median -1.1 °C; RoR 15.4 statt 16.8).",
+    );
+    expect(
+      alarmText(
+        "Autopilot: back on the plan - the recipe's next burner steps move -3 points back toward the recipe.",
+        t,
+      ),
+    ).toBe(
+      "Autopilot: wieder auf dem Plan – die nächsten Brennerstufen des Rezepts gehen -3 Punkte zurück Richtung Rezept.",
+    );
     expect(alarmText("DROP at 206 °C expected within 30 s: bean cooling on.", t)).toBe(
       "DROP bei 206 °C in 30 s erwartet: Bohnenkühlung an.",
     );
