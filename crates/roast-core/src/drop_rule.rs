@@ -71,10 +71,7 @@ pub fn drop_outlook(
     reaches: impl Fn(f64) -> Option<f64>,
 ) -> DropOutlook {
     let fc = input.first_crack_s;
-    let bt_at_s = input
-        .drop_bt_c
-        .and_then(&reaches)
-        .map(|h| input.since + h);
+    let bt_at_s = input.drop_bt_c.and_then(&reaches).map(|h| input.since + h);
     let dtr_at_bt_pct = bt_at_s.filter(|&t| t > fc).map(|t| (t - fc) / t * 100.0);
     let dtr_at_s = input
         .dtr_pct
