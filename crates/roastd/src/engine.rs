@@ -197,8 +197,13 @@ struct Preheat {
     /// Machine and air setting its learning is filed under.
     machine_key: String,
     air: f64,
-    /// Recording time of the reading it last looked at.
+    /// Its own clock (recording time plus `t_offset`) at the reading it
+    /// last looked at.
     last_seen_t: Option<f64>,
+    /// Added to the recording time so the controller's clock keeps running
+    /// when a recording starts or stops and the curve's time starts at 0
+    /// again (the controller needs a monotonic clock).
+    t_offset: f64,
     last_raise: Option<f64>,
     /// The AI that took over before CHARGE; the preheat holds under its
     /// lease until CHARGE (ADR 0019).
@@ -1322,6 +1327,7 @@ impl Engine {
             machine_key,
             air,
             last_seen_t: None,
+            t_offset: 0.0,
             last_raise: None,
             ai_holder: None,
         });
@@ -1397,8 +1403,11 @@ impl Engine {
                 }
             }
             None if status.ai_suspended => {
-                // A person took over (or presence was missed). Without an AI
-                // in control, do not report the AI as paused.
+                // A person took over (or presence was missed). An armed
+                // autopilot ends with it: the takeover rule (ADR 0020 §4)
+                // must not depend on whether a tick or a reading comes first.
+                self.end_autopilot("Autopilot off - you have control.");
+                // Without an AI in control, do not report the AI as paused.
                 if ai_before.is_none() {
                     self.safety.resume_ai();
                 }
@@ -1435,6 +1444,7 @@ impl Engine {
         let Some(p) = self.preheat.as_ref() else {
             return;
         };
+        let t = t + p.t_offset;
         if p.last_seen_t.is_some_and(|seen| seen >= t) {
             return;
         }
@@ -1941,11 +1951,16 @@ impl Engine {
         }
         if let Some(roast) = &mut self.roast {
             let t = self.points.last().map(|p| p.t);
-            roast.notes.push(Note {
-                t,
-                text: format!("Safety: {}", r.message),
-                origin: EventOrigin::Auto,
-            });
+            let text = format!("Safety: {}", r.message);
+            // The roast's notes are for people: the same safety message again
+            // (a lease that keeps running out) is in the log, not noted twice.
+            if !roast.notes.iter().any(|n| n.text == text) {
+                roast.notes.push(Note {
+                    t,
+                    text,
+                    origin: EventOrigin::Auto,
+                });
+            }
         }
         self.audit(serde_json::json!({"type": "reaction", "reaction": r}));
         self.alarm(severity, &kind, r.message.clone());
@@ -2132,6 +2147,15 @@ impl Engine {
     // -------------------------------------------------------------- recording
 
     fn reset_curve(&mut self) {
+        // A running preheat keeps its clock: without this its "one decision
+        // per reading" guard saw every new reading as old, so it neither
+        // decided nor renewed its lease until the new recording time caught
+        // up (the lease ran out every minute).
+        let old_t = self.t();
+        if let Some(p) = self.preheat.as_mut() {
+            p.t_offset += old_t;
+        }
+        self.last_reading_t = None;
         self.zero = Instant::now();
         self.points.clear();
         self.ror.reset();
@@ -3257,6 +3281,91 @@ mod tests {
             ..RecordingMeta::default()
         })
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_preheat_keeps_deciding_and_its_lease_after_a_recording_starts() {
+        // BRYB-003: the recording started after an 8.5 min preheat. The curve's
+        // time began at 0 again, the preheat took every new reading for an
+        // old one, stopped deciding and let its lease run out every minute.
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let (before, after, holder, notes) = h
+            .call(|e| {
+                e.start_preheat(200.0, Some(20.0)).unwrap();
+                // The preheat has been running for a while.
+                e.zero = Instant::now() - Duration::from_secs(60);
+                e.last_reading_t = Some(e.t());
+                e.preheat_step(e.now());
+                let before = e.preheat.as_ref().unwrap().last_seen_t.unwrap();
+                e.start_recording(RecordingMeta::default()).unwrap();
+                // The first reading of the new recording.
+                e.last_reading_t = Some(1.5);
+                e.preheat_step(e.now());
+                let after = e.preheat.as_ref().unwrap().last_seen_t.unwrap();
+                let holder = e.safety.status(e.now()).lease_holder;
+                let notes = e.roast.as_ref().unwrap().notes.len();
+                (before, after, holder, notes)
+            })
+            .await
+            .unwrap();
+        assert!(before > 100.0, "{before}");
+        assert!(
+            after > before,
+            "the reading counts as new: {before} -> {after}"
+        );
+        assert_eq!(holder.as_deref(), Some(PREHEAT_HOLDER));
+        assert_eq!(notes, 0);
+    }
+
+    #[tokio::test]
+    async fn a_hand_on_the_burner_during_the_preheat_ends_an_armed_autopilot() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let s = h
+            .call(|e| {
+                with_profile(e);
+                e.start_preheat(200.0, Some(20.0)).unwrap();
+                e.start_autopilot().unwrap();
+                assert!(e.autopilot.is_some(), "armed");
+                e.command(CommandRequest {
+                    actuator: Actuator::Burner,
+                    value: 40.0,
+                    source: CommandSource::Human,
+                    reason: None,
+                });
+                // The tick comes before the next reading.
+                e.on_tick();
+                e.snapshot()
+            })
+            .await
+            .unwrap();
+        assert!(s.preheat.is_none());
+        assert!(
+            s.autopilot.is_none(),
+            "a person's burner ends the armed autopilot"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_repeated_safety_message_is_noted_once_per_roast() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let notes = h
+            .call(|e| {
+                e.start_recording(RecordingMeta::default()).unwrap();
+                let r = SafetyReaction {
+                    kind: roast_safety::ReactionKind::LeaseExpired,
+                    message: "AI (mcp:x) disconnected - you have control.".to_owned(),
+                    commands: Vec::new(),
+                };
+                e.apply_reaction(&r);
+                e.apply_reaction(&r);
+                e.roast.as_ref().unwrap().notes.len()
+            })
+            .await
+            .unwrap();
+        assert_eq!(notes, 1);
     }
 
     #[tokio::test]
