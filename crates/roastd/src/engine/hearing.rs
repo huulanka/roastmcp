@@ -509,8 +509,12 @@ impl Engine {
         let ev = |k: EventKind| events.iter().find(|e| e.kind == k);
         RoastContext {
             bt: self.last_bt,
-            charged: ev(EventKind::Charge).is_some(),
-            dry_end: ev(EventKind::DryEnd).map(|e| e.t),
+            ror: self.last_ror,
+            listen_from: roast_audio::crack::listen_from(
+                ev(EventKind::Charge).map(|e| e.t),
+                ev(EventKind::TurningPoint).map(|e| e.t),
+                ev(EventKind::DryEnd).map(|e| e.t),
+            ),
             first_crack: ev(EventKind::FirstCrackStart).map(|e| (e.t, e.bt)),
             first_crack_end: ev(EventKind::FirstCrackEnd).is_some(),
             second_crack: ev(EventKind::SecondCrackStart).is_some(),

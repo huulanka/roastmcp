@@ -2392,6 +2392,15 @@ impl Engine {
                 .map(|e| (e.t, e.origin == EventOrigin::Detector));
             replaced = detected.zip(roast.charge_t());
             roast.events.retain(|e| e.kind != kind);
+            // A heard first crack end before a marked start belongs to no
+            // first crack (BRYB-003: one was left from an undone start).
+            if kind == EventKind::FirstCrackStart {
+                roast.events.retain(|e| {
+                    !(e.kind == EventKind::FirstCrackEnd
+                        && e.origin == EventOrigin::Detector
+                        && e.t < t)
+                });
+            }
             roast.events.push(event.clone());
             roast.events.sort_by(|a, b| a.t.total_cmp(&b.t));
         }
@@ -2819,6 +2828,11 @@ mod tests {
         h.call(|e| {
             e.start_recording(RecordingMeta::default()).unwrap();
             e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+            // Five minutes in: first crack may be heard (from 3 min after CHARGE).
+            for ev in &mut e.roast.as_mut().unwrap().events {
+                ev.t -= 300.0;
+            }
+            e.last_ror = Some(8.0);
         })
         .await
         .unwrap();
@@ -2847,6 +2861,7 @@ mod tests {
         let s = h
             .call(|e| {
                 e.last_bt = Some(193.0);
+                e.last_ror = Some(8.0);
                 e.on_audio(chunk(&[0.8], 0.9));
                 e.snapshot()
             })
@@ -2931,6 +2946,11 @@ mod tests {
                 .unwrap();
             e.start_recording(RecordingMeta::default()).unwrap();
             e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+            // Five minutes in: first crack may be heard (from 3 min after CHARGE).
+            for ev in &mut e.roast.as_mut().unwrap().events {
+                ev.t -= 300.0;
+            }
+            e.last_ror = Some(8.0);
         })
         .await
         .unwrap();
@@ -2958,6 +2978,7 @@ mod tests {
                 e.stop_hearing();
                 e.hearing.zero = None;
                 e.last_bt = Some(193.0);
+                e.last_ror = Some(8.0);
                 for i in 0..10 {
                     e.on_audio(frame(i));
                 }
@@ -3479,6 +3500,41 @@ mod tests {
         let ap = s.autopilot.unwrap();
         assert_eq!((ap.state, ap.offset, ap.corrections), ("active", 5.0, 0));
         assert_eq!(s.safety.lease_holder.as_deref(), Some(AUTOPILOT_HOLDER));
+    }
+
+    #[tokio::test]
+    async fn a_marked_first_crack_drops_a_heard_end_before_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let kinds = h
+            .call(|e| {
+                e.start_recording(RecordingMeta::default()).unwrap();
+                e.mark_event(EventKind::Charge, EventOrigin::Human).unwrap();
+                let roast = e.roast.as_mut().unwrap();
+                roast.events.push(RoastEvent {
+                    t: roast.charge_t().unwrap() + 10.0,
+                    kind: EventKind::FirstCrackEnd,
+                    origin: EventOrigin::Detector,
+                    bt: Some(185.9),
+                });
+                e.zero -= Duration::from_secs(60);
+                e.mark_event(EventKind::FirstCrackStart, EventOrigin::Human)
+                    .unwrap();
+                e.roast
+                    .as_ref()
+                    .unwrap()
+                    .events
+                    .iter()
+                    .map(|e| (e.kind, e.origin))
+                    .collect::<Vec<_>>()
+            })
+            .await
+            .unwrap();
+        assert!(
+            !kinds.contains(&(EventKind::FirstCrackEnd, EventOrigin::Detector)),
+            "{kinds:?}"
+        );
+        assert!(kinds.contains(&(EventKind::FirstCrackStart, EventOrigin::Human)));
     }
 
     #[tokio::test]

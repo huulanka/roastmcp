@@ -156,8 +156,8 @@ fn context(
             } else {
                 expectation.bt
             }),
-            charged: true,
-            dry_end: None,
+            ror: None,
+            listen_from: Some(f64::NEG_INFINITY),
             first_crack: fc.map(|t| (t, Some(expectation.bt))),
             first_crack_end: own(EventKind::FirstCrackEnd).is_some(),
             second_crack: own(EventKind::SecondCrackStart).is_some(),
@@ -171,8 +171,14 @@ fn context(
     let fc = own(EventKind::FirstCrackStart);
     RoastContext {
         bt: bt_at(t),
-        charged: before(EventKind::Charge).is_some(),
-        dry_end: before(EventKind::DryEnd),
+        ror: bt_at(t)
+            .zip(bt_at(t - 20.0))
+            .map(|(now, then)| (now - then) * 3.0),
+        listen_from: crate::crack::listen_from(
+            before(EventKind::Charge),
+            before(EventKind::TurningPoint),
+            before(EventKind::DryEnd),
+        ),
         first_crack: fc.map(|f| (f, bt_at(f))),
         first_crack_end: own(EventKind::FirstCrackEnd).is_some(),
         second_crack: own(EventKind::SecondCrackStart).is_some(),
