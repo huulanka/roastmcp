@@ -33,6 +33,10 @@ pub struct RoastFigures {
     pub dry_end_bt_c: Option<f64>,
     pub first_crack_s: Option<f64>,
     pub first_crack_bt_c: Option<f64>,
+    /// Only the microphone marked first crack: its time, development and DTR
+    /// are left out of statistics over several roasts.
+    #[serde(default)]
+    pub first_crack_heard_only: bool,
     /// CHARGE to DROP.
     pub total_s: Option<f64>,
     pub drop_bt_c: Option<f64>,
@@ -73,6 +77,9 @@ pub fn figures(roast: &Roast) -> RoastFigures {
         dry_end_bt_c: bt(EventKind::DryEnd),
         first_crack_s: time(EventKind::FirstCrackStart),
         first_crack_bt_c: bt(EventKind::FirstCrackStart),
+        first_crack_heard_only: roast
+            .event(EventKind::FirstCrackStart)
+            .is_some_and(|e| e.origin == crate::EventOrigin::Detector),
         total_s: ph.map(|p| p.total_s),
         drop_bt_c: bt(EventKind::Drop),
         development_s: ph.and_then(|p| p.development_s),
@@ -344,16 +351,25 @@ pub struct Consistency {
 pub fn consistency(roasts: &[&Roast]) -> Consistency {
     let figs: Vec<RoastFigures> = roasts.iter().map(|r| figures(r)).collect();
     let of = |pick: fn(&RoastFigures) -> Option<f64>| spread(figs.iter().filter_map(pick));
+    // First crack, development and DTR only from first cracks a person
+    // marked: one heard too early moves the spread by many seconds.
+    let of_marked = |pick: fn(&RoastFigures) -> Option<f64>| {
+        spread(
+            figs.iter()
+                .filter(|f| !f.first_crack_heard_only)
+                .filter_map(pick),
+        )
+    };
     Consistency {
         roasts: roasts.len(),
         charge_bt_c: of(|f| f.charge_bt_c),
         dry_end_s: of(|f| f.dry_end_s),
-        first_crack_s: of(|f| f.first_crack_s),
-        first_crack_bt_c: of(|f| f.first_crack_bt_c),
+        first_crack_s: of_marked(|f| f.first_crack_s),
+        first_crack_bt_c: of_marked(|f| f.first_crack_bt_c),
         total_s: of(|f| f.total_s),
         drop_bt_c: of(|f| f.drop_bt_c),
-        development_s: of(|f| f.development_s),
-        dtr_pct: of(|f| f.dtr_pct),
+        development_s: of_marked(|f| f.development_s),
+        dtr_pct: of_marked(|f| f.dtr_pct),
         weight_loss_pct: of(|f| f.weight_loss_pct),
         curve_sd_c: curve_sd(roasts),
     }
@@ -529,6 +545,20 @@ mod tests {
         assert!(k.total_s.unwrap().sd.abs() < 1e-9);
         assert!((k.curve_sd_c.unwrap() - 2.0).abs() < 1e-6);
         assert!(k.weight_loss_pct.unwrap().sd.abs() < 1e-9);
+
+        // A first crack only the microphone marked leaves first crack and
+        // DTR, not the rest.
+        let mut heard = variant(4.0, 0.0);
+        for e in &mut heard.events {
+            if e.kind == EventKind::FirstCrackStart {
+                e.origin = crate::EventOrigin::Detector;
+            }
+        }
+        assert!(figures(&heard).first_crack_heard_only);
+        let k = consistency(&[&a, &b, &c, &heard]);
+        assert_eq!(k.dtr_pct.unwrap().n, 3);
+        assert_eq!(k.first_crack_s.unwrap().n, 3);
+        assert_eq!(k.drop_bt_c.unwrap().n, 4);
 
         // One roast alone has no curve spread, and nothing has no figures.
         assert_eq!(consistency(&[&a]).curve_sd_c, None);

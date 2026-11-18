@@ -80,6 +80,26 @@ export const PATTERNS: { re: RegExp; key: string }[] = [
     key: "DROP at {{target}} °C expected within {{s}} s: bean cooling on.",
   },
   {
+    re: /^DROP at DTR (?<dtr>\d+) % expected within (?<s>\d+) s: bean cooling on\.$/,
+    key: "DROP at DTR {{dtr}} % expected within {{s}} s: bean cooling on.",
+  },
+  {
+    re: /^Plan targets disagree: (?<bt>\d+) °C at (?<bt_at>\S+) \(DTR (?<dtr_bt>\d+) %\), DTR (?<dtr>\d+) % at (?<dtr_at>\S+) \(about (?<bt_dtr>\d+) °C\)\. DROP follows the earlier\.$/,
+    key: "Plan targets disagree: {{bt}} °C at {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % at {{dtr_at}} (about {{bt_dtr}} °C). DROP follows the earlier.",
+  },
+  {
+    re: /^Plan targets disagree: (?<bt>\d+) °C at (?<bt_at>\S+) \(DTR (?<dtr_bt>\d+) %\), DTR (?<dtr>\d+) % at (?<dtr_at>\S+) \(about (?<bt_dtr>\d+) °C\)\. DROP follows the later\.$/,
+    key: "Plan targets disagree: {{bt}} °C at {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % at {{dtr_at}} (about {{bt_dtr}} °C). DROP follows the later.",
+  },
+  {
+    re: /^Plan targets disagree: (?<bt>\d+) °C at (?<bt_at>\S+) \(DTR (?<dtr_bt>\d+) %\), DTR (?<dtr>\d+) % at (?<dtr_at>\S+) \(about (?<bt_dtr>\d+) °C\)\. DROP follows the temperature\.$/,
+    key: "Plan targets disagree: {{bt}} °C at {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % at {{dtr_at}} (about {{bt_dtr}} °C). DROP follows the temperature.",
+  },
+  {
+    re: /^Plan targets disagree: (?<bt>\d+) °C at (?<bt_at>\S+) \(DTR (?<dtr_bt>\d+) %\), DTR (?<dtr>\d+) % at (?<dtr_at>\S+) \(about (?<bt_dtr>\d+) °C\)\. DROP follows the DTR\.$/,
+    key: "Plan targets disagree: {{bt}} °C at {{bt_at}} (DTR {{dtr_bt}} %), DTR {{dtr}} % at {{dtr_at}} (about {{bt_dtr}} °C). DROP follows the DTR.",
+  },
+  {
     re: /^A recording was interrupted; it was recovered to (?<path>.+)\.$/,
     key: "A recording was interrupted; it was recovered to {{path}}.",
   },

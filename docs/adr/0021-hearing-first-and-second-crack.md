@@ -88,8 +88,10 @@ A single pop says little; the rate says a lot.
 
 ### 4. The temperature window
 First crack is believed between **170 and 205 °C**. Once a green coffee lot
-has three roasts with a marked first crack, the window narrows to the lot's
-mean ± 12 °C, never outside 170–205. The same numbers give the prediction
+has a first crack a person marked, the window narrows around the lot's
+**median**: ± 10 °C from one such mark, ± 8 °C from two or more, never
+outside 170–205 (amended 2026-11-18; before, the mean of three roasts ± 12 °C,
+detector marks included). The same numbers give the prediction
 (§7). They live in `roast-core::crack`.
 
 ### 5. The heard crack is marked; the person's mark wins
