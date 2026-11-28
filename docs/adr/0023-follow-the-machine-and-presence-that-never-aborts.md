@@ -44,6 +44,9 @@ apart from what the machine reports. For each actuator the machine reports
   again. A value away from it is not sent during an emergency stop or an
   overheat: then the machine's lower heat is the safer side, and the person
   is asked instead;
+- until a deviation is settled, the safety layer's view keeps the value set,
+  so a reading taken just before a command arrived does not become the base
+  for the next step limit or autopilot trim;
 - nobody's control ends: the autopilot and an AI keep the lease. A person's
   command still ends AI control as before.
 

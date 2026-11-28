@@ -362,7 +362,9 @@ impl Safety {
     /// [`MISMATCH_TOLERANCE`] for [`MISMATCH_AFTER_S`] gets the value set sent
     /// again, up to [`MISMATCH_RESENDS`] times every
     /// [`MISMATCH_RESEND_EVERY_S`]; then the person is asked to take over and
-    /// the reported value counts as the value set. A value toward the safe
+    /// the reported value counts as the value set. Until then the layer's
+    /// view keeps the value set, so a reading older than the command does
+    /// not move it. A value toward the safe
     /// state is always sent again; one away from it not during an emergency
     /// stop or an overheat, when the machine's lower heat is the safer side.
     pub fn follow(&mut self, reported: &ActuatorValues, now: f64) -> Option<SafetyReaction> {
@@ -381,6 +383,10 @@ impl Safety {
                 self.mismatch.remove(&a);
                 continue;
             }
+            // Until the deviation is settled the safety layer keeps to the
+            // value set: a reading taken before the command arrived must not
+            // become the base for the next step limit or trim.
+            self.current.insert(a, set);
             let may_resend = self.toward_safe(a, v, set) || !(self.estop || self.overheat);
             let m = self.mismatch.entry(a).or_insert(Mismatch {
                 since: now,
@@ -413,6 +419,7 @@ impl Safety {
             for &(a, v, _) in &gave_up {
                 self.mismatch.remove(&a);
                 self.setpoint.insert(a, v);
+                self.current.insert(a, v);
             }
             return Some(SafetyReaction {
                 kind: ReactionKind::ActuatorMismatch,
@@ -1257,12 +1264,15 @@ mod tests {
         );
         assert!(r.message.contains("burner 0 %"), "{}", r.message);
         assert!(s.follow(&fell_back, 10.0).is_none());
+        // Meanwhile the view keeps the value set.
+        assert_eq!(s.status(10.0).actuators.get(&Actuator::Burner), Some(&55.0));
         assert_eq!(s.follow(&fell_back, 14.0).unwrap().commands.len(), 2);
         // After two resends: no more commands, the person is asked.
         let r = s.follow(&fell_back, 20.0).unwrap();
         assert!(r.commands.is_empty());
         assert!(r.message.contains("does not follow"), "{}", r.message);
         // The reported value counts as set now; quiet from here.
+        assert_eq!(s.status(20.0).actuators.get(&Actuator::Burner), Some(&0.0));
         assert!(s.follow(&fell_back, 40.0).is_none());
         // Nobody's control ended.
         assert!(s.ai_in_control(40.0));
