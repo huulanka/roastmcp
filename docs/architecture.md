@@ -287,8 +287,9 @@ holds the lease as `autopilot` and does two things on every reading:
   recipe once the roast is on the plan again.
 
 Both send their commands through the safety layer with source `Autopilot`.
-A person's command on burner, air or drum, DROP, an emergency stop, a lost
-link or a missed presence confirmation end it. An AI may hold the lease
+A person's command on burner, air or drum, DROP, an emergency stop or a lost
+link end it; a missed presence confirmation is a repeated alarm only
+(ADR 0023). An AI may hold the lease
 meanwhile and adjust the recipe; it cannot switch the autopilot on.
 
 The simulator is fitted to the Cubean+ with beans

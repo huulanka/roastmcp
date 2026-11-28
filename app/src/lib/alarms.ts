@@ -161,6 +161,14 @@ export const PATTERNS: { re: RegExp; key: string }[] = [
     key: "First crack not marked: the steps tied to it run from {{at}}, when the beans passed {{exp}} °C. Your mark moves the steps still to come.",
   },
   {
+    re: /^The roaster reports (?<got>.+), but (?<set>.+) was set: sent again\.$/,
+    key: "The roaster reports {{got}}, but {{set}} was set: sent again.",
+  },
+  {
+    re: /^The roaster does not follow: it reports (?<got>.+), set was (?<set>.+)\. Check the roaster and take over\.$/,
+    key: "The roaster does not follow: it reports {{got}}, set was {{set}}. Check the roaster and take over.",
+  },
+  {
     re: /^Rate of rise (?<ror>-?\d+\.\d) °C\/min after first crack: the roast may stall\. More heat, or drop soon\?$/,
     key: "Rate of rise {{ror}} °C/min after first crack: the roast may stall. More heat, or drop soon?",
   },
@@ -170,7 +178,9 @@ export const PATTERNS: { re: RegExp; key: string }[] = [
 export const STATIC_ALARMS = [
   "Burner off, air high, drum running until you change them.",
   "Roaster connection lost. Check the machine - you have control.",
-  "Presence was not confirmed in time: safe state, AI control ended.",
+  "Presence not confirmed: the roast goes on. Press Space or “I'm at the roaster”; until then an AI may not raise the heat.",
+  "Presence questions on: while automation runs, the app asks every few minutes.",
+  "Presence questions off: nobody is asked while automation runs. An AI taking control still needs your confirmation.",
   "Autopilot off - you have control.",
   "Emergency stop - the autopilot is off.",
   "The plan is not a profile any more - the autopilot is off.",
@@ -216,6 +226,13 @@ export function alarmText(message: string, t: T): string {
       parts.rest = rest;
     }
     if (parts.actuator !== undefined) parts.actuator = t(ACTUATOR_NAME[parts.actuator]);
+    // Lists of values ("burner 0 % and air 100 %").
+    for (const k of ["got", "set"] as const) {
+      if (parts[k] === undefined) continue;
+      parts[k] = parts[k]
+        .replace(/\b(burner|air|drum|filter|cooling)\b/g, (a) => t(ACTUATOR_NAME[a]))
+        .replace(/ and /g, ` ${t("and")} `);
+    }
     if (parts.kind !== undefined && parts.kind in EVENT_NAME)
       parts.kind = t(EVENT_NAME[parts.kind as EventKind]);
     if (parts.why !== undefined) parts.why = t(parts.why);

@@ -60,6 +60,8 @@ export interface SafetyStatus {
   overheat: boolean;
   connected: boolean;
   actuators: ActuatorValues;
+  /** Presence is asked for while automation runs (ADR 0023); absent on older daemons. */
+  presence_checks?: boolean;
 }
 export interface Alarm {
   id: number;

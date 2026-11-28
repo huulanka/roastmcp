@@ -64,6 +64,7 @@ pub fn router(state: AppState, ui_dir: Option<PathBuf>) -> Router {
         .route("/emergency-stop", post(emergency_stop))
         .route("/emergency-stop/reset", post(emergency_stop_reset))
         .route("/presence", post(presence))
+        .route("/presence/checks", axum::routing::put(presence_checks))
         .route("/ai/resume", post(ai_resume))
         .route("/ai/lease", post(lease).delete(release))
         .route("/recording/start", post(recording_start))
@@ -363,6 +364,24 @@ async fn emergency_stop_reset(State(st): State<AppState>) -> impl IntoResponse {
 
 async fn presence(State(st): State<AppState>) -> impl IntoResponse {
     ok(st.engine.call(|e| e.confirm_presence()).await)
+}
+
+#[derive(Deserialize)]
+struct PresenceChecksBody {
+    on: bool,
+}
+
+/// The person switches the presence questions on or off (ADR 0023). Only the
+/// app calls this; the MCP has no tool for it.
+async fn presence_checks(
+    State(st): State<AppState>,
+    Json(b): Json<PresenceChecksBody>,
+) -> impl IntoResponse {
+    match st.engine.call(move |e| e.set_presence_checks(b.on)).await {
+        Ok(Ok(s)) => Json(s).into_response(),
+        Ok(Err(f)) => f.into_response(),
+        Err(e) => engine_gone(&e).into_response(),
+    }
 }
 
 async fn ai_resume(State(st): State<AppState>) -> impl IntoResponse {

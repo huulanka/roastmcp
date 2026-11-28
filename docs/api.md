@@ -72,9 +72,10 @@ interface Phases { drying_s: number; maillard_s: number | null; development_s: n
 interface SafetyStatus {
   emergency_stop: boolean; ai_suspended: boolean;
   lease_holder: string | null; lease_remaining_s: number | null;
-  presence_due_in_s: number | null;   // negative = overdue
+  presence_due_in_s: number | null;   // negative = overdue; null when the questions are off
   overheat: boolean; connected: boolean;
   actuators: Partial<Record<Actuator, number>>;  // last commanded/reported values
+  presence_checks: boolean;           // the person's switch (ADR 0023)
 }
 interface Alarm { id: number; at: string /* RFC 3339 */; severity: "info" | "warning" | "critical";
                   kind: string; message: string }
@@ -186,6 +187,7 @@ interface Snapshot {
 | `POST /api/recipe/adjust` | `{ changes: { step, shift_s?, value?, skip? }[], reason?, origin?: "human" \| "ai" }` | `Snapshot`; changes the running roast's recipe only, all or none (400 names the step that does not fit); noted with the roast |
 | `POST /api/emergency-stop/reset` | | `Snapshot` |
 | `POST /api/presence` | | `Snapshot` (a person confirmed being at the roaster) |
+| `PUT /api/presence/checks` | `{ on: boolean }` | `Snapshot`; the person's switch for the presence questions, stored (ADR 0023). Only the app calls it; the MCP has no tool for it |
 | `POST /api/ai/resume` | | `Snapshot` (a person allows AI control again) |
 | `POST /api/ai/lease` | `{ holder }` | `{ holder, expires_in_s }` or 409 `{ error, reason }`; 400 for the reserved holders `preheat` and `autopilot` |
 | `DELETE /api/ai/lease` | | `Snapshot` |
@@ -308,7 +310,11 @@ DTR and the plan use the marked one. At DROP the daemon turns the burner
 off, switches the bean cooling on and ends the AI's lease (see
 [safety.md](safety.md)). Presence can only be confirmed in the
 app, and there is no preheat or autopilot tool, because starting either
-confirms presence. The status shows the autopilot while it is on (state,
+confirms presence; nor a tool for the presence switch. `set_roast_weight`
+writes the roasted weight (and a corrected green weight) into a saved
+roast. The bridge reads `daemon.json` again when the daemon answers 401 or
+cannot be reached, so a restarted daemon (new port and token) is found
+without restarting the AI client (ADR 0023). The status shows the autopilot while it is on (state,
 offset from the recipe, corrections).
 
 The server also offers two prompts (`prompts/list`, `prompts/get`):

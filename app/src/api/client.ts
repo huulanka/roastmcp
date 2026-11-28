@@ -135,6 +135,8 @@ export const api = {
   emergencyStop: () => request<Snapshot>("POST", "/api/emergency-stop", { reason: "UI" }),
   resetEmergencyStop: () => request<Snapshot>("POST", "/api/emergency-stop/reset"),
   presence: () => request<Snapshot>("POST", "/api/presence"),
+  /** The person's switch for the presence questions (ADR 0023). */
+  setPresenceChecks: (on: boolean) => request<Snapshot>("PUT", "/api/presence/checks", { on }),
   resumeAi: () => request<Snapshot>("POST", "/api/ai/resume"),
   startRecording: (body: {
     title?: string;

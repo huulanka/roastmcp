@@ -2,8 +2,9 @@
 //! It forwards every tool to the daemon's HTTP API, so all rules of the
 //! safety layer apply; it cannot confirm presence or reset an emergency stop.
 
+use std::cell::RefCell;
 use std::io::{BufRead as _, Write as _};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -48,15 +49,19 @@ lease: watch, mark events and use adjust_recipe, and leave the burner to it; to 
 yourself, ask the person to switch the autopilot off. \
 After a roast, look back with the person: compare_roasts puts two roasts side by side (lined up \
 on CHARGE or on first crack), get_consistency shows how alike the roasts of a lot or a profile \
-are, add_roast_note keeps an observation with a saved roast. Develop a coffee one change at a \
+are, add_roast_note keeps an observation with a saved roast, set_roast_weight writes the roasted weight \
+the person weighed into its field (the weight loss follows). Develop a coffee one change at a \
 time: record_experiment writes down the hypothesis and the change, update_experiment adds the \
 roasts that test it and the conclusion. \
 Taste closes the loop: record_cupping writes down how a roast tasted as the person tells you, \
 get_cuppings reads the tastings back, get_rest_status says which roasts are ready to drink. \
 Before a roast, go through get_checklist with the person; get_maintenance shows what care the \
 roaster is due, log_maintenance writes down what the person did. \
-To control the roaster, a person must confirm presence in the RoastMCP app (every 3 min while \
-you are in control), then call request_control. Your commands pass a safety layer: cutting the \
+To control the roaster, a person must confirm presence in the RoastMCP app, then call \
+request_control. While you are in control the app asks again every 3 min (the person can switch \
+that off); a missed confirmation ends nothing, but until the person confirms you may only cut \
+heat or add air. Tell the person in the chat when a confirmation is due: they watch the roaster, \
+not the screen. Your commands pass a safety layer: cutting the \
 burner or adding air is never limited; raising the burner is limited to 10 points per command \
 and one raise per 10 s, lowering the air to 20 points per 5 s. Act like an experienced roaster: \
 anticipate the thermal lag, make few deliberate moves (for example cut heat well before first \
@@ -67,8 +72,11 @@ returns to the person. Always give a short reason with each command; it is logge
 roast. Use emergency_stop if anything looks unsafe.";
 
 struct Daemon {
-    base: String,
-    token: String,
+    /// Where `daemon.json` is: read again when the daemon restarted (new
+    /// port and token).
+    data_dir: PathBuf,
+    /// Base URL and token from `daemon.json`.
+    conn: RefCell<(String, String)>,
     agent: ureq::Agent,
     holder: String,
     holding: bool,
@@ -84,10 +92,10 @@ struct Seen {
 
 impl Daemon {
     fn connect(data_dir: &Path) -> anyhow::Result<Self> {
-        let info = roastd::read_daemon_info(data_dir)?;
+        let conn = read_conn(data_dir)?;
         Ok(Daemon {
-            base: format!("http://127.0.0.1:{}/api", info.port),
-            token: info.token,
+            data_dir: data_dir.to_owned(),
+            conn: RefCell::new(conn),
             // Error statuses are read like any answer: their body says what went wrong.
             agent: ureq::Agent::config_builder()
                 .timeout_global(Some(Duration::from_secs(40)))
@@ -100,9 +108,73 @@ impl Daemon {
         })
     }
 
+    /// One request to the daemon. When the daemon was restarted since this
+    /// bridge read `daemon.json` (it answers 401 to the old token, or the old
+    /// port is gone), the file is read again and the request sent once more;
+    /// a request that may have reached the daemon is never sent twice.
     fn call(&self, method: &str, path: &str, body: Option<Value>) -> anyhow::Result<Value> {
-        let url = format!("{}{path}", self.base);
-        let auth = format!("Bearer {}", self.token);
+        match self.send(method, path, body.clone()) {
+            Sent::Answer(status, text) if status == 401 => {
+                if self.reload() {
+                    return self.answer(self.send(method, path, body));
+                }
+                self.answer(Sent::Answer(status, text))
+            }
+            Sent::Unreachable(e) => {
+                // Nothing reached the old address; a new one is worth a try.
+                if self.reload() {
+                    return self.answer(self.send(method, path, body));
+                }
+                self.answer(Sent::Unreachable(e))
+            }
+            sent => self.answer(sent),
+        }
+    }
+
+    /// Reads `daemon.json` again; whether the address or the token changed.
+    fn reload(&self) -> bool {
+        match read_conn(&self.data_dir) {
+            Ok(fresh) if fresh != *self.conn.borrow() => {
+                *self.conn.borrow_mut() = fresh;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn answer(&self, sent: Sent) -> anyhow::Result<Value> {
+        let (status, text) = match sent {
+            Sent::Answer(status, text) => (status, text),
+            Sent::Unreachable(e) => {
+                return Err(anyhow::Error::new(e).context("the RoastMCP daemon is not reachable"));
+            }
+            Sent::Failed(e) => return Err(e),
+        };
+        let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+        if (200..300).contains(&status) {
+            Ok(v)
+        } else {
+            // Our errors are `{"error": …}`; a body the router rejected
+            // (malformed field) is plain text: pass that on, the AI can fix it.
+            let msg = v
+                .get("error")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    if text.trim().is_empty() {
+                        format!("request failed ({status})")
+                    } else {
+                        text.trim().to_owned()
+                    }
+                });
+            anyhow::bail!("{msg}")
+        }
+    }
+
+    fn send(&self, method: &str, path: &str, body: Option<Value>) -> Sent {
+        let (base, token) = self.conn.borrow().clone();
+        let url = format!("{base}{path}");
+        let auth = format!("Bearer {token}");
         let res = match (method, body) {
             ("GET", _) => self.agent.get(&url).header("Authorization", &auth).call(),
             ("DELETE", _) => self
@@ -130,29 +202,18 @@ impl Daemon {
                 .patch(&url)
                 .header("Authorization", &auth)
                 .send_json(b),
-            (m, _) => anyhow::bail!("unsupported request method {m}"),
+            (m, _) => return Sent::Failed(anyhow::anyhow!("unsupported request method {m}")),
         };
-        let mut r = res.context("the RoastMCP daemon is not reachable")?;
-        let status = r.status();
-        let text = r.body_mut().read_to_string().unwrap_or_default();
-        let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-        if status.is_success() {
-            Ok(v)
-        } else {
-            // Our errors are `{"error": …}`; a body the router rejected
-            // (malformed field) is plain text: pass that on, the AI can fix it.
-            let msg = v
-                .get("error")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-                .unwrap_or_else(|| {
-                    if text.trim().is_empty() {
-                        format!("request failed ({status})")
-                    } else {
-                        text.trim().to_owned()
-                    }
-                });
-            anyhow::bail!("{msg}")
+        match res {
+            Ok(mut r) => {
+                let status = r.status().as_u16();
+                let text = r.body_mut().read_to_string().unwrap_or_default();
+                Sent::Answer(status, text)
+            }
+            Err(e) if never_arrived(&e) => Sent::Unreachable(e),
+            Err(e) => {
+                Sent::Failed(anyhow::Error::new(e).context("the RoastMCP daemon did not answer"))
+            }
         }
     }
 
@@ -164,6 +225,51 @@ impl Daemon {
             }
         }
     }
+}
+
+/// A roasted weight must be positive and below the green weight: beans lose
+/// water and mass when roasted.
+fn check_weights(roasted: f64, green: Option<f64>) -> anyhow::Result<()> {
+    if !(roasted.is_finite() && roasted > 0.0) {
+        anyhow::bail!("roasted_weight_g must be more than 0");
+    }
+    if let Some(g) = green {
+        if !(g.is_finite() && g > 0.0) {
+            anyhow::bail!("green_weight_g must be more than 0");
+        }
+        if roasted >= g {
+            anyhow::bail!(
+                "the roasted weight ({roasted} g) must be below the green weight ({g} g)"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// What became of a request.
+enum Sent {
+    /// The daemon answered: status and body.
+    Answer(u16, String),
+    /// Nothing reached the daemon (no connection).
+    Unreachable(ureq::Error),
+    /// Anything else; the request may have arrived.
+    Failed(anyhow::Error),
+}
+
+/// Whether the request cannot have reached the daemon: the connection was
+/// never made.
+fn never_arrived(e: &ureq::Error) -> bool {
+    match e {
+        ureq::Error::ConnectionFailed | ureq::Error::HostNotFound => true,
+        ureq::Error::Io(io) => io.kind() == std::io::ErrorKind::ConnectionRefused,
+        _ => false,
+    }
+}
+
+/// The daemon's base URL and token from `daemon.json`.
+fn read_conn(data_dir: &Path) -> anyhow::Result<(String, String)> {
+    let info = roastd::read_daemon_info(data_dir)?;
+    Ok((format!("http://127.0.0.1:{}/api", info.port), info.token))
 }
 
 /// Input of `add_lot`: the fields of an importer's offer sheet (ADR 0014).
@@ -563,6 +669,12 @@ fn tools() -> Value {
             "id": {"type": "string", "description": "The saved roast's id (see list_roasts)."},
             "text": {"type": "string"}},
           "required": ["id", "text"]}},
+        {"name": "set_roast_weight", "description": "Writes the roasted weight (and, if it was recorded wrong, the green weight) into a saved roast's fields, as the person weighed it; the weight loss follows from them. A corrected green weight also corrects the stock debit. Only weights the person tells you.",
+         "inputSchema": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "The saved roast's id (see list_roasts)."},
+            "roasted_weight_g": {"type": "number", "description": "Roasted weight, grams."},
+            "green_weight_g": {"type": "number", "description": "Green weight, grams; only to correct it."}},
+          "required": ["id", "roasted_weight_g"]}},
         {"name": "list_experiments", "description": "The roaster's experiments, newest first: hypothesis, the one thing changed, the expected outcome, status (planned, running, done), the roasts that belong to it and the conclusion.", "inputSchema": {"type": "object", "properties": {}}},
         {"name": "record_experiment", "description": "Writes an experiment down with the person: one hypothesis, one deliberate change, what is expected. Change one variable at a time. Roasts given belong to it from the start; add later ones with update_experiment.",
          "inputSchema": {"type": "object", "properties": {
@@ -1143,6 +1255,27 @@ fn call_tool(d: &mut Daemon, name: &str, args: &Value) -> anyhow::Result<Value> 
             )?;
             Ok(json!({"id": r.get("id"), "title": r.get("title"), "notes": r.get("notes")}))
         }
+        "set_roast_weight" => {
+            let id = arg_s("id").context("id is required")?;
+            let roasted = arg_f("roasted_weight_g").context("roasted_weight_g is required")?;
+            let green = arg_f("green_weight_g");
+            let r = d.call("GET", &format!("/roasts/{id}"), None)?;
+            let green_known =
+                green.or_else(|| r.pointer("/batch/green_weight_g").and_then(Value::as_f64));
+            check_weights(roasted, green_known)?;
+            let mut body = json!({"roasted_weight_g": roasted});
+            if let Some(g) = green {
+                body["green_weight_g"] = json!(g);
+            }
+            let r = d.call("PATCH", &format!("/roasts/{id}"), Some(body))?;
+            let green = r.pointer("/batch/green_weight_g").and_then(Value::as_f64);
+            let roasted = r.pointer("/batch/roasted_weight_g").and_then(Value::as_f64);
+            let loss = green
+                .zip(roasted)
+                .map(|(g, r)| ((g - r) / g * 1000.0).round() / 10.0);
+            Ok(json!({"id": r.get("id"), "title": r.get("title"),
+                "green_weight_g": green, "roasted_weight_g": roasted, "weight_loss_pct": loss}))
+        }
         "list_experiments" => d.call("GET", "/experiments", None),
         "record_experiment" => {
             let variable = match (arg_s("variable"), arg_s("from"), arg_s("to")) {
@@ -1632,6 +1765,83 @@ mod tests {
         ] {
             assert!(known.contains(&tool), "{tool}");
         }
+    }
+
+    /// A daemon stand-in: answers `{"ok": true}` to `Bearer <token>` and 401
+    /// to anything else, for `n` connections.
+    fn fake_daemon(token: &'static str, n: usize) -> u16 {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(n) {
+                let mut stream = stream.unwrap();
+                let mut buf = [0u8; 4096];
+                let len = stream.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..len]).to_lowercase();
+                let (status, body) = if req.contains(&format!("bearer {token}")) {
+                    ("200 OK", r#"{"ok":true}"#)
+                } else {
+                    (
+                        "401 Unauthorized",
+                        r#"{"error":"missing or invalid token"}"#,
+                    )
+                };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        port
+    }
+
+    fn write_info(dir: &Path, port: u16, token: &str) {
+        let info = json!({"port": port, "token": token, "pid": 1, "version": "test"});
+        std::fs::write(roastd::daemon_json(dir), info.to_string()).unwrap();
+    }
+
+    #[test]
+    fn a_restarted_daemon_is_found_again_by_its_new_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let port = fake_daemon("new", 3);
+        write_info(dir.path(), port, "old");
+        let d = Daemon::connect(dir.path()).unwrap();
+        // The daemon restarted with a new token.
+        write_info(dir.path(), port, "new");
+        assert_eq!(d.call("GET", "/status", None).unwrap(), json!({"ok": true}));
+        // A token that is simply wrong stays an error, without a loop.
+        write_info(dir.path(), port, "other");
+        let d = Daemon::connect(dir.path()).unwrap();
+        let e = d.call("GET", "/status", None).unwrap_err().to_string();
+        assert!(e.contains("invalid token"), "{e}");
+    }
+
+    #[test]
+    fn a_restarted_daemon_is_found_again_on_its_new_port() {
+        let dir = tempfile::tempdir().unwrap();
+        // A port nobody listens on: the old daemon is gone.
+        let dead = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        write_info(dir.path(), dead, "t");
+        let d = Daemon::connect(dir.path()).unwrap();
+        assert!(d.call("GET", "/status", None).is_err());
+        let port = fake_daemon("t", 1);
+        write_info(dir.path(), port, "t");
+        assert_eq!(d.call("GET", "/status", None).unwrap(), json!({"ok": true}));
+    }
+
+    #[test]
+    fn roasted_weights_must_be_below_the_green_weight() {
+        assert!(check_weights(170.8, Some(200.0)).is_ok());
+        assert!(check_weights(170.8, None).is_ok());
+        assert!(check_weights(200.0, Some(200.0)).is_err());
+        assert!(check_weights(0.0, Some(200.0)).is_err());
+        assert!(check_weights(170.0, Some(-1.0)).is_err());
     }
 
     #[test]

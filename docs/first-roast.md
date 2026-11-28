@@ -117,7 +117,8 @@ latched the safe state.
    normally charge at — or use **Aufheizen** with a target temperature: it
    heats fully, steps down once shortly before the target and then corrects
    only rarely (it waits 45 s after each change and leaves ±2 °C alone),
-   asks for presence every 3 minutes and ends at CHARGE or as soon as you
+   asks for presence every 10 minutes (a missed answer only sounds an alarm)
+   and ends at CHARGE or as soon as you
    change anything. Set the air first (for example 30 %); it learns the
    machine per air setting and gets better with every run.
    Optionally pick an earlier roast as the reference (archive → "Als
@@ -188,7 +189,8 @@ events and add notes.
 For control: confirm presence in the app ("I'm at the roaster"), then ask
 Claude to take over. Cutting heat and adding air are never limited; raising
 the burner is limited to 10 points per 10 s and lowering the air to 20 points
-per 5 s. You confirm presence in the app
-every 3 minutes (plus 30 s grace), otherwise the roaster goes to the safe
-state. Any change you make in the app takes control back immediately. The action log is in
+per 5 s. The app asks you to confirm presence every 3 minutes; a missed
+answer sounds an alarm every 30 s and Claude cannot raise the heat until you
+confirm, but nothing stops (ADR 0023). The questions can be switched off in
+the settings. Any change you make in the app takes control back immediately. The action log is in
 `logs/actions.jsonl` in the data directory.

@@ -46,6 +46,14 @@ describe("daemon messages in German", () => {
     ).toBe(
       "First Crack nicht markiert: Die FC-Schritte laufen ab 8:40, als die Bohnen 194 °C erreichten. Deine Marke verschiebt die noch offenen Schritte.",
     );
+    expect(
+      alarmText(
+        "The roaster reports burner 0 % and air 100 %, but burner 80 % and air 20 % was set: sent again.",
+        t,
+      ),
+    ).toBe(
+      "Der Röster meldet Brenner 0 % und Luft 100 %, eingestellt war Brenner 80 % und Luft 20 %: erneut gesendet.",
+    );
     expect(alarmText("DROP at 206 °C expected within 30 s: bean cooling on.", t)).toBe(
       "DROP bei 206 °C in 30 s erwartet: Bohnenkühlung an.",
     );
