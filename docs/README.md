@@ -37,3 +37,4 @@
 - [0020](adr/0020-autopilot-recipe-and-trim.md) — The autopilot runs the recipe and trims the burner, switched on in the app
 - [0021](adr/0021-hearing-first-and-second-crack.md) — The daemon hears first and second crack and marks them; the person's mark wins
 - [0022](adr/0022-plausible-charge-and-runaway-roast.md) — A detected CHARGE must look like beans, and a roast that runs away loses its automation
+- [0023](adr/0023-follow-the-machine-and-presence-that-never-aborts.md) — The machine's reported values are checked, and a missed presence confirmation never ends a roast

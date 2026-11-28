@@ -1868,6 +1868,7 @@ dependencies = [
  "roast-store",
  "roastd",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing-subscriber",
  "ureq",

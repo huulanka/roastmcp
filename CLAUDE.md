@@ -21,8 +21,11 @@ under guardrails — control a roast. Start with `docs/architecture.md` and
   (ADR 0019).
 - The safe state is burner 0, air high, drum running — never "everything off".
 - The emergency stop must not depend on the AI, MCP or the web view.
-- AI/autopilot control requires a valid lease and recent presence confirmation;
-  only the app UI can confirm presence, never an AI tool.
+- AI/autopilot control requires a valid lease. Taking control needs a recent
+  presence confirmation, and without a fresh one an AI may not raise heat; a
+  missed confirmation is a loud alarm, never the end of a roast (ADR 0023).
+  Only the app UI can confirm presence or switch the questions off, never an
+  AI tool.
 - **Never send commands to a real roaster** from tests, scripts or agents.
   Hardware is only touched with a person present who confirmed it explicitly.
   Use the simulator, the mock transport or recorded transcripts.

@@ -36,12 +36,13 @@ or drum movement the beans can ignite.
 | Human command on the filter or the bean cooling while an AI is in control | Applied; the AI stays in control (the machine profile's `limits.takeover_actuators` names the actuators that end it; it must include the burner) |
 | AI command outside range / step / rate | Clamped to the limit (reported to the AI) or rejected |
 | AI lease expires (no AI activity for the lease time, default 60 s; only the AI's own commands and status calls renew it, not the recipe runner acting under it) | Recipe runner stops, actuators hold, loud alert: "AI disconnected — you have control"; before CHARGE the preheat takes its own lease back and holds on |
-| Presence confirmation missed while AI/autopilot is in control (interval default 3 min, 10 min for the preheat before CHARGE, + 30 s grace) | Safe state, alarm |
+| Presence confirmation missed while AI/autopilot is in control (interval default 3 min, 10 min for the preheat before CHARGE, + 30 s grace) | Critical alarm, repeated every 30 s until a person confirms. Nothing ends: the preheat and the autopilot go on; an AI keeps its lease and may cut heat and add air, but not raise heat (ADR 0023) |
+| The roaster reports a burner or air value more than 8 points from the value set, for 6 s (ADR 0023) | Critical alarm; the value set is sent again (at most twice, 6 s apart; heat is not sent again during an emergency stop or overheat). If the machine still does not follow, a last alarm asks the person to take over. Nobody's control ends |
 | Critical step requested by AI/autopilot (start, DROP, step larger than the normal limit) | Waits for human confirmation |
 | DROP (detected or marked) | Burner 0 and bean cooling on, as safety-layer commands; an AI's lease ends ("handed control back"), which is not a takeover and suspends nothing |
 | The bean temperature will reach the planned DROP (the plan's drop temperature, else the reference's) within 30 s | Bean cooling on, once per roast, so the tray turns when the beans arrive; switched off by the person, it stays off until DROP |
 | Bean temperature above the machine's limit, or implausible rise | Burner cut by the safety layer, alarm |
-| A detected CHARGE that was none: the probe has not fallen below 150 °C (and 40 °C below CHARGE) 30 s later, turns above 140 °C, or does not turn within 2 min (the drum was opened in the preheat, ADR 0022) | CHARGE, turning point, dry end and heard marks taken back, the recipe starts afresh, an armed autopilot waits for the next CHARGE, the preheat holds its target again (if presence is fresh; else the safe state); critical alarm |
+| A detected CHARGE that was none: the probe has not fallen below 150 °C (and 40 °C below CHARGE) 30 s later, turns above 140 °C, or does not turn within 2 min (the drum was opened in the preheat, ADR 0022) | CHARGE, turning point, dry end and heard marks taken back, the recipe starts afresh, an armed autopilot waits for the next CHARGE, the preheat holds its target again (if it cannot, the safe state); critical alarm |
 | The roast runs away (ADR 0022): from 20 s after CHARGE more than 25 °C above the plan for 10 s, or heading within 10 °C of the limit within a minute | Under an AI or the autopilot: safe state (not latched), automation ends, critical alarm. Under a person's hand: critical alarm only |
 | Roaster link lost / stale data | Alarm with the machine's tested advice; reconnect attempts for as long as the connection is wanted; AI control suspended |
 | Roaster connects or reconnects | Safe state set at once (a machine may start at its own defaults: the Cubean+ heats at 100 %); the person sets the heat again |
@@ -57,9 +58,19 @@ state is a single driver call.
 ## Presence confirmation
 
 While the AI or the autopilot is in control, the app asks for a short
-confirmation at a regular interval (default every 3 minutes; cannot be
-disabled) — one key or one click. It is also required before every critical
-step. The AI cannot confirm presence; only the app's UI can.
+confirmation at a regular interval (default every 3 minutes) — one key or
+one click. The AI cannot confirm presence; only the app's UI can.
+
+- **Missed (ADR 0023):** a confirmation overdue by more than 30 s is a
+  critical alarm, repeated every 30 s until someone confirms. It never ends
+  a roast or a preheat: the daemon's own automation (preheat, autopilot)
+  goes on within its limits; an AI keeps its lease but may only cut heat
+  and add air until a person confirms.
+- **Switch (ADR 0023):** the person can switch the questions off in the
+  app's settings ("Presence questions"). Then nothing is asked while
+  control runs. Only the app sets it; the MCP has no tool for it.
+- **Taking control** stays a critical step: an AI's new lease always needs
+  a recent confirmation, whether the questions are on or off.
 
 - **Warning (ADR 0018):** whenever an AI or the preheat holds the lease, a
   gong sounds 60 s and 20 s before the confirmation is due (twice at 20 s),
@@ -100,8 +111,9 @@ manual command on burner, air or drum, and then the burner holds its value
 and the person has control. An AI that takes over before CHARGE does not end
 it: the preheat holds under the AI's lease (and its 3 min presence interval)
 until CHARGE; if the AI releases control or its lease runs out first, the
-preheat takes its own lease back. An emergency stop, a lost link or a missed
-presence confirmation end it with the safe state. The controller
+preheat takes its own lease back. An emergency stop or a lost link end it
+with the safe state; a missed presence confirmation is an alarm only
+(ADR 0023). The controller
 ([ADR 0015](adr/0015-preheat-step-wait-learn.md), [ADR 0018](adr/0018-preheat-air-presence-calm-hold.md))
 heats fully, steps down once to the holding power before the target, then
 corrects rarely: it waits 45 s after each change, corrects only when the
@@ -124,9 +136,10 @@ plan.
 
 - Before CHARGE it is armed and commands nothing; a running preheat goes on.
 - From CHARGE on the daemon holds the lease as `autopilot` and renews it
-  itself. Presence must be confirmed every 3 min, as under an AI. If it is
-  not fresh at CHARGE (a detected CHARGE), the autopilot waits and the app
-  asks for the confirmation.
+  itself. The app asks for presence every 3 min, as under an AI; a missed
+  confirmation is an alarm and the autopilot goes on (ADR 0023). It takes
+  its lease at CHARGE without a fresh confirmation: the person switched it
+  on.
 - Its commands have source `Autopilot` and pass the safety layer under the
   limits below. A trim correction is at most 5 burner points, at most one
   per 90 s, and all of them together stay within 10 points of the recipe.
@@ -134,8 +147,7 @@ plan.
   do not carry into the development (ADR 0020 §2).
 - It ends when the person switches it off (the actuators hold), on a
   person's command on burner, air or drum, at DROP, when the recording ends,
-  and with the safe state on an emergency stop, a lost link or a missed
-  presence confirmation.
+  and with the safe state on an emergency stop or a lost link.
 - An AI may ask for control while it is on. The AI then holds the lease and
   the autopilot goes on under it; when the AI lets go, the autopilot takes
   its lease back. An AI cannot take or release a lease under the names

@@ -12,7 +12,8 @@
 //! 4. arbitration: a human command always applies; on the takeover actuators
 //!    (burner, air, drum by default) it also suspends AI control, while
 //!    filter and cooling leave the AI in control (ADR 0019);
-//! 5. AI/autopilot: not suspended, valid lease, recent presence confirmation;
+//! 5. AI/autopilot: not suspended, valid lease; an AI may not move away from
+//!    the safe state while a presence confirmation is overdue (ADR 0023);
 //! 6. range clamp, and for AI/autopilot the step clamp and the rate limit
 //!    (except the autopilot's CHARGE step in the first 10 s after CHARGE).
 
@@ -30,6 +31,21 @@ const OVERHEAT_HYSTERESIS_C: f64 = 5.0;
 /// For this long after CHARGE the autopilot may set the recipe's CHARGE
 /// step at once, without step and rate limits (ADR 0019), s.
 pub const CHARGE_JUMP_S: f64 = 10.0;
+/// A reported actuator value further than this from the value set counts as
+/// a deviation, percentage points. The Cubean+ ramps or quantises by a few
+/// points (21.7 % for 25 %), which stays inside.
+pub const MISMATCH_TOLERANCE: f64 = 8.0;
+/// How long a deviation must last before the safety layer reacts, s. Gives
+/// a machine that ramps time to arrive (four readings on the Cubean+).
+pub const MISMATCH_AFTER_S: f64 = 6.0;
+/// How often the value set is sent again while the machine deviates, and how
+/// long after the last resend the deviation counts as not followed, s.
+pub const MISMATCH_RESEND_EVERY_S: f64 = 6.0;
+/// How often the value set is sent again before the safety layer gives up
+/// and asks the person to take over.
+pub const MISMATCH_RESENDS: u32 = 2;
+/// While a presence confirmation is overdue, the alarm repeats this often, s.
+pub const PRESENCE_REMIND_S: f64 = 30.0;
 
 /// Step and rate limit of AI/autopilot commands for one actuator.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -133,8 +149,14 @@ pub enum ReactionKind {
     EmergencyStop,
     /// BT above the limit: burner cut.
     Overheat,
-    /// Presence not confirmed in time while AI was in control: safe state.
+    /// Presence not confirmed in time while AI was in control: a loud alarm,
+    /// repeated; control goes on, and an AI may not raise the heat until a
+    /// person confirms (ADR 0023). No safe state.
     PresenceMissed,
+    /// The roaster reports a burner or air value other than the one set
+    /// (ADR 0023): the value set is sent again, a few times, then the person
+    /// is asked to take over.
+    ActuatorMismatch,
     /// The AI stopped renewing its lease: AI control ended, actuators hold.
     LeaseExpired,
     /// The roaster link was lost: AI control suspended.
@@ -186,8 +208,23 @@ pub struct SafetyStatus {
     pub overheat: bool,
     /// The roaster is connected.
     pub connected: bool,
-    /// The safety layer's view of the actuator values.
+    /// The safety layer's view of the actuator values: what the machine
+    /// reports where it reports them, else what was set.
     pub actuators: ActuatorValues,
+    /// Presence is asked for while someone holds control (the person can
+    /// switch the questions off in the app; ADR 0023).
+    pub presence_checks: bool,
+}
+
+/// A reported actuator value that does not match the value set.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Mismatch {
+    /// When the deviation was first seen, s.
+    since: f64,
+    /// Resends so far.
+    resends: u32,
+    /// When the value was last sent again, s.
+    last_resend: Option<f64>,
 }
 
 /// The safety layer's state machine.
@@ -202,6 +239,14 @@ pub struct Safety {
     preheat_holder: Option<String>,
     last_ai_change: BTreeMap<Actuator, f64>,
     current: ActuatorValues,
+    /// The values commanded through this layer, to compare with what the
+    /// machine reports.
+    setpoint: ActuatorValues,
+    mismatch: BTreeMap<Actuator, Mismatch>,
+    /// Whether presence is asked for at all (ADR 0023).
+    presence_checks: bool,
+    /// When the overdue-presence alarm last sounded.
+    presence_alarm_at: Option<f64>,
     connected: bool,
     overheat: bool,
     /// Until when the autopilot may jump to the CHARGE step.
@@ -221,6 +266,10 @@ impl Safety {
             preheat_holder: None,
             last_ai_change: BTreeMap::new(),
             current: ActuatorValues::new(),
+            setpoint: ActuatorValues::new(),
+            mismatch: BTreeMap::new(),
+            presence_checks: true,
+            presence_alarm_at: None,
             connected: false,
             overheat: false,
             charge_jump_until: None,
@@ -241,13 +290,30 @@ impl Safety {
             ai_suspended: self.ai_suspended,
             lease_holder: self.lease.as_ref().map(|l| l.holder.clone()),
             lease_remaining_s: self.lease.as_ref().map(|l| l.expires_at - now),
+            // Switched off, nothing is due: no gongs, no prompt.
             presence_due_in_s: self
                 .presence_at
+                .filter(|_| self.presence_checks)
                 .map(|p| p + self.presence_interval(self.lease_holder()) - now),
             overheat: self.overheat,
             connected: self.connected,
             actuators: self.current.clone(),
+            presence_checks: self.presence_checks,
         }
+    }
+
+    /// Switches the presence questions on or off (only a person, in the app;
+    /// ADR 0023). Off, nobody is asked while control runs; an AI that takes
+    /// control still needs one confirmation first.
+    pub fn set_presence_checks(&mut self, on: bool) {
+        self.presence_checks = on;
+        self.presence_alarm_at = None;
+    }
+
+    /// Whether presence is asked for while control runs.
+    #[must_use]
+    pub fn presence_checks(&self) -> bool {
+        self.presence_checks
     }
 
     /// Whether an AI client currently holds a valid lease.
@@ -270,6 +336,7 @@ impl Safety {
             });
         }
         if was && !connected {
+            self.mismatch.clear();
             let had_ai = self.lease.take().is_some();
             self.ai_suspended |= had_ai;
             return Some(SafetyReaction {
@@ -288,6 +355,109 @@ impl Safety {
                 self.current.insert(a, v);
             }
         }
+    }
+
+    /// Records the values the machine reported and compares them with the
+    /// values set (ADR 0023). A deviation of more than
+    /// [`MISMATCH_TOLERANCE`] for [`MISMATCH_AFTER_S`] gets the value set sent
+    /// again, up to [`MISMATCH_RESENDS`] times every
+    /// [`MISMATCH_RESEND_EVERY_S`]; then the person is asked to take over and
+    /// the reported value counts as the value set. Until then the layer's
+    /// view keeps the value set, so a reading older than the command does
+    /// not move it. A value toward the safe
+    /// state is always sent again; one away from it not during an emergency
+    /// stop or an overheat, when the machine's lower heat is the safer side.
+    pub fn follow(&mut self, reported: &ActuatorValues, now: f64) -> Option<SafetyReaction> {
+        self.observe(reported);
+        if !self.connected {
+            self.mismatch.clear();
+            return None;
+        }
+        let mut resend = Vec::new();
+        let mut gave_up = Vec::new();
+        for (&a, &v) in reported {
+            let Some(&set) = self.setpoint.get(&a) else {
+                continue;
+            };
+            if !v.is_finite() || (v - set).abs() <= MISMATCH_TOLERANCE {
+                self.mismatch.remove(&a);
+                continue;
+            }
+            // Until the deviation is settled the safety layer keeps to the
+            // value set: a reading taken before the command arrived must not
+            // become the base for the next step limit or trim.
+            self.current.insert(a, set);
+            let may_resend = self.toward_safe(a, v, set) || !(self.estop || self.overheat);
+            let m = self.mismatch.entry(a).or_insert(Mismatch {
+                since: now,
+                resends: 0,
+                last_resend: None,
+            });
+            if now - m.since < MISMATCH_AFTER_S {
+                continue;
+            }
+            let since_resend = m.last_resend.map_or(f64::INFINITY, |t| now - t);
+            if since_resend < MISMATCH_RESEND_EVERY_S {
+                continue;
+            }
+            if may_resend && m.resends < MISMATCH_RESENDS {
+                m.resends += 1;
+                m.last_resend = Some(now);
+                resend.push((a, v, set));
+            } else {
+                gave_up.push((a, v, set));
+            }
+        }
+        let list = |items: &[(Actuator, f64, f64)], which: fn(&(Actuator, f64, f64)) -> f64| {
+            items
+                .iter()
+                .map(|x| format!("{} {:.0} %", x.0, which(x)))
+                .collect::<Vec<_>>()
+                .join(" and ")
+        };
+        if !gave_up.is_empty() {
+            for &(a, v, _) in &gave_up {
+                self.mismatch.remove(&a);
+                self.setpoint.insert(a, v);
+                self.current.insert(a, v);
+            }
+            return Some(SafetyReaction {
+                kind: ReactionKind::ActuatorMismatch,
+                message: format!(
+                    "The roaster does not follow: it reports {}, set was {}. Check the roaster and take over.",
+                    list(&gave_up, |x| x.1),
+                    list(&gave_up, |x| x.2),
+                ),
+                commands: Vec::new(),
+            });
+        }
+        if resend.is_empty() {
+            return None;
+        }
+        let commands = resend
+            .iter()
+            .map(|&(actuator, _, value)| {
+                self.current.insert(actuator, value);
+                ActuatorCommand { actuator, value }
+            })
+            .collect();
+        Some(SafetyReaction {
+            kind: ReactionKind::ActuatorMismatch,
+            message: format!(
+                "The roaster reports {}, but {} was set: sent again.",
+                list(&resend, |x| x.1),
+                list(&resend, |x| x.2),
+            ),
+            commands,
+        })
+    }
+
+    /// A value commanded through this layer: the new view and the value the
+    /// machine should report from now on.
+    fn set(&mut self, a: Actuator, v: f64) {
+        self.current.insert(a, v);
+        self.setpoint.insert(a, v);
+        self.mismatch.remove(&a);
     }
 
     /// Decides on a command request. Returns the outcome and, if applied, the
@@ -314,7 +484,7 @@ impl Safety {
                 {
                     l.expires_at = now + self.cfg.lease_s;
                 }
-                self.current.insert(req.actuator, value);
+                self.set(req.actuator, value);
                 (
                     CommandOutcome::Applied {
                         value,
@@ -374,7 +544,15 @@ impl Safety {
         if !self.lease.as_ref().is_some_and(|l| l.expires_at > now) {
             return Err(RejectReason::NoLease);
         }
-        if !self.presence_fresh(now, self.lease_holder()) {
+        // An overdue confirmation ends nothing (ADR 0023): the autopilot,
+        // which a person switched on, goes on; an AI may still cut heat and
+        // add air, but not move away from the safe state.
+        let away = current.is_some_and(|cur| !self.toward_safe(a, cur, value));
+        if req.source == CommandSource::Ai
+            && self.presence_checks
+            && away
+            && !self.presence_fresh(now, self.lease_holder())
+        {
             return Err(RejectReason::PresenceRequired);
         }
         if let Some(limit) = self.cfg.ai_limits.get(&a).copied() {
@@ -496,7 +674,7 @@ impl Safety {
             .map(|(&actuator, &value)| ActuatorCommand { actuator, value })
             .collect();
         for c in &cmds {
-            self.current.insert(c.actuator, c.value);
+            self.set(c.actuator, c.value);
         }
         cmds
     }
@@ -539,6 +717,7 @@ impl Safety {
     /// A person confirmed being at the roaster.
     pub fn confirm_presence(&mut self, now: f64) {
         self.presence_at = Some(now);
+        self.presence_alarm_at = None;
     }
 
     /// A person allows AI control again after taking over.
@@ -546,8 +725,30 @@ impl Safety {
         self.ai_suspended = false;
     }
 
-    /// Grants or renews a lease. Needs a recent presence confirmation.
+    /// Grants or renews a lease. A new grant needs a recent presence
+    /// confirmation, whether or not the questions are switched on: taking
+    /// control is a critical step. Renewing does not (ADR 0023).
     pub fn acquire_lease(&mut self, holder: &str, now: f64) -> Result<Lease, RejectReason> {
+        let renewing = self
+            .lease
+            .as_ref()
+            .is_some_and(|l| l.holder == holder && l.expires_at > now);
+        self.grant(holder, now, !renewing)
+    }
+
+    /// Grants or renews a lease for the daemon's own automation (preheat,
+    /// autopilot). A person started it in the app, which confirmed presence;
+    /// a confirmation missed since does not stop it (ADR 0023).
+    pub fn acquire_own_lease(&mut self, holder: &str, now: f64) -> Result<Lease, RejectReason> {
+        self.grant(holder, now, false)
+    }
+
+    fn grant(
+        &mut self,
+        holder: &str,
+        now: f64,
+        needs_presence: bool,
+    ) -> Result<Lease, RejectReason> {
         if self.estop {
             return Err(RejectReason::EmergencyStopLatched);
         }
@@ -557,7 +758,7 @@ impl Safety {
         if !self.connected {
             return Err(RejectReason::Disconnected);
         }
-        if !self.presence_fresh(now, Some(holder)) {
+        if needs_presence && !self.presence_fresh(now, Some(holder)) {
             return Err(RejectReason::PresenceRequired);
         }
         let lease = Lease {
@@ -594,7 +795,7 @@ impl Safety {
                     .get(&Actuator::Burner)
                     .copied()
                     .unwrap_or(0.0);
-                self.current.insert(Actuator::Burner, burner);
+                self.set(Actuator::Burner, burner);
                 out.push(SafetyReaction {
                     kind: ReactionKind::Overheat,
                     message: if first {
@@ -616,16 +817,25 @@ impl Safety {
         }
 
         if let Some(lease) = &self.lease {
-            if !self.presence_fresh(now, Some(&lease.holder)) {
-                self.lease = None;
-                self.ai_suspended = true;
+            // A missed confirmation is a loud alarm, repeated, never the end
+            // of a roast or a preheat (ADR 0023).
+            if self.presence_checks
+                && !self.presence_fresh(now, Some(&lease.holder))
+                && self
+                    .presence_alarm_at
+                    .is_none_or(|t| now - t >= PRESENCE_REMIND_S)
+            {
+                self.presence_alarm_at = Some(now);
                 out.push(SafetyReaction {
                     kind: ReactionKind::PresenceMissed,
-                    message: "Presence was not confirmed in time: safe state, AI control ended."
+                    message: "Presence not confirmed: the roast goes on. Press Space or “I'm at the roaster”; until then an AI may not raise the heat."
                         .into(),
-                    commands: self.safe_state_commands(),
+                    commands: Vec::new(),
                 });
-            } else if lease.expires_at <= now {
+            }
+        }
+        if let Some(lease) = &self.lease {
+            if lease.expires_at <= now {
                 let holder = lease.holder.clone();
                 self.lease = None;
                 out.push(SafetyReaction {
@@ -973,7 +1183,7 @@ mod tests {
     }
 
     #[test]
-    fn missed_presence_goes_to_safe_state() {
+    fn missed_presence_is_a_repeated_alarm_and_ends_nothing() {
         let mut s = with_ai(0.0);
         for t in [50.0, 100.0, 150.0, 200.0] {
             s.request(&req(Actuator::Air, 40.0 + t / 50.0, CommandSource::Ai), t);
@@ -981,12 +1191,142 @@ mod tests {
         }
         let r = s.tick(211.0, None);
         assert_eq!(r[0].kind, ReactionKind::PresenceMissed);
-        assert!(
-            r[0].commands
-                .iter()
-                .any(|c| c.actuator == Actuator::Burner && c.value == 0.0)
+        assert!(r[0].commands.is_empty(), "no safe state");
+        assert!(s.ai_in_control(212.0));
+        assert!(!s.status(212.0).ai_suspended);
+        // The alarm repeats every 30 s, not every tick.
+        assert!(s.tick(220.0, None).is_empty());
+        let r = s.tick(241.0, None);
+        assert_eq!(r[0].kind, ReactionKind::PresenceMissed);
+        // The AI keeps its lease, may cut heat and add air, but not raise heat.
+        s.acquire_lease("claude", 242.0).unwrap();
+        let (o, _) = s.request(&req(Actuator::Burner, 40.0, CommandSource::Ai), 243.0);
+        assert_eq!(applied(&o), Some(40.0));
+        let (o, _) = s.request(&req(Actuator::Burner, 45.0, CommandSource::Ai), 250.0);
+        assert_eq!(rejected(&o), Some(RejectReason::PresenceRequired));
+        // The autopilot, which a person switched on, goes on.
+        let (o, _) = s.request(
+            &req(Actuator::Burner, 45.0, CommandSource::Autopilot),
+            251.0,
         );
-        assert!(!s.ai_in_control(212.0));
+        assert_eq!(applied(&o), Some(45.0));
+        // A confirmation ends the alarm and lets the AI raise again.
+        s.confirm_presence(260.0);
+        assert!(s.tick(261.0, None).is_empty());
+        let (o, _) = s.request(&req(Actuator::Burner, 50.0, CommandSource::Ai), 262.0);
+        assert_eq!(applied(&o), Some(50.0));
+    }
+
+    #[test]
+    fn presence_questions_can_be_switched_off_but_not_for_taking_control() {
+        let mut s = with_ai(0.0);
+        s.set_presence_checks(false);
+        assert_eq!(s.status(0.0).presence_due_in_s, None);
+        for t in [50.0, 100.0, 150.0, 200.0, 250.0, 300.0] {
+            s.acquire_lease("claude", t).unwrap();
+            assert!(s.tick(t, None).is_empty(), "at {t}");
+        }
+        let (o, _) = s.request(&req(Actuator::Burner, 55.0, CommandSource::Ai), 301.0);
+        assert_eq!(applied(&o), Some(55.0));
+        // Another AI taking control still needs a person's confirmation.
+        s.release_lease();
+        assert_eq!(
+            s.acquire_lease("other", 302.0).unwrap_err(),
+            RejectReason::PresenceRequired
+        );
+        // The daemon's own automation was started by a person.
+        s.acquire_own_lease("autopilot", 303.0).unwrap();
+    }
+
+    #[test]
+    fn a_deviating_machine_gets_the_value_again_then_the_person_is_asked() {
+        let mut s = with_ai(0.0);
+        s.request(&req(Actuator::Burner, 55.0, CommandSource::Ai), 1.0);
+        s.request(&req(Actuator::Air, 30.0, CommandSource::Ai), 1.0);
+        let fell_back = BTreeMap::from([(Actuator::Burner, 0.0), (Actuator::Air, 100.0)]);
+        // A few seconds are the machine's to arrive.
+        assert!(s.follow(&fell_back, 2.0).is_none());
+        assert!(s.follow(&fell_back, 7.0).is_none());
+        let r = s.follow(&fell_back, 8.0).unwrap();
+        assert_eq!(r.kind, ReactionKind::ActuatorMismatch);
+        assert_eq!(
+            r.commands,
+            vec![
+                ActuatorCommand {
+                    actuator: Actuator::Burner,
+                    value: 55.0
+                },
+                ActuatorCommand {
+                    actuator: Actuator::Air,
+                    value: 30.0
+                },
+            ]
+        );
+        assert!(r.message.contains("burner 0 %"), "{}", r.message);
+        assert!(s.follow(&fell_back, 10.0).is_none());
+        // Meanwhile the view keeps the value set.
+        assert_eq!(s.status(10.0).actuators.get(&Actuator::Burner), Some(&55.0));
+        assert_eq!(s.follow(&fell_back, 14.0).unwrap().commands.len(), 2);
+        // After two resends: no more commands, the person is asked.
+        let r = s.follow(&fell_back, 20.0).unwrap();
+        assert!(r.commands.is_empty());
+        assert!(r.message.contains("does not follow"), "{}", r.message);
+        // The reported value counts as set now; quiet from here.
+        assert_eq!(s.status(20.0).actuators.get(&Actuator::Burner), Some(&0.0));
+        assert!(s.follow(&fell_back, 40.0).is_none());
+        // Nobody's control ended.
+        assert!(s.ai_in_control(40.0));
+    }
+
+    #[test]
+    fn a_machine_that_follows_or_ramps_is_left_alone() {
+        let mut s = with_ai(0.0);
+        s.request(&req(Actuator::Burner, 25.0, CommandSource::Human), 1.0);
+        for t in 2..30 {
+            let r = s.follow(&BTreeMap::from([(Actuator::Burner, 21.7)]), f64::from(t));
+            assert!(r.is_none(), "at {t}");
+        }
+        // A new value starts the clock again.
+        s.request(&req(Actuator::Burner, 80.0, CommandSource::Human), 30.0);
+        assert!(
+            s.follow(&BTreeMap::from([(Actuator::Burner, 40.0)]), 31.0)
+                .is_none()
+        );
+        assert!(
+            s.follow(&BTreeMap::from([(Actuator::Burner, 78.0)]), 35.0)
+                .is_none()
+        );
+        assert!(
+            s.follow(&BTreeMap::from([(Actuator::Burner, 78.0)]), 60.0)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn heat_is_not_sent_again_over_an_emergency_stop() {
+        let mut s = with_ai(0.0);
+        s.request(&req(Actuator::Burner, 55.0, CommandSource::Ai), 1.0);
+        s.emergency_stop("test");
+        // The machine keeps heating after the stop: burner 0 is sent again.
+        let heating = BTreeMap::from([(Actuator::Burner, 55.0), (Actuator::Air, 100.0)]);
+        s.follow(&heating, 2.0);
+        let r = s.follow(&heating, 9.0).unwrap();
+        assert_eq!(
+            r.commands,
+            vec![ActuatorCommand {
+                actuator: Actuator::Burner,
+                value: 0.0
+            }]
+        );
+        // A machine colder than set during the stop is never pushed up.
+        s.reset_emergency_stop();
+        s.emergency_stop("again");
+        let mut c = s.clone();
+        c.setpoint.insert(Actuator::Burner, 30.0);
+        let cold = BTreeMap::from([(Actuator::Burner, 0.0)]);
+        c.follow(&cold, 20.0);
+        let r = c.follow(&cold, 27.0).unwrap();
+        assert!(r.commands.is_empty());
     }
 
     #[test]
@@ -1006,10 +1346,13 @@ mod tests {
             s.acquire_lease("claude", 300.0).unwrap_err(),
             RejectReason::PresenceRequired
         );
-        // And the preheat itself still misses it after 10 min + grace.
+        // And the preheat itself still misses it after 10 min + grace: an
+        // alarm, and the preheat holds on.
         s.acquire_lease("preheat", 600.0).unwrap();
         let r = s.tick(631.0, None);
         assert_eq!(r[0].kind, ReactionKind::PresenceMissed);
+        assert!(r[0].commands.is_empty());
+        assert_eq!(s.status(631.0).lease_holder.as_deref(), Some("preheat"));
     }
 
     #[test]

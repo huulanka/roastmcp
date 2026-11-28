@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils.ts";
 import { formatClock, formatNumber } from "@/lib/units.ts";
 import { attempt, confirmPresence, emergencyStop } from "@/state/actions.ts";
 import { useCareDue } from "@/state/care.ts";
-import { applySnapshot } from "@/state/live.ts";
+import { applySnapshot, useLive } from "@/state/live.ts";
 import { stateLabel, type Screen } from "@/state/helpers.ts";
 import { setThemeMode, useThemeMode, type ThemeMode } from "@/state/theme.ts";
 
@@ -92,6 +92,8 @@ function SettingsMenu() {
   const [backupOpen, setBackupOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [micOpen, setMicOpen] = useState(false);
+  const { snapshot } = useLive();
+  const presenceChecks = snapshot?.safety.presence_checks ?? true;
   // A failed backup must not go unseen: look now and then, and on opening.
   useEffect(() => {
     const load = () =>
@@ -192,6 +194,29 @@ function SettingsMenu() {
                 {t("Set up")}
               </Button>
             </div>
+          </div>
+          <div className="flex flex-col gap-2 border-t border-border pt-3">
+            <span className="text-[13px] text-muted-foreground">{t("Presence questions")}</span>
+            <Segmented<"on" | "off">
+              label={t("Presence questions")}
+              value={presenceChecks ? "on" : "off"}
+              options={[
+                { value: "on", label: t("On") },
+                { value: "off", label: t("Off") },
+              ]}
+              onChange={(v) =>
+                void attempt(async () => applySnapshot(await api.setPresenceChecks(v === "on")))
+              }
+            />
+            <p className="text-[13px] text-muted-foreground">
+              {presenceChecks
+                ? t(
+                    "While automation runs, the app asks every few minutes. A missed question only sounds an alarm; the roast goes on.",
+                  )
+                : t(
+                    "Nobody is asked while automation runs. An AI taking control still needs your confirmation once.",
+                  )}
+            </p>
           </div>
           <div className="flex flex-col gap-2 border-t border-border pt-3">
             <span className="text-[13px] text-muted-foreground">{t("Keyboard")}</span>

@@ -578,6 +578,18 @@ pub struct Engine {
     hearing: hearing::Hearing,
 }
 
+/// Where the person's choice to ask for presence is kept (ADR 0023).
+const PRESENCE_CHECKS_SETTING: &str = "presence_checks";
+
+/// Whether presence is asked for: the stored choice, on by default.
+fn load_presence_checks(store: &Store) -> bool {
+    store
+        .setting::<bool>(PRESENCE_CHECKS_SETTING)
+        .ok()
+        .flatten()
+        .unwrap_or(true)
+}
+
 /// Starts the engine task and its safety ticker.
 pub fn start(opts: EngineOptions) -> EngineHandle {
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -593,10 +605,12 @@ pub fn start(opts: EngineOptions) -> EngineHandle {
     let learned = LearnedStore::open(Arc::clone(&opts.store), &opts.control_path);
     let profiles = ProfileStore::open(Arc::clone(&opts.store), &opts.profiles_path);
     let hearing = hearing::Hearing::new(crate::audio::load_settings(&opts.store), &opts.store);
+    let mut safety = Safety::new(SafetyConfig::from_profile(&opts.profile));
+    safety.set_presence_checks(load_presence_checks(&opts.store));
     let mut engine = Engine {
         hearing,
         archive,
-        safety: Safety::new(SafetyConfig::from_profile(&opts.profile)),
+        safety,
         opts,
         tx: tx.clone(),
         updates: updates.clone(),
@@ -1259,7 +1273,7 @@ impl Engine {
         {
             return;
         }
-        match self.safety.acquire_lease(AUTOPILOT_HOLDER, now) {
+        match self.safety.acquire_own_lease(AUTOPILOT_HOLDER, now) {
             Ok(_) => {
                 if status.lease_holder.is_none() {
                     self.audit(serde_json::json!({"type": "lease", "holder": AUTOPILOT_HOLDER}));
@@ -1510,7 +1524,7 @@ impl Engine {
         self.safety.confirm_presence(now);
         // Before CHARGE the preheat confirms less often (ADR 0018).
         self.safety.set_preheat_holder(Some(PREHEAT_HOLDER));
-        if let Err(r) = self.safety.acquire_lease(PREHEAT_HOLDER, now) {
+        if let Err(r) = self.safety.acquire_own_lease(PREHEAT_HOLDER, now) {
             self.safety.set_preheat_holder(None);
             return Err(Fail::conflict(reject_text(r), Some(r)));
         }
@@ -1635,7 +1649,7 @@ impl Engine {
                 if let Some(p) = self.preheat.as_mut() {
                     p.ai_holder = None;
                 }
-                if self.safety.acquire_lease(PREHEAT_HOLDER, now).is_err() {
+                if self.safety.acquire_own_lease(PREHEAT_HOLDER, now).is_err() {
                     self.end_preheat(
                         "Preheat ended: presence not confirmed or control not allowed.",
                     );
@@ -1665,7 +1679,7 @@ impl Engine {
         }
         // Under its own lease the preheat renews it; under an AI's lease
         // only the AI does (the lease is its sign of life).
-        if own_lease && self.safety.acquire_lease(PREHEAT_HOLDER, now).is_err() {
+        if own_lease && self.safety.acquire_own_lease(PREHEAT_HOLDER, now).is_err() {
             self.end_preheat("Preheat ended: presence not confirmed or control not allowed.");
             return;
         }
@@ -1861,6 +1875,8 @@ impl Engine {
             // Keep the latch across reconnects of the same machine.
             let estop = self.safety.status(self.now()).emergency_stop;
             self.safety = Safety::new(SafetyConfig::from_profile(&profile));
+            self.safety
+                .set_presence_checks(load_presence_checks(&self.opts.store));
             if estop {
                 self.safety.emergency_stop("still latched from before");
             }
@@ -1986,7 +2002,13 @@ impl Engine {
     }
 
     fn on_reading(&mut self, r: roast_driver::Reading) {
-        self.safety.observe(&r.actuators);
+        // The machine may report other values than were set (the Cubean+
+        // fell back to burner 0 %, air 100 % mid-roast): sent again, and the
+        // person hears it (ADR 0023).
+        let now = self.now();
+        if let Some(reaction) = self.safety.follow(&r.actuators, now) {
+            self.apply_reaction(&reaction);
+        }
         self.last_reading = Some(Instant::now());
         self.stale_alarmed = false;
         // A reading arrived: a passing driver error (one bad line) is over.
@@ -2202,8 +2224,9 @@ impl Engine {
     }
 
     /// The preheat takes up `target` again after a CHARGE that was none,
-    /// without a person's word: it needs the presence confirmed before, and
-    /// does not change the air. Returns whether it holds.
+    /// without a person's word; it does not change the air. A missed
+    /// presence confirmation does not stop it (ADR 0023). Returns whether it
+    /// holds.
     fn resume_preheat(&mut self, target: f64) -> bool {
         let now = self.now();
         let status = self.safety.status(now);
@@ -2212,7 +2235,8 @@ impl Engine {
         }
         self.safety.set_preheat_holder(Some(PREHEAT_HOLDER));
         // Under an AI's lease the preheat holds under it (ADR 0019).
-        if status.lease_holder.is_none() && self.safety.acquire_lease(PREHEAT_HOLDER, now).is_err()
+        if status.lease_holder.is_none()
+            && self.safety.acquire_own_lease(PREHEAT_HOLDER, now).is_err()
         {
             self.safety.set_preheat_holder(None);
             return false;
@@ -2575,6 +2599,29 @@ impl Engine {
         self.audit(serde_json::json!({"type": "presence"}));
         self.publish(None);
         self.snapshot()
+    }
+
+    /// A person switches the presence questions on or off in the app's
+    /// settings (ADR 0023). There is no MCP tool for it.
+    pub fn set_presence_checks(&mut self, on: bool) -> Result<Snapshot, Fail> {
+        self.opts
+            .store
+            .set_setting(PRESENCE_CHECKS_SETTING, &on)
+            .map_err(|e| Fail::internal(format!("the setting could not be saved: {e}")))?;
+        self.safety.set_presence_checks(on);
+        self.audit(serde_json::json!({"type": "presence_checks", "on": on}));
+        self.alarm(
+            "info",
+            "presence_checks",
+            if on {
+                "Presence questions on: while automation runs, the app asks every few minutes."
+            } else {
+                "Presence questions off: nobody is asked while automation runs. An AI taking control still needs your confirmation."
+            }
+            .to_owned(),
+        );
+        self.publish(None);
+        Ok(self.snapshot())
     }
 
     /// A person allows AI control again.
@@ -4743,6 +4790,22 @@ mod tests {
             .unwrap();
         let told = s.alarms.iter().filter(|a| a.kind == "stall").count();
         assert_eq!(told, 1, "{:?}", s.alarms);
+    }
+
+    #[tokio::test]
+    async fn the_person_can_switch_presence_questions_off_and_it_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = simulator(dir.path()).await;
+        let (s, stored) = h
+            .call(|e| {
+                let s = e.set_presence_checks(false).unwrap();
+                (s, load_presence_checks(&e.opts.store))
+            })
+            .await
+            .unwrap();
+        assert!(!s.safety.presence_checks);
+        assert_eq!(s.safety.presence_due_in_s, None);
+        assert!(!stored);
     }
 
     #[tokio::test]

@@ -680,8 +680,22 @@ export const de: Record<string, string> = {
     "Brenner aus, Luft hoch, Trommel läuft, bis du etwas änderst.",
   "Roaster connection lost. Check the machine - you have control.":
     "Verbindung zum Röster verloren. Prüf die Maschine – du hast die Kontrolle.",
-  "Presence was not confirmed in time: safe state, AI control ended.":
-    "Anwesenheit nicht rechtzeitig bestätigt: sicherer Zustand, KI-Steuerung beendet.",
+  "Presence not confirmed: the roast goes on. Press Space or “I'm at the roaster”; until then an AI may not raise the heat.":
+    "Anwesenheit nicht bestätigt: Die Röstung läuft weiter. Leertaste oder „Ich bin am Röster“ drücken; bis dahin darf eine KI die Hitze nicht erhöhen.",
+  "Presence questions on: while automation runs, the app asks every few minutes.":
+    "Anwesenheitsabfragen an: Solange die Automatik läuft, fragt die App alle paar Minuten.",
+  "Presence questions off: nobody is asked while automation runs. An AI taking control still needs your confirmation.":
+    "Anwesenheitsabfragen aus: Während die Automatik läuft, wird nicht gefragt. Übernimmt eine KI die Steuerung, braucht sie trotzdem deine Bestätigung.",
+  "The roaster reports {{got}}, but {{set}} was set: sent again.":
+    "Der Röster meldet {{got}}, eingestellt war {{set}}: erneut gesendet.",
+  "The roaster does not follow: it reports {{got}}, set was {{set}}. Check the roaster and take over.":
+    "Der Röster folgt nicht: Er meldet {{got}}, eingestellt war {{set}}. Prüf den Röster und übernimm.",
+  and: "und",
+  "Presence questions": "Anwesenheitsabfragen",
+  "While automation runs, the app asks every few minutes. A missed question only sounds an alarm; the roast goes on.":
+    "Solange die Automatik läuft, fragt die App alle paar Minuten. Eine verpasste Abfrage löst nur einen Alarm aus; die Röstung läuft weiter.",
+  "Nobody is asked while automation runs. An AI taking control still needs your confirmation once.":
+    "Während die Automatik läuft, wird nicht gefragt. Übernimmt eine KI die Steuerung, braucht sie einmal deine Bestätigung.",
   "Autopilot off - you have control.": "Autopilot aus – du hast die Kontrolle.",
   "Emergency stop - the autopilot is off.": "Not-Aus – der Autopilot ist aus.",
   "The plan is not a profile any more - the autopilot is off.":
