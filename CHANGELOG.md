@@ -1,3 +1,10 @@
+## [1.31.1](https://github.com/huulanka/roastmcp/compare/v1.31.0...v1.31.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* the roaster's values are checked, and a missed presence confirmation never ends a roast ([#65](https://github.com/huulanka/roastmcp/issues/65)) ([5af3b86](https://github.com/huulanka/roastmcp/commit/5af3b8609c74c25ce5da8cc4fe7cc231d5570c9e))
+
 # [1.31.0](https://github.com/huulanka/roastmcp/compare/v1.30.0...v1.31.0) (2026-11-18)
 
 
